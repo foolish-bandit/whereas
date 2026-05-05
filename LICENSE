@@ -1,16 +1,7 @@
                     GNU AFFERO GENERAL PUBLIC LICENSE
-                       Version 3, 19 November 2007
+                       5 May 2026
 
- Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
-
-[Full AGPL-3.0 text omitted from scaffold for brevity. Use the canonical
-text from https://www.gnu.org/licenses/agpl-3.0.txt verbatim. Do not
-modify. The scaffold script will fetch and write the full license at
-project init.]
-
-Copyright (C) 2026 Zachary Brenner and Whereas contributors.
+Copyright (C) 2026 Zachary Brenner.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as
