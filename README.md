@@ -45,7 +45,7 @@ The name "Whereas" and any associated logos are not covered by the AGPL — see 
 Requires Docker and Docker Compose.
 
 ```bash
-git clone https://github.com/whereas-clm/whereas.git
+git clone [https://github.com/whereas-clm/whereas.git](https://github.com/foolish-bandit/whereas.git)
 cd whereas
 cp .env.example .env
 # edit .env: set OLLAMA_BASE_URL or your LLM provider keys
