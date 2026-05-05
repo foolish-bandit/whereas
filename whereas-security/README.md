@@ -47,14 +47,16 @@ Requires Docker and Docker Compose.
 ```bash
 git clone https://github.com/whereas-clm/whereas.git
 cd whereas
-cp .env.example .env
-# edit .env: set OLLAMA_BASE_URL or your LLM provider keys
+./scripts/generate-secrets.sh   # generates .env with random secrets
+# edit .env if you want to change LLM provider; defaults to local Ollama
 docker compose up -d
 ```
 
 Whereas will be available at `http://localhost:8080`. DocuSeal at `http://localhost:8081`. The API at `http://localhost:8000`.
 
-First-run setup creates an admin user. Check the backend logs for the temporary password.
+For production deployment, read [docs/deployment-guide.md](docs/deployment-guide.md) before exposing this to the internet. There are non-negotiable hardening steps that the local quickstart skips.
+
+For the security architecture and threat model, see [docs/security-model.md](docs/security-model.md).
 
 ## Project status
 

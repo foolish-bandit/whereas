@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whereas — The open-source contract repository</title>
+  <meta name="description" content="An open-source, self-hostable contract repository with built-in clause extraction, playbook deviation analysis, and embedded e-signature.">
+  <style>
+    :root {
+      --ink: #1a1a1a;
+      --paper: #faf8f3;
+      --rule: #d4cfc1;
+      --accent: #8b1a1a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+      background: var(--paper);
+      color: var(--ink);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem;
+      flex: 1;
+    }
+    header {
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 2rem;
+      margin-bottom: 2rem;
+    }
+    h1 {
+      font-size: 3rem;
+      font-weight: normal;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+    .tagline {
+      font-style: italic;
+      color: #555;
+      font-size: 1.15rem;
+    }
+    h2 {
+      font-size: 1.4rem;
+      font-weight: normal;
+      margin-top: 2.5rem;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.01em;
+    }
+    p {
+      margin-bottom: 1rem;
+      font-size: 1.05rem;
+    }
+    .preamble {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: #888;
+      margin-bottom: 1rem;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    a:hover {
+      text-decoration-thickness: 2px;
+    }
+    .features {
+      list-style: none;
+      padding-left: 0;
+    }
+    .features li {
+      padding: 0.5rem 0;
+      border-bottom: 1px dashed var(--rule);
+    }
+    .features li:last-child { border-bottom: none; }
+    .features strong {
+      font-variant: small-caps;
+      letter-spacing: 0.05em;
+    }
+    footer {
+      border-top: 1px solid var(--rule);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #777;
+      max-width: 720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .status {
+      display: inline-block;
+      background: var(--ink);
+      color: var(--paper);
+      padding: 0.25rem 0.6rem;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="status">Pre-release · v0.0.1</div>
+      <h1>Whereas</h1>
+      <p class="tagline">The open-source contract repository.</p>
+    </header>
+
+    <p class="preamble">Recitals</p>
+    <p><strong>Whereas</strong> legal teams are increasingly asked to manage contracts at the speed of software, but the contract management market remains dominated by closed, expensive, cloud-only platforms;</p>
+    <p><strong>Whereas</strong> sensitive client agreements should not be required to leave a firm's infrastructure as a precondition for tooling;</p>
+    <p><strong>Whereas</strong> AI-assisted contract review is genuinely useful but must be auditable, span-cited, and not built on hallucinations;</p>
+    <p><strong>Now, therefore,</strong> Whereas is a self-hostable, AGPL-licensed contract repository for legal teams who want their tools to work the way they do.</p>
+
+    <h2>What it does</h2>
+    <ul class="features">
+      <li><strong>Repository.</strong> Upload, search, and permission-scope contracts across your team.</li>
+      <li><strong>Metadata extraction.</strong> Parties, dates, term, governing law, value — every field cited back to the source text.</li>
+      <li><strong>Clause intelligence.</strong> Segmented and classified against the CUAD taxonomy. Extensible.</li>
+      <li><strong>Playbook deviation.</strong> Define your firm's positions in YAML. Whereas flags clauses that don't match.</li>
+      <li><strong>Q&amp;A over your corpus.</strong> Ask questions; get answers with clause citations.</li>
+      <li><strong>Embedded signature.</strong> DocuSeal runs alongside Whereas, no third-party vendor required.</li>
+    </ul>
+
+    <h2>Status</h2>
+    <p>Whereas is in early development. The repository scaffold is up; the first tagged release (v0.1) is the next milestone. Watch the GitHub repo or join the discussion if you want to contribute.</p>
+
+    <h2>License</h2>
+    <p>Whereas is licensed under <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>. Run it yourself, modify it, share your modifications. Commercial licensing available for organizations that need to deploy Whereas without the AGPL's network-use clause.</p>
+  </div>
+
+  <footer>
+    Whereas is an independent open-source project. Not affiliated with any commercial CLM vendor.
+  </footer>
+</body>
+</html>
