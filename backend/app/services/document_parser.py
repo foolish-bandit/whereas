@@ -162,13 +162,22 @@ def _pdf_page_count(file_bytes: bytes) -> int:
 
 
 def _run_in_subprocess(
-    file_bytes: bytes, ext: str, timeout_seconds: int
+    file_bytes: bytes,
+    ext: str,
+    timeout_seconds: int,
+    *,
+    worker=None,
 ) -> ParsedDocument:
-    """Run the Docling parse in a spawned worker process with a hard timeout."""
+    """Run the Docling parse in a spawned worker process with a hard timeout.
+
+    `worker` is a private hook so tests can substitute a slow target and
+    exercise the timeout mechanism without dragging Docling in.
+    """
+    target = worker or _worker_entry
     ctx = multiprocessing.get_context("spawn")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     proc = ctx.Process(
-        target=_worker_entry,
+        target=target,
         args=(child_conn, file_bytes, ext),
         name="whereas-document-parser",
     )

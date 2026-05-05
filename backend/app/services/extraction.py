@@ -105,6 +105,12 @@ async def extract_metadata(
 ) -> list[ExtractedFieldResult]:
     """Extract structured metadata from a contract.
 
+    `document_text` MUST be `ParsedDocument.full_text` produced by
+    `app.services.document_parser.parse_document`. Span validation here uses
+    `str.find(span)` against this exact string, so feeding in any other
+    rendering (raw bytes decoded, output from a different parser, normalized
+    whitespace, etc.) will cause every span to be rejected as a hallucination.
+
     Returns a list of ExtractedFieldResult. Fields where the model returned a
     value but we could not validate the span are returned with rejected_reason
     set, so the caller can audit hallucinations.
