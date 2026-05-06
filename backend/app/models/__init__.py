@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -89,7 +89,7 @@ class User(Base):
 # ------------------------------------------------------------------
 
 
-class ContractStatus(str, Enum):
+class ContractStatus(StrEnum):
     UPLOADED = "uploaded"
     EXTRACTING = "extracting"
     READY = "ready"
@@ -255,7 +255,7 @@ class Playbook(Base):
     )
 
 
-class DeviationSeverity(str, Enum):
+class DeviationSeverity(StrEnum):
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
