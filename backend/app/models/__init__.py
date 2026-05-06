@@ -19,6 +19,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -45,6 +46,23 @@ class Organization(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Per-org master key, wrapped under WHEREAS_INSTANCE_KEY. The plaintext
+    # master key is never stored; it is generated, wrapped, and persisted here
+    # by `app.security.encryption.create_org_master_key` when the org is
+    # created. Currently nullable because (a) the org-creation flow that calls
+    # `create_org_master_key` has not yet been wired up and (b) any orgs that
+    # exist before that flow lands won't have a wrapped key. A follow-up
+    # migration will backfill and tighten this to NOT NULL.
+    wrapped_master_key: Mapped[bytes | None] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment=(
+            "Wrapped under WHEREAS_INSTANCE_KEY via "
+            "app.security.encryption.create_org_master_key. NULL only for orgs "
+            "created before key wrapping was wired up; will be backfilled."
+        ),
+    )
 
     users: Mapped[list[User]] = relationship(back_populates="organization")
 

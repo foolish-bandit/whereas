@@ -1,14 +1,22 @@
 """Whereas API entry point."""
+import asyncio
 import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api import auth, contracts, docuseal_bridge, playbooks, qa
 from app.core.config import get_settings
+from app.core.database import engine
 from app.core.logging import configure_logging
 from app.security.encryption import load_instance_key
 from app.services.storage import DocumentStorage
+
+# How long the startup connectivity check waits before giving up.
+# Bounded so a wedged DB cannot prevent the process from coming up to
+# serve health checks and surface the outage to operators.
+_DB_PROBE_TIMEOUT_SECONDS = 5.0
 
 configure_logging()
 log = logging.getLogger(__name__)
@@ -45,6 +53,9 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# TODO: migrate startup/shutdown to FastAPI's lifespan context manager.
+# `on_event` is deprecated; doing this in a focused PR keeps the blast radius
+# contained.
 @app.on_event("startup")
 async def startup() -> None:
     log.info("Whereas starting", extra={"environment": settings.ENVIRONMENT})
@@ -52,6 +63,27 @@ async def startup() -> None:
     # would silently corrupt the security model, so this must fail loud.
     load_instance_key()
     log.info("Encryption instance key validated")
+    # Database connectivity probe. Best-effort: a transient outage at boot
+    # must not prevent the app from coming up to serve health checks. The
+    # explicit timeout matters — without it, a wedged DB (accepting TCP but
+    # not responding) would hang startup forever, which is the exact failure
+    # mode this check is meant to surface.
+    try:
+        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        log.info("Database connectivity verified")
+    except TimeoutError:
+        log.error(
+            "Database connectivity probe timed out after %.1fs; "
+            "starting anyway, requests will surface the outage",
+            _DB_PROBE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        log.exception(
+            "Database connectivity probe failed; starting anyway, "
+            "requests will surface the outage"
+        )
     # Best-effort bucket provisioning. Transient S3 errors must not take the
     # whole app down; the first store_encrypted call will retry.
     try:
