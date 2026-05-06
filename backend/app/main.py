@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, contracts, docuseal_bridge, playbooks, qa
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.security.encryption import load_instance_key
+from app.services.storage import DocumentStorage
 
 configure_logging()
 log = logging.getLogger(__name__)
@@ -46,6 +48,18 @@ async def health() -> dict[str, str]:
 @app.on_event("startup")
 async def startup() -> None:
     log.info("Whereas starting", extra={"environment": settings.ENVIRONMENT})
+    # Validate the instance key first. Running without encryption configured
+    # would silently corrupt the security model, so this must fail loud.
+    load_instance_key()
+    log.info("Encryption instance key validated")
+    # Best-effort bucket provisioning. Transient S3 errors must not take the
+    # whole app down; the first store_encrypted call will retry.
+    try:
+        await DocumentStorage(settings).ensure_bucket_exists()
+    except Exception:
+        log.exception(
+            "Failed to ensure S3 bucket exists; first write will retry"
+        )
 
 
 @app.on_event("shutdown")
