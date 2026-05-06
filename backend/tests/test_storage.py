@@ -148,6 +148,30 @@ class TestRoundtrip:
         assert all(c in "0123456789abcdef" for c in result.encrypted_blob_sha256)
         assert result.size_bytes == len(plaintext) + 28
 
+    async def test_retrieve_after_metadata_persistence_boundary(
+        self, storage: DocumentStorage, org_master_key: bytes
+    ) -> None:
+        plaintext = b"terms survive process restart"
+        result = await storage.store_encrypted(
+            plaintext_bytes=plaintext,
+            document_id="persisted-doc",
+            org_master_key=org_master_key,
+        )
+        persisted_s3_key = bytes(result.s3_key, "utf-8").decode("utf-8")
+        persisted_wrapped_dek = bytes(result.wrapped_dek_bytes)
+        persisted_document_id = "persisted-doc"
+        persisted_blob_hash = result.encrypted_blob_sha256
+
+        recovered = await storage.retrieve_decrypted(
+            s3_key=persisted_s3_key,
+            document_id=persisted_document_id,
+            wrapped_dek_bytes=persisted_wrapped_dek,
+            org_master_key=org_master_key,
+            expected_blob_sha256=persisted_blob_hash,
+        )
+
+        assert recovered == plaintext
+
     async def test_blob_in_s3_is_ciphertext_not_plaintext(
         self,
         storage: DocumentStorage,
