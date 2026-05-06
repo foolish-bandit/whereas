@@ -32,12 +32,14 @@ from pathlib import Path
 import pytest
 
 # Skip the whole module if testcontainers / docker isn't available.
+# These imports are deliberately below the importorskip calls, so E402
+# (imports not at top of file) doesn't apply — that's the whole point.
 testcontainers = pytest.importorskip("testcontainers.postgres")
 psycopg = pytest.importorskip("psycopg")
 
-from testcontainers.postgres import PostgresContainer
+from testcontainers.postgres import PostgresContainer  # noqa: E402
 
-from app.security.rls import TENANT_SCOPED_TABLES
+from app.security.rls import TENANT_SCOPED_TABLES  # noqa: E402
 
 # pgvector/pgvector ships an image with the `vector` extension already
 # available in `shared_preload_libraries`. We pin a Postgres major to
