@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,9 +19,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-testcontainers = pytest.importorskip("testcontainers.postgres")
-
-from testcontainers.postgres import PostgresContainer  # noqa: E402
+try:
+    from testcontainers.postgres import PostgresContainer
+except ImportError:  # pragma: no cover - exercised when testcontainers is absent
+    PostgresContainer = None  # type: ignore[assignment,misc]
 
 from app.api import contracts as contracts_api  # noqa: E402
 from app.core.database import Base, get_db  # noqa: E402
@@ -43,6 +44,8 @@ _INSTANCE_KEY = secrets.token_bytes(32)
 
 
 def _docker_available() -> bool:
+    if PostgresContainer is None:
+        return False
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -55,7 +58,7 @@ def _docker_available() -> bool:
     return result.returncode == 0
 
 
-def _container_async_url(container: PostgresContainer) -> str:
+def _container_async_url(container: Any) -> str:
     sync_url = container.get_connection_url()
     if sync_url.startswith("postgresql+psycopg2://"):
         return sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
@@ -65,9 +68,10 @@ def _container_async_url(container: PostgresContainer) -> str:
 
 
 @pytest.fixture(scope="module")
-def postgres_container() -> Iterator[PostgresContainer]:
-    if not _docker_available():
-        pytest.skip("Docker daemon not reachable; skipping contract API database tests")
+def postgres_container() -> Iterator[Any | None]:
+    if not _docker_available() or PostgresContainer is None:
+        yield None
+        return
     container = PostgresContainer(_PG_IMAGE)
     container.start()
     try:
@@ -77,17 +81,37 @@ def postgres_container() -> Iterator[PostgresContainer]:
 
 
 @pytest.fixture
-async def engine(postgres_container: PostgresContainer) -> AsyncIterator[AsyncEngine]:
-    engine = create_async_engine(_container_async_url(postgres_container), echo=False)
+async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
+    if postgres_container is None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+        tables = [
+            Organization.__table__,
+            User.__table__,
+            AuditEvent.__table__,
+            Contract.__table__,
+            ExtractedField.__table__,
+        ]
+    else:
+        engine = create_async_engine(_container_async_url(postgres_container), echo=False)
+        tables = list(Base.metadata.sorted_tables)
+
+    if engine.dialect.name == "sqlite":
+        @event.listens_for(engine.sync_engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
     async with engine.begin() as conn:
-        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+        if engine.dialect.name == "postgresql":
+            await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+        await conn.run_sync(Base.metadata.drop_all, tables=tables)
+        await conn.run_sync(Base.metadata.create_all, tables=tables)
     try:
         yield engine
     finally:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.drop_all, tables=tables)
         await engine.dispose()
 
 
@@ -360,17 +384,19 @@ async def test_duplicate_upload_same_org_rejected_but_other_org_allowed(
 ) -> None:
     first = await _create_user_org(db_session, email="first@example.com")
     second = await _create_user_org(db_session, email="second@example.com")
+    first_headers = _headers(first.user)
+    second_headers = _headers(second.user)
 
     first_response = await client.post(
         "/api/contracts/upload",
-        headers=_headers(first.user),
+        headers=first_headers,
         files=_file_tuple(),
     )
     assert first_response.status_code == 201
 
     duplicate_response = await client.post(
         "/api/contracts/upload",
-        headers=_headers(first.user),
+        headers=first_headers,
         files=_file_tuple(),
     )
     assert duplicate_response.status_code == 409
@@ -378,7 +404,7 @@ async def test_duplicate_upload_same_org_rejected_but_other_org_allowed(
 
     other_org_response = await client.post(
         "/api/contracts/upload",
-        headers=_headers(second.user),
+        headers=second_headers,
         files=_file_tuple(),
     )
     assert other_org_response.status_code == 201

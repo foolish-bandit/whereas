@@ -145,6 +145,7 @@ async def upload_contract(
         target_id=str(contract.id),
         details=_audit_contract_details(contract, filename=filename),
     )
+    await _refresh_upload_response_rows(session, contract, extracted_fields)
 
     return _upload_response(contract, extracted_fields, message=message)
 
@@ -394,6 +395,16 @@ def _audit_contract_details(contract: Contract, *, filename: str | None) -> dict
     if filename is not None:
         details["filename"] = filename
     return details
+
+
+async def _refresh_upload_response_rows(
+    session: AsyncSession,
+    contract: Contract,
+    extracted_fields: Sequence[ExtractedField],
+) -> None:
+    await session.refresh(contract)
+    for field in extracted_fields:
+        await session.refresh(field)
 
 
 def _upload_response(
