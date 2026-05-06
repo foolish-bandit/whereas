@@ -3,7 +3,6 @@ import pytest
 
 from app.services.playbook_schema import PlaybookParseError, parse_playbook
 
-
 VALID_YAML = """
 name: "Test Playbook"
 description: "Sample"
