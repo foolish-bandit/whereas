@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     S3_SECRET_KEY: str
     S3_BUCKET: str = "whereas-documents"
     S3_REGION: str = "us-east-1"
+    CONTRACT_UPLOAD_MAX_BYTES: int = 50 * 1024 * 1024
 
     # --- LLM ---
     LITELLM_PROVIDER: str = "ollama"
