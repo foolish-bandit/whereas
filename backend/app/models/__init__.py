@@ -115,6 +115,15 @@ class Contract(Base):
 
     # Storage references
     s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    wrapped_dek: Mapped[bytes | None] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment=(
+            "Serialized WrappedKey for the per-document DEK: nonce || ciphertext "
+            "from app.security.encryption.WrappedKey.to_bytes(), wrapping the "
+            "document DEK under the organization master key."
+        ),
+    )
     mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
     file_hash_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     page_count: Mapped[int | None] = mapped_column(Integer)

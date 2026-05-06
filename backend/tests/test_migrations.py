@@ -231,6 +231,27 @@ def test_wrapped_master_key_column_shape(
     assert is_nullable == "YES", "wrapped_master_key should be nullable"
 
 
+def test_contract_wrapped_dek_column_shape(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """`contracts.wrapped_dek` is BYTEA and nullable for existing rows."""
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_type, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'contracts'
+               AND column_name = 'wrapped_dek'
+            """
+        )
+        row = cur.fetchone()
+    assert row is not None, "wrapped_dek column is missing"
+    data_type, is_nullable = row
+    assert data_type == "bytea", f"expected bytea, got {data_type!r}"
+    assert is_nullable == "YES", "wrapped_dek should be nullable"
+
+
 def test_rls_policies_match_spec(upgraded_db: PostgresContainer) -> None:
     """`pg_policies` after upgrade matches what rls.py says it created.
 
