@@ -6,7 +6,7 @@ inputs, ordering, or serialization breaks every record written under the
 prior version. Database-backed tests for `record_event` / `verify_chain`
 arrive when the audit migration lands.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.security.audit_log import (
     GENESIS_HASH,
@@ -24,7 +24,7 @@ def _baseline_kwargs() -> dict:
         "target_type": "user",
         "target_id": "00000000-0000-0000-0000-00000000000a",
         "details": {"ip": "10.0.0.1", "ua": "test"},
-        "occurred_at": datetime(2026, 5, 6, 12, 0, 0, tzinfo=timezone.utc),
+        "occurred_at": datetime(2026, 5, 6, 12, 0, 0, tzinfo=UTC),
         "prev_hash": GENESIS_HASH,
     }
 
@@ -109,7 +109,7 @@ class TestHashSensitivity:
 
     def test_occurred_at_changes_hash(self) -> None:
         assert self._h() != self._h(
-            occurred_at=datetime(2026, 5, 6, 12, 0, 1, tzinfo=timezone.utc),
+            occurred_at=datetime(2026, 5, 6, 12, 0, 1, tzinfo=UTC),
         )
 
     def test_prev_hash_changes_hash(self) -> None:
@@ -163,7 +163,7 @@ class TestCanonicalization:
 class TestChainProgression:
     """Build h1 -> h2 -> h3 and verify the linkage matches expectations."""
 
-    _ts = datetime(2026, 5, 6, 12, 0, 0, tzinfo=timezone.utc)
+    _ts = datetime(2026, 5, 6, 12, 0, 0, tzinfo=UTC)
 
     def _h1(self) -> str:
         return compute_entry_hash(

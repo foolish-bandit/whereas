@@ -32,7 +32,6 @@ Alembic migration that follows; we don't execute SQL from here.
 """
 from __future__ import annotations
 
-
 # --------------------------------------------------------------------------
 # Public configuration
 # --------------------------------------------------------------------------

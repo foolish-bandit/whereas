@@ -29,8 +29,8 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -67,7 +67,7 @@ GENESIS_HASH = "0" * 64
 # --------------------------------------------------------------------------
 
 
-class AuditEventType(str, Enum):
+class AuditEventType(StrEnum):
     """Canonical audit event types. Dotted, lowercase, namespaced.
 
     The string values are part of the persisted record and are bound into
@@ -229,7 +229,7 @@ async def record_event(
     session-scope context manager.
     """
     if occurred_at is None:
-        occurred_at = datetime.now(timezone.utc)
+        occurred_at = datetime.now(UTC)
     if details is None:
         details = {}
 
