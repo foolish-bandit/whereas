@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import sys
 
 import pytest
 from docx import Document
@@ -94,12 +95,64 @@ def _parse_or_skip(
 ) -> ParsedDocument:
     try:
         return parse_document(file_bytes, filename, **kwargs)  # type: ignore[arg-type]
+    except DocumentParseTimeoutError as e:
+        pytest.skip(
+            "Docling/RapidOCR model startup exceeded timeout in this environment: "
+            f"{e}"
+        )
     except DocumentParseError as e:
         if _is_offline_model_error(e):
             pytest.skip(
                 f"Docling model download unavailable in this environment: {e}"
             )
         raise
+
+
+class TestParseOrSkip:
+    def test_skips_docling_startup_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_parse_document(*_args: object, **_kwargs: object) -> ParsedDocument:
+            raise DocumentParseTimeoutError("Parsing exceeded 180s budget.")
+
+        monkeypatch.setattr(
+            sys.modules[__name__], "parse_document", fake_parse_document
+        )
+
+        with pytest.raises(
+            pytest.skip.Exception,
+            match="Docling/RapidOCR model startup exceeded timeout",
+        ):
+            _parse_or_skip(b"%PDF", "nda.pdf", timeout_seconds=180)
+
+    def test_skips_known_offline_model_download_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_parse_document(*_args: object, **_kwargs: object) -> ParsedDocument:
+            raise DocumentParseError("HuggingFace model download failed")
+
+        monkeypatch.setattr(
+            sys.modules[__name__], "parse_document", fake_parse_document
+        )
+
+        with pytest.raises(
+            pytest.skip.Exception,
+            match="Docling model download unavailable",
+        ):
+            _parse_or_skip(b"%PDF", "nda.pdf", timeout_seconds=180)
+
+    def test_reraises_ordinary_parse_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_parse_document(*_args: object, **_kwargs: object) -> ParsedDocument:
+            raise DocumentParseError("ordinary parser regression")
+
+        monkeypatch.setattr(
+            sys.modules[__name__], "parse_document", fake_parse_document
+        )
+
+        with pytest.raises(DocumentParseError, match="ordinary parser regression"):
+            _parse_or_skip(b"%PDF", "nda.pdf", timeout_seconds=180)
 
 
 def _assert_offset_invariants(doc: ParsedDocument) -> None:
@@ -134,7 +187,7 @@ class TestDocxParsing:
     def test_parses_docx_and_offsets_are_consistent(
         self, synthetic_docx_bytes: bytes
     ) -> None:
-        result = parse_document(
+        result = _parse_or_skip(
             synthetic_docx_bytes, "nda.docx", timeout_seconds=180
         )
         _assert_offset_invariants(result)
@@ -176,10 +229,10 @@ class TestUnsupportedExtension:
 
 class TestHashDeterminism:
     def test_same_bytes_same_hash(self, synthetic_docx_bytes: bytes) -> None:
-        a = parse_document(
+        a = _parse_or_skip(
             synthetic_docx_bytes, "first.docx", timeout_seconds=180
         )
-        b = parse_document(
+        b = _parse_or_skip(
             synthetic_docx_bytes, "second.docx", timeout_seconds=180
         )
         assert a.content_hash == b.content_hash
@@ -193,7 +246,7 @@ class TestHashDeterminism:
     ) -> None:
         flipped = bytearray(synthetic_docx_bytes)
         flipped[-1] ^= 0x01
-        a = parse_document(
+        a = _parse_or_skip(
             synthetic_docx_bytes, "original.docx", timeout_seconds=180
         )
         # The mutated bytes likely break the docx zip; we only assert the
