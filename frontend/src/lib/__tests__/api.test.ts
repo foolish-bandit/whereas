@@ -17,6 +17,7 @@ import {
   uploadContract,
 } from "../api";
 import { clearDevUserId, setDevUserId } from "../devUser";
+import { __resetMockState } from "../mockApi";
 
 const VALID_UUID = "11111111-1111-4111-8111-111111111111";
 
@@ -27,11 +28,15 @@ describe("api client", () => {
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     clearDevUserId();
+    vi.unstubAllEnvs();
+    __resetMockState();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     clearDevUserId();
+    __resetMockState();
   });
 
   it("throws MissingDevUserError before calling fetch when no dev user is set", async () => {
@@ -170,5 +175,55 @@ describe("api client", () => {
     const result = await downloadContract("abc");
     expect(result.filename).toBe("MSA.pdf");
     expect(result.mimeType).toBe("application/pdf");
+  });
+
+  describe("demo-mode dispatch", () => {
+    it("does not call fetch when VITE_WHEREAS_DEMO_MODE=true", async () => {
+      vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+      const list = await getContracts();
+      expect(list.length).toBeGreaterThan(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("does not require a dev user id in demo mode", async () => {
+      vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+      // No setDevUserId call; would throw MissingDevUserError in real mode.
+      await expect(getContracts()).resolves.toBeDefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("uploads via mockApi without calling fetch in demo mode", async () => {
+      vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+      const file = new File(["x"], "demo.pdf", { type: "application/pdf" });
+      const result = await uploadContract({ file, title: "Demo" });
+      expect(result.title).toBe("Demo");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("real mode still calls fetch when VITE_WHEREAS_DEMO_MODE is absent", async () => {
+      // env is reset in beforeEach, so demo flag is unset here.
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      await getContracts();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('real mode still calls fetch when VITE_WHEREAS_DEMO_MODE is "false"', async () => {
+      vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "false");
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      await getContracts();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -6,8 +6,10 @@ import {
   isValidUuid,
   setDevUserId,
 } from "../lib/devUser";
+import { isDemoMode } from "../lib/env";
 
 export default function SettingsPage() {
+  const demo = isDemoMode();
   const [value, setValue] = useState<string>(() => getDevUserId() ?? "");
   const [stored, setStored] = useState<string | null>(() => getDevUserId());
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,15 @@ export default function SettingsPage() {
         <code className="font-mono text-xs">X-Whereas-Dev-User</code> header.
         Store the UUID of an existing user here; it is kept in your browser only.
       </p>
+
+      {demo && (
+        <div className="mt-4 max-w-2xl rounded-lg border border-info-ring bg-info-soft p-4 text-sm text-info">
+          <p>
+            This deployment is running in demo mode with mock data. The
+            development user ID is not used; you can leave it blank.
+          </p>
+        </div>
+      )}
 
       <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5">
         <h2 className="text-sm font-medium text-ink">Development user ID</h2>

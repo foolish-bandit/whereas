@@ -1,4 +1,6 @@
 import { getDevUserId } from "./devUser";
+import { isDemoMode } from "./env";
+import * as mockApi from "./mockApi";
 import type {
   ContractDetail,
   ContractListItem,
@@ -171,6 +173,7 @@ function scrubSecrets<T>(value: T): T {
 export async function getContracts(
   options: ApiOptions = {},
 ): Promise<ContractListItem[]> {
+  if (isDemoMode()) return mockApi.getContracts(options);
   const data = await call<ContractListItem[]>(
     "/api/contracts",
     { method: "GET" },
@@ -183,6 +186,7 @@ export async function getContract(
   id: string,
   options: ApiOptions = {},
 ): Promise<ContractDetail> {
+  if (isDemoMode()) return mockApi.getContract(id, options);
   const data = await call<ContractDetail>(
     `/api/contracts/${encodeURIComponent(id)}`,
     { method: "GET" },
@@ -200,6 +204,7 @@ export interface UploadInput {
 export async function uploadContract(
   input: UploadInput,
 ): Promise<UploadContractResponse> {
+  if (isDemoMode()) return mockApi.uploadContract(input);
   const formData = new FormData();
   formData.append("file", input.file);
   const trimmedTitle = (input.title ?? "").trim();
@@ -229,6 +234,7 @@ export async function downloadContract(
   id: string,
   options: ApiOptions = {},
 ): Promise<DownloadResult> {
+  if (isDemoMode()) return mockApi.downloadContract(id, options);
   const headers = new Headers();
   for (const [k, v] of Object.entries(devHeaders())) {
     headers.set(k, v);

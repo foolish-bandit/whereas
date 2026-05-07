@@ -61,6 +61,10 @@ For frontend-only development (without the full Docker stack), see
 `http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
 (default `http://localhost:8000`).
 
+A hosted UI preview, running in demo mode against fictional sample data,
+is at **https://whereas.pages.dev/**. No real contracts; nothing uploaded
+there is sent anywhere.
+
 ## Project status
 
 - [x] Repo scaffold
