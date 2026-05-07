@@ -318,6 +318,34 @@ class Playbook(Base):
     )
 
 
+
+
+class ClauseTemplate(Base):
+    __tablename__ = "clause_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    clause_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    jurisdiction: Mapped[str | None] = mapped_column(String(128))
+    contract_type: Mapped[str | None] = mapped_column(String(128))
+    version: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str | None] = mapped_column(String(255))
+    tags: Mapped[list[str] | None] = mapped_column(JSON)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_clause_templates_org", "organization_id"),
+        Index("ix_clause_templates_org_active", "organization_id", "is_active"),
+        Index("ix_clause_templates_org_type", "organization_id", "clause_type"),
+        Index("ix_clause_templates_org_jurisdiction", "organization_id", "jurisdiction"),
+        Index("ix_clause_templates_org_contract_type", "organization_id", "contract_type"),
+    )
+
 class DeviationSeverity(StrEnum):
     INFO = "info"
     LOW = "low"

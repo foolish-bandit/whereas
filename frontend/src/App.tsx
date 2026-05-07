@@ -7,6 +7,7 @@ import PlaybookDetailPage from "./pages/PlaybookDetailPage";
 import PlaybooksPage from "./pages/PlaybooksPage";
 import UploadPage from "./pages/UploadPage";
 import SettingsPage from "./pages/SettingsPage";
+import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/playbooks" element={<PlaybooksPage />} />
         <Route path="/playbooks/:id" element={<PlaybookDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/clause-library" element={<ClauseLibraryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/contracts" replace />} />
       </Routes>

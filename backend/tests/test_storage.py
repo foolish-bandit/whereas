@@ -16,6 +16,8 @@ from typing import Any
 import boto3
 import pytest
 from botocore.exceptions import ClientError
+
+pytest.importorskip("moto")
 from moto import mock_aws
 
 from app.security.encryption import (

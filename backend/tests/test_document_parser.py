@@ -12,10 +12,12 @@ import sys
 
 import pytest
 from docx import Document
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 
-from app.services.document_parser import (
+reportlab = pytest.importorskip("reportlab")
+from reportlab.lib.pagesizes import letter  # noqa: E402
+from reportlab.pdfgen import canvas  # noqa: E402
+
+from app.services.document_parser import (  # noqa: E402
     DocumentParseError,
     DocumentParseTimeoutError,
     DocumentTooLargeError,
