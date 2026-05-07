@@ -6,6 +6,7 @@ import DocumentViewer from "../components/DocumentViewer";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import MetadataPanel from "../components/MetadataPanel";
+import ReviewPanel from "../components/ReviewPanel";
 import RightPanelTabs from "../components/RightPanelTabs";
 import StatusBadge from "../components/StatusBadge";
 import {
@@ -28,6 +29,7 @@ import type {
   ContractDetail,
   ExtractedField,
 } from "../types/contracts";
+import type { PlaybookReviewResult } from "../types/review";
 
 type LoadState =
   | { kind: "loading" }
@@ -39,7 +41,7 @@ type DownloadState =
   | { kind: "downloading" }
   | { kind: "error"; message: string };
 
-type SidebarTab = "metadata" | "clauses";
+type SidebarTab = "metadata" | "clauses" | "review";
 
 export default function ContractWorkspacePage() {
   const { id } = useParams<{ id: string }>();
@@ -49,6 +51,8 @@ export default function ContractWorkspacePage() {
   const [downloadState, setDownloadState] = useState<DownloadState>({
     kind: "idle",
   });
+  const [reviewResults, setReviewResults] =
+    useState<PlaybookReviewResult | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -100,6 +104,22 @@ export default function ContractWorkspacePage() {
       if (!clauseHasValidSpan(clause, contract.full_text)) return null;
       return { start: clause.span_start, end: clause.span_end };
     }
+    if (selectedKey.startsWith("review:")) {
+      // Review evidence keys resolve through the latest review result.
+      // The matcher copies span_start/span_end straight off the Clause
+      // row, which is exact-span-grounded by construction.
+      if (!reviewResults) return null;
+      const ruleId = selectedKey.slice("review:".length);
+      const rule = reviewResults.results.find((r) => r.rule_id === ruleId);
+      if (!rule) return null;
+      if (
+        typeof rule.span_start !== "number" ||
+        typeof rule.span_end !== "number"
+      ) {
+        return null;
+      }
+      return { start: rule.span_start, end: rule.span_end };
+    }
     const field = contract.extracted_fields.find(
       (f) => fieldKey(f) === selectedKey,
     );
@@ -111,7 +131,7 @@ export default function ContractWorkspacePage() {
       return null;
     }
     return { start: field.span_start, end: field.span_end };
-  }, [contract, selectedKey]);
+  }, [contract, selectedKey, reviewResults]);
 
   async function onDownload() {
     if (!contract) return;
@@ -213,6 +233,7 @@ export default function ContractWorkspacePage() {
           }}
           selectedKey={selectedKey}
           onSelect={setSelectedKey}
+          onReviewResultsChange={setReviewResults}
         />
       </div>
     </div>
@@ -225,6 +246,7 @@ interface SidebarProps {
   onTabChange: (tab: SidebarTab) => void;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
+  onReviewResultsChange: (result: PlaybookReviewResult | null) => void;
 }
 
 function Sidebar({
@@ -233,6 +255,7 @@ function Sidebar({
   onTabChange,
   selectedKey,
   onSelect,
+  onReviewResultsChange,
 }: SidebarProps) {
   const tabs = [
     {
@@ -245,22 +268,35 @@ function Sidebar({
       label: "Clauses",
       count: contract.clauses.length,
     },
+    {
+      id: "review" as const,
+      label: "Review",
+    },
   ];
   return (
     <aside>
       <RightPanelTabs tabs={tabs} active={activeTab} onChange={onTabChange} />
-      {activeTab === "metadata" ? (
+      {activeTab === "metadata" && (
         <MetadataPanel
           fields={contract.extracted_fields}
           selectedKey={selectedKey}
           onSelect={onSelect}
         />
-      ) : (
+      )}
+      {activeTab === "clauses" && (
         <ClausesPanel
           clauses={contract.clauses}
           fullText={contract.full_text}
           selectedKey={selectedKey}
           onSelect={onSelect}
+        />
+      )}
+      {activeTab === "review" && (
+        <ReviewPanel
+          contractId={contract.id}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+          onResultsChange={onReviewResultsChange}
         />
       )}
       <ReviewReminder

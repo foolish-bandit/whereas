@@ -19,13 +19,26 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import Clause, Contract, ContractStatus, ExtractedField, Organization, User
+from app.models import (
+    Clause,
+    Contract,
+    ContractStatus,
+    ExtractedField,
+    Organization,
+    Playbook,
+    User,
+)
 from app.schemas.contracts import (
     ClauseResponse,
     ContractDetailResponse,
     ContractListItemResponse,
     ContractUploadResponse,
     ExtractedFieldResponse,
+)
+from app.schemas.playbook_review import (
+    PlaybookReviewRequest,
+    PlaybookReviewResult,
+    review_to_response,
 )
 from app.security.audit_log import AuditEventType, record_event
 from app.security.encryption import (
@@ -44,6 +57,11 @@ from app.services.document_parser import (
     parse_document,
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
+from app.services.playbook_loader import (
+    PlaybookValidationError,
+    parse_playbook,
+)
+from app.services.playbook_matcher import match_playbook
 from app.services.storage import DocumentStorage
 
 log = logging.getLogger(__name__)
@@ -223,6 +241,86 @@ async def list_contract_clauses(
         load_clauses=True,
     )
     return [ClauseResponse.model_validate(c) for c in _ordered_clauses(contract)]
+
+
+@router.post(
+    "/{contract_id}/playbook-review",
+    response_model=PlaybookReviewResult,
+)
+async def review_contract_with_playbook(
+    contract_id: uuid.UUID,
+    payload: PlaybookReviewRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> PlaybookReviewResult:
+    """Run a deterministic playbook review against a contract's clauses.
+
+    PR #21 scope: pure rule matching only. The endpoint never persists
+    findings, never mutates the contract, the clauses, or the
+    playbook, and never calls an LLM. Results are transient — every
+    call computes them from scratch against the current segmented
+    clauses.
+
+    Behavior:
+      - 404 if the contract does not belong to the caller's org.
+      - 404 if the playbook does not belong to the caller's org or is
+        inactive (consistent with the playbooks router; do not leak
+        existence).
+      - 409 if the contract has no segmented clauses yet (the rule
+        matcher would only ever return all-fail in that case, which
+        makes for a confusing result; surface it as a precondition).
+      - 200 with a `PlaybookReviewResult` otherwise.
+
+    Whereas surfaces information about contracts; it does not provide
+    legal advice. Reviewers must treat results as a triage signal.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        load_clauses=True,
+    )
+    playbook = await _get_active_playbook_for_org(
+        session,
+        playbook_id=payload.playbook_id,
+        organization_id=user.organization_id,
+    )
+    clauses = _ordered_clauses(contract)
+    if not clauses:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Contract has no segmented clauses to review yet. Wait for "
+                "segmentation to complete or re-upload the document."
+            ),
+        )
+
+    try:
+        parsed = parse_playbook(playbook.yaml_source)
+    except PlaybookValidationError as exc:
+        # A persisted playbook that fails revalidation is a corrupted
+        # row — should not happen because creation goes through the same
+        # validator, but surface a clean 500 rather than a partial result.
+        log.exception(
+            "Stored playbook failed revalidation during review",
+            extra={"playbook_id": str(playbook.id)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Playbook could not be parsed for review. The stored YAML "
+                "is invalid; deactivate and recreate the playbook."
+            ),
+        ) from exc
+
+    review = match_playbook(parsed, clauses)
+    return review_to_response(
+        playbook_id=playbook.id,
+        playbook_name=playbook.name,
+        contract_id=contract.id,
+        review=review,
+    )
 
 
 @router.get("/{contract_id}/download")
@@ -414,6 +512,30 @@ async def _get_contract_for_org(
 def _ordered_clauses(contract: Contract) -> list[Clause]:
     """Stable ordering for clause responses: by ordinal ascending."""
     return sorted(contract.clauses, key=lambda c: c.ordinal)
+
+
+async def _get_active_playbook_for_org(
+    session: AsyncSession,
+    *,
+    playbook_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> Playbook:
+    """Fetch a playbook scoped to an org, requiring it be active.
+
+    Returns 404 — not 403 — both for cross-org access and for
+    deactivated playbooks. Mirrors the playbooks router so callers
+    can't distinguish "playbook does not exist" from "playbook exists
+    but you cannot see it".
+    """
+    stmt = select(Playbook).where(
+        Playbook.id == playbook_id,
+        Playbook.organization_id == organization_id,
+    )
+    result = await session.execute(stmt)
+    playbook = result.scalar_one_or_none()
+    if playbook is None or not playbook.is_active:
+        raise HTTPException(status_code=404, detail="Playbook not found.")
+    return playbook
 
 
 def _derive_title(title: str | None, filename: str) -> str:

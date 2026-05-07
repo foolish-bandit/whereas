@@ -130,9 +130,9 @@ export default function PlaybookDetailPage() {
       </div>
 
       <p className="mt-3 rounded-md border border-rule bg-canvas-subtle px-3 py-2 text-xs text-ink-muted">
-        Whereas does not yet evaluate playbook rules against contracts. This
-        page is read-only. Whereas surfaces information about contracts;
-        it does not provide legal advice.
+        This page is read-only. To run this playbook against a contract, open
+        the contract and use the Review tab. Whereas surfaces information
+        about contracts; it does not provide legal advice.
       </p>
     </div>
   );

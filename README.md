@@ -127,10 +127,23 @@ detail, and soft-delete (deactivate). An example playbook ships under
 read-only **Playbooks** page in the frontend renders them with a
 right-hand YAML pane.
 
-This PR ships the schema and loader. The deviation engine — matching
-parsed rules against segmented clauses, generating findings,
-suggesting redlines — is the next step. Whereas surfaces information
-about contracts; it does not provide legal advice.
+### Deterministic playbook review
+
+Whereas can now run a playbook against a contract's segmented
+clauses and return pass/fail results per rule. The matching engine
+(`backend/app/services/playbook_matcher.py`) is **deterministic** —
+no LLM call, no embeddings, no paraphrase inference — and only uses
+the data that is already exact-span-grounded by the segmenter. The
+endpoint is `POST /api/contracts/{contract_id}/playbook-review`; the
+contract detail page exposes a **Review** tab that runs it and
+highlights the cited evidence span in the document viewer when an
+evidence row is clicked.
+
+Results are **transient** in this release. Nothing is persisted: no
+`DeviationFinding` rows, no audit row, no review history. Persisted
+findings, the reviewer/dismiss workflow, and LLM-driven analysis of
+clause text remain future work. Whereas surfaces information about
+contracts; it does not provide legal advice.
 
 ## Contributing
 

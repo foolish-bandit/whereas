@@ -13,6 +13,7 @@ import {
   MOCK_LIST,
   MOCK_PLAYBOOK_DETAIL_BY_ID,
   MOCK_PLAYBOOK_LIST,
+  MOCK_REVIEW_BY_KEY,
 } from "./mockData";
 import type {
   Clause,
@@ -21,6 +22,7 @@ import type {
   UploadContractResponse,
 } from "../types/contracts";
 import type { PlaybookDetail, PlaybookSummary } from "../types/playbooks";
+import type { PlaybookReviewResult } from "../types/review";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -175,6 +177,47 @@ export async function getPlaybook(
     throw new ApiError(404, "Playbook not found.");
   }
   return detail;
+}
+
+export async function reviewContractWithPlaybook(
+  contractId: string,
+  playbookId: string,
+  options: ApiOptions = {},
+): Promise<PlaybookReviewResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  const playbook = MOCK_PLAYBOOK_DETAIL_BY_ID[playbookId];
+  if (!playbook) {
+    throw new ApiError(404, "Playbook not found.");
+  }
+  if (!playbook.is_active) {
+    // Symmetric with the live API: inactive playbooks 404 in review.
+    throw new ApiError(404, "Playbook not found.");
+  }
+  if (detail.clauses.length === 0) {
+    throw new ApiError(
+      409,
+      "Contract has no segmented clauses to review yet.",
+    );
+  }
+  const result = MOCK_REVIEW_BY_KEY[`${contractId}|${playbookId}`];
+  if (!result) {
+    // Demo-only fallback: this combination was not pre-baked. Return an
+    // empty review so the UI renders the "no rules ran" state cleanly.
+    return {
+      playbook_id: playbookId,
+      playbook_name: playbook.name,
+      contract_id: contractId,
+      rules_checked: 0,
+      passed_count: 0,
+      failed_count: 0,
+      results: [],
+    };
+  }
+  return result;
 }
 
 /**
