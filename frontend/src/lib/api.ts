@@ -458,10 +458,10 @@ async function dispatchPlaybookWrite<T>(
 }
 
 export async function getPlaybooks(
-  options: ApiOptions & { activeOnly?: boolean } = {},
+  options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookSummary[]> {
   if (isDemoMode()) return mockApi.getPlaybooks(options);
-  const qs = options.activeOnly ? "?active_only=true" : "";
+  const qs = options.includeInactive ? "?include_inactive=true" : "";
   const data = await call<PlaybookSummary[]>(
     `/api/playbooks${qs}`,
     { method: "GET" },
@@ -472,13 +472,14 @@ export async function getPlaybooks(
 
 export async function getPlaybook(
   id: string,
-  options: ApiOptions = {},
+  options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookDetail> {
   if (isDemoMode()) return mockApi.getPlaybook(id, options);
+  const qs = options.includeInactive ? "?include_inactive=true" : "";
   const data = await call<PlaybookDetail>(
-    `/api/playbooks/${encodeURIComponent(id)}`,
+    `/api/playbooks/${encodeURIComponent(id)}${qs}`,
     { method: "GET" },
-    options,
+    { signal: options.signal },
   );
   return scrubSecrets(data);
 }

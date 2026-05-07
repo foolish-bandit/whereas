@@ -42,7 +42,7 @@ describe("playbooks api client", () => {
     __resetMockState();
   });
 
-  it("getPlaybooks adds active_only=true when requested", async () => {
+  it("getPlaybooks adds include_inactive=true when requested", async () => {
     setDevUserId(VALID_UUID);
     fetchMock.mockResolvedValue(
       new Response("[]", {
@@ -50,9 +50,9 @@ describe("playbooks api client", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    await getPlaybooks({ activeOnly: true });
+    await getPlaybooks({ includeInactive: true });
     const url = fetchMock.mock.calls[0][0] as string;
-    expect(url).toContain("/api/playbooks?active_only=true");
+    expect(url).toContain("/api/playbooks?include_inactive=true");
   });
 
   it("getPlaybooks omits the query string by default", async () => {
@@ -257,10 +257,10 @@ describe("playbooks api client", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("getPlaybooks active_only filters out deactivated playbooks", async () => {
+    it("getPlaybooks default hides deactivated playbooks", async () => {
       vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
-      const all = await getPlaybooks();
-      const active = await getPlaybooks({ activeOnly: true });
+      const active = await getPlaybooks();
+      const all = await getPlaybooks({ includeInactive: true });
       expect(active.length).toBeLessThan(all.length);
       expect(active.every((p) => p.is_active)).toBe(true);
     });

@@ -127,13 +127,15 @@ async def create_playbook(
 async def list_playbooks(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
-    active_only: bool = False,
+    include_inactive: bool = False,
 ) -> list[PlaybookSummaryResponse]:
     """List playbooks for the calling user's organization.
 
-    Pass `?active_only=true` to filter to is_active=true rows. The
-    default returns both active and deactivated playbooks so the UI
-    can show "archived" entries.
+    By default, only `is_active=true` playbooks are returned —
+    deactivated rows are kept for audit and for future deviation-
+    finding back-references, but they should not show up in the
+    common "what playbooks do we have?" view. Pass
+    `?include_inactive=true` to return everything in the org.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
     stmt = (
@@ -141,7 +143,7 @@ async def list_playbooks(
         .where(Playbook.organization_id == user.organization_id)
         .order_by(Playbook.created_at.desc(), Playbook.id.desc())
     )
-    if active_only:
+    if not include_inactive:
         stmt = stmt.where(Playbook.is_active.is_(True))
     result = await session.execute(stmt)
     return [_summary_response(p) for p in result.scalars()]
@@ -152,14 +154,27 @@ async def get_playbook(
     playbook_id: uuid.UUID,
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
+    include_inactive: bool = False,
 ) -> PlaybookDetailResponse:
-    """Return one playbook with its YAML and parsed rule list."""
+    """Return one playbook with its YAML and parsed rule list.
+
+    Inactive playbooks 404 by default. The caller must opt in via
+    `?include_inactive=true` to fetch a deactivated row. This keeps
+    the default behavior consistent with `GET /api/playbooks` and
+    avoids accidentally surfacing archived rules in clients that
+    don't filter on `is_active` themselves.
+    """
     user = await _current_dev_user(session, x_whereas_dev_user)
     playbook = await _get_playbook_for_org(
         session,
         playbook_id=playbook_id,
         organization_id=user.organization_id,
     )
+    if not playbook.is_active and not include_inactive:
+        # 404 not 403: same logic as cross-org access — do not leak
+        # the existence of deactivated playbooks to callers that
+        # haven't explicitly asked for them.
+        raise HTTPException(status_code=404, detail="Playbook not found.")
     return _detail_response(playbook)
 
 

@@ -24,7 +24,11 @@ export default function PlaybookDetailPage() {
     if (!id) return;
     const controller = new AbortController();
     setState({ kind: "loading" });
-    getPlaybook(id, { signal: controller.signal })
+    // Pass includeInactive so the detail page can render a deactivated
+    // playbook the user navigated to from the list with "Show deactivated"
+    // enabled. The backend defaults to 404 on inactive rows, which is
+    // the right default for clients that don't model archives.
+    getPlaybook(id, { signal: controller.signal, includeInactive: true })
       .then((playbook) => setState({ kind: "loaded", playbook }))
       .catch((err) => {
         if (controller.signal.aborted) return;

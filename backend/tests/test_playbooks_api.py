@@ -462,7 +462,7 @@ class TestListEndpoint:
         assert len(rows) == 1
         assert rows[0]["name"] == "Mutual NDA Review Playbook"
 
-    async def test_list_active_only_filter(
+    async def test_list_default_excludes_deactivated_playbooks(
         self, client: httpx.AsyncClient, db_session: AsyncSession
     ) -> None:
         user_org = await _create_user_org(db_session)
@@ -477,17 +477,24 @@ class TestListEndpoint:
             f"/api/playbooks/{playbook_id}", headers=_headers(user_org.user)
         )
 
-        # Default list still includes the deactivated row.
-        all_rows = await client.get(
+        # Default list hides deactivated rows. The "what playbooks do
+        # we have" view is the common case; archived ones are opt-in.
+        default_rows = await client.get(
             "/api/playbooks", headers=_headers(user_org.user)
         )
-        assert any(r["id"] == playbook_id for r in all_rows.json())
+        assert default_rows.status_code == 200
+        assert default_rows.json() == []
 
-        # active_only=true excludes it.
-        active = await client.get(
-            "/api/playbooks?active_only=true", headers=_headers(user_org.user)
+        # include_inactive=true surfaces them again.
+        with_inactive = await client.get(
+            "/api/playbooks?include_inactive=true",
+            headers=_headers(user_org.user),
         )
-        assert active.json() == []
+        assert with_inactive.status_code == 200
+        rows = with_inactive.json()
+        assert len(rows) == 1
+        assert rows[0]["id"] == playbook_id
+        assert rows[0]["is_active"] is False
 
 
 class TestDetailEndpoint:
@@ -536,6 +543,41 @@ class TestDetailEndpoint:
             f"/api/playbooks/{uuid.uuid4()}", headers=_headers(user_org.user)
         )
         assert response.status_code == 404
+
+    async def test_detail_for_deactivated_playbook_returns_404_by_default(
+        self, client: httpx.AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Inactive playbooks 404 unless the caller opts in.
+
+        Same logic as cross-org access — do not surface archived rows
+        to clients that haven't asked for them. Symmetric with the
+        list endpoint's default.
+        """
+        user_org = await _create_user_org(db_session)
+        # Cache the header dict so we don't lazy-load `user.id` again
+        # after the override_get_db dependency has committed and
+        # expired the row across the four sequential requests below.
+        headers = _headers(user_org.user)
+        created = await client.post(
+            "/api/playbooks",
+            headers=headers,
+            json={"yaml_source": VALID_PLAYBOOK_YAML},
+        )
+        playbook_id = created.json()["id"]
+        await client.delete(f"/api/playbooks/{playbook_id}", headers=headers)
+
+        default = await client.get(
+            f"/api/playbooks/{playbook_id}", headers=headers
+        )
+        assert default.status_code == 404
+
+        with_inactive = await client.get(
+            f"/api/playbooks/{playbook_id}?include_inactive=true",
+            headers=headers,
+        )
+        assert with_inactive.status_code == 200
+        assert with_inactive.json()["id"] == playbook_id
+        assert with_inactive.json()["is_active"] is False
 
 
 # --------------------------------------------------------------------------

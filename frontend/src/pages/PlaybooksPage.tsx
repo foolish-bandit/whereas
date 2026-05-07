@@ -15,13 +15,13 @@ type LoadState =
 
 export default function PlaybooksPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [activeOnly, setActiveOnly] = useState<boolean>(false);
+  const [includeInactive, setIncludeInactive] = useState<boolean>(false);
   const [search, setSearch] = useState<string>("");
 
   useEffect(() => {
     const controller = new AbortController();
     setState({ kind: "loading" });
-    getPlaybooks({ signal: controller.signal, activeOnly })
+    getPlaybooks({ signal: controller.signal, includeInactive })
       .then((playbooks) => setState({ kind: "loaded", playbooks }))
       .catch((err) => {
         if (controller.signal.aborted) return;
@@ -49,7 +49,7 @@ export default function PlaybooksPage() {
         });
       });
     return () => controller.abort();
-  }, [activeOnly]);
+  }, [includeInactive]);
 
   const filtered = useMemo(() => {
     if (state.kind !== "loaded") return [];
@@ -90,10 +90,10 @@ export default function PlaybooksPage() {
           <label className="inline-flex items-center gap-2 text-xs text-ink-muted">
             <input
               type="checkbox"
-              checked={activeOnly}
-              onChange={(e) => setActiveOnly(e.target.checked)}
+              checked={includeInactive}
+              onChange={(e) => setIncludeInactive(e.target.checked)}
             />
-            Active only
+            Show deactivated
           </label>
         </div>
       )}
@@ -118,14 +118,14 @@ export default function PlaybooksPage() {
       {state.kind === "loaded" && state.playbooks.length === 0 && (
         <EmptyState
           title={
-            activeOnly
-              ? "No active playbooks."
-              : "No playbooks have been defined yet."
+            includeInactive
+              ? "No playbooks have been defined yet."
+              : "No active playbooks."
           }
           description={
-            activeOnly
-              ? "Toggle 'Active only' off to include deactivated playbooks."
-              : "Playbooks are YAML files that capture your firm's review positions. Authoring tools land in a follow-up release."
+            includeInactive
+              ? "Playbooks are YAML files that capture your firm's review positions. Authoring tools land in a follow-up release."
+              : "Toggle 'Show deactivated' to include archived playbooks, or create a new one once authoring tools land."
           }
         />
       )}

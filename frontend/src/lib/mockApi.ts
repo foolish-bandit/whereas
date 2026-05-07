@@ -153,22 +153,25 @@ export async function downloadContract(
 }
 
 export async function getPlaybooks(
-  options: ApiOptions & { activeOnly?: boolean } = {},
+  options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookSummary[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  if (options.activeOnly) {
-    return MOCK_PLAYBOOK_LIST.filter((p) => p.is_active);
+  if (options.includeInactive) {
+    return MOCK_PLAYBOOK_LIST;
   }
-  return MOCK_PLAYBOOK_LIST;
+  return MOCK_PLAYBOOK_LIST.filter((p) => p.is_active);
 }
 
 export async function getPlaybook(
   id: string,
-  options: ApiOptions = {},
+  options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookDetail> {
   await delay(MOCK_LATENCY_MS, options.signal);
   const detail = MOCK_PLAYBOOK_DETAIL_BY_ID[id];
   if (!detail) {
+    throw new ApiError(404, "Playbook not found.");
+  }
+  if (!detail.is_active && !options.includeInactive) {
     throw new ApiError(404, "Playbook not found.");
   }
   return detail;
