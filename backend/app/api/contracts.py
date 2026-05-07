@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import uuid
@@ -18,8 +19,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import Contract, ContractStatus, ExtractedField, Organization, User
+from app.models import Clause, Contract, ContractStatus, ExtractedField, Organization, User
 from app.schemas.contracts import (
+    ClauseResponse,
     ContractDetailResponse,
     ContractListItemResponse,
     ContractUploadResponse,
@@ -32,6 +34,7 @@ from app.security.encryption import (
     load_instance_key,
     load_org_master_key,
 )
+from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.document_parser import (
     DocumentParseError,
     DocumentParseTimeoutError,
@@ -42,6 +45,8 @@ from app.services.document_parser import (
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.storage import DocumentStorage
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -135,6 +140,21 @@ async def upload_contract(
         contract.status = ContractStatus.FAILED.value
         message = "metadata_extraction_failed"
 
+    # Clause segmentation runs after metadata extraction. It only depends
+    # on contract.full_text, so it is independent of extraction success.
+    # A failure here is non-fatal: storage and metadata are already
+    # persisted, and re-running segmentation later (e.g. via a backfill
+    # job) is cheap. We do not flip contract.status — there is no
+    # workflow engine and segmentation status is not modeled in v1.
+    clauses: list[Clause] = []
+    try:
+        clauses = await segment_and_persist_clauses(session, contract)
+    except Exception:
+        log.exception(
+            "Clause segmentation failed; contract remains usable",
+            extra={"contract_id": str(contract.id)},
+        )
+
     await session.flush()
     await record_event(
         session,
@@ -145,9 +165,9 @@ async def upload_contract(
         target_id=str(contract.id),
         details=_audit_contract_details(contract, filename=filename),
     )
-    await _refresh_upload_response_rows(session, contract, extracted_fields)
+    await _refresh_upload_response_rows(session, contract, extracted_fields, clauses)
 
-    return _upload_response(contract, extracted_fields, message=message)
+    return _upload_response(contract, extracted_fields, clauses, message=message)
 
 
 @router.get("", response_model=list[ContractListItemResponse])
@@ -176,8 +196,33 @@ async def get_contract(
         contract_id=contract_id,
         organization_id=user.organization_id,
         load_fields=True,
+        load_clauses=True,
     )
     return _detail_response(contract)
+
+
+@router.get("/{contract_id}/clauses", response_model=list[ClauseResponse])
+async def list_contract_clauses(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> list[ClauseResponse]:
+    """Return the persisted clauses for a contract, ordered by ordinal.
+
+    Same auth and org-scoping rules as the contract detail endpoint:
+    a 404 is returned if the contract does not belong to the caller's
+    organization. The detail endpoint already includes the clauses
+    array; this route exists for clients that want clauses without
+    re-fetching `full_text`.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        load_clauses=True,
+    )
+    return [ClauseResponse.model_validate(c) for c in _ordered_clauses(contract)]
 
 
 @router.get("/{contract_id}/download")
@@ -349,6 +394,7 @@ async def _get_contract_for_org(
     contract_id: uuid.UUID,
     organization_id: uuid.UUID,
     load_fields: bool = False,
+    load_clauses: bool = False,
 ) -> Contract:
     stmt = select(Contract).where(
         Contract.id == contract_id,
@@ -356,11 +402,18 @@ async def _get_contract_for_org(
     )
     if load_fields:
         stmt = stmt.options(selectinload(Contract.extracted_fields))
+    if load_clauses:
+        stmt = stmt.options(selectinload(Contract.clauses))
     result = await session.execute(stmt)
     contract = result.scalar_one_or_none()
     if contract is None:
         raise HTTPException(status_code=404, detail="Contract not found.")
     return contract
+
+
+def _ordered_clauses(contract: Contract) -> list[Clause]:
+    """Stable ordering for clause responses: by ordinal ascending."""
+    return sorted(contract.clauses, key=lambda c: c.ordinal)
 
 
 def _derive_title(title: str | None, filename: str) -> str:
@@ -401,21 +454,29 @@ async def _refresh_upload_response_rows(
     session: AsyncSession,
     contract: Contract,
     extracted_fields: Sequence[ExtractedField],
+    clauses: Sequence[Clause],
 ) -> None:
     await session.refresh(contract)
     for field in extracted_fields:
         await session.refresh(field)
+    for clause in clauses:
+        await session.refresh(clause)
 
 
 def _upload_response(
     contract: Contract,
     extracted_fields: Sequence[ExtractedField],
+    clauses: Sequence[Clause],
     *,
     message: str | None,
 ) -> ContractUploadResponse:
     data = ContractListItemResponse.model_validate(contract).model_dump()
     data["extracted_fields"] = [
         ExtractedFieldResponse.model_validate(field) for field in extracted_fields
+    ]
+    data["clauses"] = [
+        ClauseResponse.model_validate(clause)
+        for clause in sorted(clauses, key=lambda c: c.ordinal)
     ]
     data["message"] = message
     return ContractUploadResponse.model_validate(data)
@@ -427,5 +488,8 @@ def _detail_response(contract: Contract) -> ContractDetailResponse:
     data["extracted_fields"] = [
         ExtractedFieldResponse.model_validate(field)
         for field in contract.extracted_fields
+    ]
+    data["clauses"] = [
+        ClauseResponse.model_validate(clause) for clause in _ordered_clauses(contract)
     ]
     return ContractDetailResponse.model_validate(data)

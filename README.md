@@ -79,12 +79,30 @@ there is sent anywhere.
 - [x] Repo scaffold
 - [ ] Document upload + storage
 - [ ] Metadata extraction with span citations
-- [ ] CUAD clause segmentation
+- [x] Clause segmentation (v1: heuristic, exact-span grounded — see note below)
 - [ ] Playbook YAML schema and deviation engine
 - [ ] DocuSeal integration (embedded + auth bridge)
 - [ ] RAG Q&A
 - [ ] Permissioning model
 - [ ] First tagged release (v0.1)
+
+### Clause segmentation (v1)
+
+Uploaded contracts are now segmented into clause-level units via a
+deterministic heuristic (numbered sections, `Section N`, `ARTICLE V`,
+ALL-CAPS / title-case headings, with a paragraph fallback). Every
+persisted clause is grounded in the original contract text by exact
+character offsets — `Contract.full_text[span_start:span_end] ==
+Clause.text` is enforced at persistence time, and ungrounded
+candidates are dropped rather than written. The contract detail
+endpoint includes the clauses; a `GET /api/contracts/{id}/clauses`
+endpoint is also available.
+
+This is a foundation for downstream features (playbook deviation,
+clause library, RAG Q&A); it is **not** a clause manager, **not** an
+LLM-driven classifier, and **not** legal advice. Clause types are
+labelled conservatively from a CUAD-inspired taxonomy when the
+heuristics are confident, and left unclassified otherwise.
 
 ## Contributing
 

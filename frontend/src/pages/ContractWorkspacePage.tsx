@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import MetadataPanel from "../components/MetadataPanel";
+import RightPanelTabs from "../components/RightPanelTabs";
 import StatusBadge from "../components/StatusBadge";
 import {
   ApiError,
@@ -12,6 +14,7 @@ import {
   downloadContract,
   getContract,
 } from "../lib/api";
+import { clauseHasValidSpan } from "../lib/clauses";
 import { fieldKey } from "../lib/fields";
 import {
   formatDate,
@@ -20,7 +23,11 @@ import {
   mimeLabel,
   sanitizeFilename,
 } from "../lib/format";
-import type { ContractDetail, ExtractedField } from "../types/contracts";
+import type {
+  Clause,
+  ContractDetail,
+  ExtractedField,
+} from "../types/contracts";
 
 type LoadState =
   | { kind: "loading" }
@@ -32,10 +39,13 @@ type DownloadState =
   | { kind: "downloading" }
   | { kind: "error"; message: string };
 
+type SidebarTab = "metadata" | "clauses";
+
 export default function ContractWorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<SidebarTab>("metadata");
   const [downloadState, setDownloadState] = useState<DownloadState>({
     kind: "idle",
   });
@@ -45,6 +55,7 @@ export default function ContractWorkspacePage() {
     const controller = new AbortController();
     setState({ kind: "loading" });
     setSelectedKey(null);
+    setActiveTab("metadata");
     getContract(id, { signal: controller.signal })
       .then((contract) => setState({ kind: "loaded", contract }))
       .catch((err) => {
@@ -78,11 +89,17 @@ export default function ContractWorkspacePage() {
     return () => controller.abort();
   }, [id]);
 
-  const contract =
-    state.kind === "loaded" ? state.contract : null;
+  const contract = state.kind === "loaded" ? state.contract : null;
 
   const selectedSpan = useMemo(() => {
     if (!contract || !selectedKey) return null;
+    if (selectedKey.startsWith("clause:")) {
+      const clauseId = selectedKey.slice("clause:".length);
+      const clause = contract.clauses.find((c) => c.id === clauseId);
+      if (!clause) return null;
+      if (!clauseHasValidSpan(clause, contract.full_text)) return null;
+      return { start: clause.span_start, end: clause.span_end };
+    }
     const field = contract.extracted_fields.find(
       (f) => fieldKey(f) === selectedKey,
     );
@@ -187,16 +204,70 @@ export default function ContractWorkspacePage() {
             selectionToken={selectedKey}
           />
         </div>
-        <aside>
-          <MetadataPanel
-            fields={state.contract.extracted_fields}
-            selectedKey={selectedKey}
-            onSelect={setSelectedKey}
-          />
-          <ReviewReminder fields={state.contract.extracted_fields} />
-        </aside>
+        <Sidebar
+          contract={state.contract}
+          activeTab={activeTab}
+          onTabChange={(tab) => {
+            setActiveTab(tab);
+            setSelectedKey(null);
+          }}
+          selectedKey={selectedKey}
+          onSelect={setSelectedKey}
+        />
       </div>
     </div>
+  );
+}
+
+interface SidebarProps {
+  contract: ContractDetail;
+  activeTab: SidebarTab;
+  onTabChange: (tab: SidebarTab) => void;
+  selectedKey: string | null;
+  onSelect: (key: string | null) => void;
+}
+
+function Sidebar({
+  contract,
+  activeTab,
+  onTabChange,
+  selectedKey,
+  onSelect,
+}: SidebarProps) {
+  const tabs = [
+    {
+      id: "metadata" as const,
+      label: "Metadata",
+      count: contract.extracted_fields.length,
+    },
+    {
+      id: "clauses" as const,
+      label: "Clauses",
+      count: contract.clauses.length,
+    },
+  ];
+  return (
+    <aside>
+      <RightPanelTabs tabs={tabs} active={activeTab} onChange={onTabChange} />
+      {activeTab === "metadata" ? (
+        <MetadataPanel
+          fields={contract.extracted_fields}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+        />
+      ) : (
+        <ClausesPanel
+          clauses={contract.clauses}
+          fullText={contract.full_text}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+        />
+      )}
+      <ReviewReminder
+        fields={contract.extracted_fields}
+        clauses={contract.clauses}
+      />
+    </aside>
   );
 }
 
@@ -246,12 +317,19 @@ function ContractHeader({
   );
 }
 
-function ReviewReminder({ fields }: { fields: ExtractedField[] }) {
-  if (fields.length === 0) return null;
+function ReviewReminder({
+  fields,
+  clauses,
+}: {
+  fields: ExtractedField[];
+  clauses: Clause[];
+}) {
+  if (fields.length === 0 && clauses.length === 0) return null;
   return (
     <p className="mt-3 rounded-md border border-rule bg-canvas-subtle px-3 py-2 text-xs text-ink-muted">
-      Whereas surfaces machine-extracted information; it does not provide
-      legal advice. Review every field before relying on it.
+      Whereas surfaces machine-extracted information and heuristically
+      segmented clauses; it does not provide legal advice. Review every
+      field and clause before relying on it.
     </p>
   );
 }

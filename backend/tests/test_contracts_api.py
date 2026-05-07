@@ -27,7 +27,14 @@ except ImportError:  # pragma: no cover - exercised when testcontainers is absen
 from app.api import contracts as contracts_api  # noqa: E402
 from app.core.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Contract, ContractStatus, ExtractedField, Organization, User  # noqa: E402
+from app.models import (  # noqa: E402
+    Clause,
+    Contract,
+    ContractStatus,
+    ExtractedField,
+    Organization,
+    User,
+)
 from app.security.audit_log import AuditEvent, AuditEventType  # noqa: E402
 from app.security.encryption import create_org_master_key  # noqa: E402
 from app.services.document_parser import (  # noqa: E402
@@ -90,12 +97,23 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             AuditEvent.__table__,
             Contract.__table__,
             ExtractedField.__table__,
+            Clause.__table__,
         ]
     else:
         engine = create_async_engine(_container_async_url(postgres_container), echo=False)
         tables = list(Base.metadata.sorted_tables)
 
     if engine.dialect.name == "sqlite":
+        # SQLite has no native pgvector type. Compile clauses.embedding to a
+        # BLOB so create_table succeeds on the in-memory test DB; we never
+        # write a non-NULL embedding from the test path.
+        from pgvector.sqlalchemy import Vector
+        from sqlalchemy.ext.compiler import compiles
+
+        @compiles(Vector, "sqlite")
+        def _compile_vector_for_sqlite(_type: Any, _compiler: Any, **_kw: Any) -> str:
+            return "BLOB"
+
         @event.listens_for(engine.sync_engine, "connect")
         def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
             cursor = dbapi_connection.cursor()
@@ -292,6 +310,8 @@ def _assert_no_secrets(payload: Any) -> None:
     assert "wrapped_master_key" not in text
     assert _INSTANCE_KEY.hex() not in text
     assert "org_master_key" not in text
+    # Clause responses must not surface storage internals either.
+    assert "embedding" not in text
 
 
 async def test_upload_happy_path_persists_contract_fields_and_audit(
@@ -577,3 +597,201 @@ async def test_rejects_unknown_file_type(
 
     assert response.status_code == 400
     assert FakeStorage.store_calls == []
+
+
+# --------------------------------------------------------------------------
+# Clause integration: upload runs segmentation, detail/clauses endpoints
+# return scrubbed clause responses, and segmentation failure is non-fatal.
+# --------------------------------------------------------------------------
+
+
+_CLAUSE_DOC_TEXT = (
+    "1. Purpose. The Parties wish to explore a potential business "
+    "relationship and may exchange Confidential Information for that "
+    "purpose.\n\n"
+    "2. Term. This Agreement remains in effect for twenty-four (24) months "
+    "from the Effective Date.\n\n"
+    "3. Confidentiality. Each Party shall hold the other Party's "
+    "Confidential Information in strict confidence and use it only for the "
+    "Purpose described above.\n\n"
+    "4. Governing Law. This Agreement is governed by the laws of the State "
+    "of Delaware, without regard to conflict of laws principles.\n"
+)
+
+
+async def test_upload_persists_clauses_and_returns_them(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Happy path: real segmenter runs against a small structured doc."""
+    user_org = await _create_user_org(db_session)
+    monkeypatch.setattr(
+        contracts_api,
+        "parse_document",
+        lambda file_bytes, filename: _parsed_document(
+            file_bytes=file_bytes, text=_CLAUSE_DOC_TEXT
+        ),
+    )
+
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    _assert_no_secrets(body)
+    clauses = body["clauses"]
+    assert len(clauses) >= 2
+    # Stable ordinals starting at 0.
+    assert [c["ordinal"] for c in clauses] == list(range(len(clauses)))
+    for clause in clauses:
+        assert clause["segmentation_method"] == "heuristic_v1"
+        # Span integrity: the returned text MUST equal full_text[s:e].
+        assert _CLAUSE_DOC_TEXT[
+            clause["span_start"]:clause["span_end"]
+        ] == clause["text"]
+
+
+async def test_detail_endpoint_returns_clauses_for_org(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    monkeypatch.setattr(
+        contracts_api,
+        "parse_document",
+        lambda file_bytes, filename: _parsed_document(
+            file_bytes=file_bytes, text=_CLAUSE_DOC_TEXT
+        ),
+    )
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = upload.json()["id"]
+
+    detail = await client.get(
+        f"/api/contracts/{contract_id}",
+        headers=_headers(user_org.user),
+    )
+
+    assert detail.status_code == 200
+    body = detail.json()
+    _assert_no_secrets(body)
+    assert "clauses" in body
+    assert len(body["clauses"]) >= 1
+    # Detail also includes full_text and extracted_fields as before.
+    assert "full_text" in body
+    assert "extracted_fields" in body
+
+
+async def test_separate_clauses_endpoint_scopes_to_user_org(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contracts_api,
+        "parse_document",
+        lambda file_bytes, filename: _parsed_document(
+            file_bytes=file_bytes, text=_CLAUSE_DOC_TEXT
+        ),
+    )
+    first = await _create_user_org(db_session, email="cl-a@example.com")
+    second = await _create_user_org(db_session, email="cl-b@example.com")
+    own = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(first.user),
+        files=_file_tuple(),
+    )
+    other = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(second.user),
+        files=_file_tuple("other.pdf", b"%PDF-1.7\nother"),
+    )
+
+    own_response = await client.get(
+        f"/api/contracts/{own.json()['id']}/clauses",
+        headers=_headers(first.user),
+    )
+    assert own_response.status_code == 200
+    own_clauses = own_response.json()
+    assert isinstance(own_clauses, list)
+    _assert_no_secrets(own_clauses)
+    if own_clauses:
+        assert all(
+            c["contract_id"] == own.json()["id"] for c in own_clauses
+        )
+
+    forbidden = await client.get(
+        f"/api/contracts/{other.json()['id']}/clauses",
+        headers=_headers(first.user),
+    )
+    assert forbidden.status_code == 404
+
+
+async def test_clauses_endpoint_requires_dev_user(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    # Upload one contract to have a target id; missing-header request goes
+    # against the same id but without auth.
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = upload.json()["id"]
+
+    no_header = await client.get(f"/api/contracts/{contract_id}/clauses")
+    assert no_header.status_code == 401
+
+    bad_uuid = await client.get(
+        f"/api/contracts/{contract_id}/clauses",
+        headers={"X-Whereas-Dev-User": "not-a-uuid"},
+    )
+    assert bad_uuid.status_code == 401
+
+
+async def test_clause_segmentation_failure_does_not_destroy_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A segmentation crash MUST NOT take the upload down with it."""
+    user_org = await _create_user_org(db_session)
+
+    async def boom(session: Any, contract: Any, *, force: bool = False) -> Any:
+        raise RuntimeError("segmenter exploded")
+
+    monkeypatch.setattr(contracts_api, "segment_and_persist_clauses", boom)
+
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    # Contract was still persisted and metadata still extracted.
+    assert body["status"] == ContractStatus.READY.value
+    assert body["clauses"] == []
+    contract_id = body["id"]
+
+    detail = await client.get(
+        f"/api/contracts/{contract_id}",
+        headers=_headers(user_org.user),
+    )
+    assert detail.status_code == 200
+    assert detail.json()["clauses"] == []
+
+    listing = await client.get("/api/contracts", headers=_headers(user_org.user))
+    assert listing.status_code == 200
+    assert any(c["id"] == contract_id for c in listing.json())
