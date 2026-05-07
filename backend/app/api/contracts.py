@@ -19,13 +19,35 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import Clause, Contract, ContractStatus, ExtractedField, Organization, User
+from app.models import (
+    Clause,
+    Contract,
+    ContractStatus,
+    DeviationFinding,
+    ExtractedField,
+    Organization,
+    Playbook,
+    PlaybookReviewRun,
+    User,
+)
 from app.schemas.contracts import (
     ClauseResponse,
     ContractDetailResponse,
     ContractListItemResponse,
     ContractUploadResponse,
     ExtractedFieldResponse,
+)
+from app.schemas.findings import (
+    CreateReviewRunRequest,
+    DeviationFindingResponse,
+    ReviewRunDetail,
+    ReviewRunSummary,
+    UpdateFindingStatusRequest,
+)
+from app.schemas.playbook_review import (
+    PlaybookReviewRequest,
+    PlaybookReviewResult,
+    review_to_response,
 )
 from app.security.audit_log import AuditEventType, record_event
 from app.security.encryption import (
@@ -35,6 +57,16 @@ from app.security.encryption import (
     load_org_master_key,
 )
 from app.services.clause_segmentation import segment_and_persist_clauses
+from app.services.deviation_findings import (
+    InvalidFindingStatusError,
+    get_finding_for_org,
+    get_review_run_for_org,
+    list_findings_for_contract,
+    list_findings_for_run,
+    list_review_runs_for_contract,
+    run_and_persist_review,
+    update_finding_status,
+)
 from app.services.document_parser import (
     DocumentParseError,
     DocumentParseTimeoutError,
@@ -44,6 +76,11 @@ from app.services.document_parser import (
     parse_document,
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
+from app.services.playbook_loader import (
+    PlaybookValidationError,
+    parse_playbook,
+)
+from app.services.playbook_matcher import match_playbook
 from app.services.storage import DocumentStorage
 
 log = logging.getLogger(__name__)
@@ -223,6 +260,368 @@ async def list_contract_clauses(
         load_clauses=True,
     )
     return [ClauseResponse.model_validate(c) for c in _ordered_clauses(contract)]
+
+
+@router.post(
+    "/{contract_id}/playbook-review",
+    response_model=PlaybookReviewResult,
+)
+async def review_contract_with_playbook(
+    contract_id: uuid.UUID,
+    payload: PlaybookReviewRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> PlaybookReviewResult:
+    """Run a deterministic playbook review against a contract's clauses.
+
+    PR #21 scope: pure rule matching only. The endpoint never persists
+    findings, never mutates the contract, the clauses, or the
+    playbook, and never calls an LLM. Results are transient — every
+    call computes them from scratch against the current segmented
+    clauses.
+
+    Behavior:
+      - 404 if the contract does not belong to the caller's org.
+      - 404 if the playbook does not belong to the caller's org or is
+        inactive (consistent with the playbooks router; do not leak
+        existence).
+      - 409 if the contract has no segmented clauses yet (the rule
+        matcher would only ever return all-fail in that case, which
+        makes for a confusing result; surface it as a precondition).
+      - 200 with a `PlaybookReviewResult` otherwise.
+
+    Whereas surfaces information about contracts; it does not provide
+    legal advice. Reviewers must treat results as a triage signal.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        load_clauses=True,
+    )
+    playbook = await _get_active_playbook_for_org(
+        session,
+        playbook_id=payload.playbook_id,
+        organization_id=user.organization_id,
+    )
+    clauses = _ordered_clauses(contract)
+    if not clauses:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Contract has no segmented clauses to review yet. Wait for "
+                "segmentation to complete or re-upload the document."
+            ),
+        )
+
+    try:
+        parsed = parse_playbook(playbook.yaml_source)
+    except PlaybookValidationError as exc:
+        # A persisted playbook that fails revalidation is a corrupted
+        # row — should not happen because creation goes through the same
+        # validator, but surface a clean 500 rather than a partial result.
+        log.exception(
+            "Stored playbook failed revalidation during review",
+            extra={"playbook_id": str(playbook.id)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Playbook could not be parsed for review. The stored YAML "
+                "is invalid; deactivate and recreate the playbook."
+            ),
+        ) from exc
+
+    review = match_playbook(parsed, clauses)
+    return review_to_response(
+        playbook_id=playbook.id,
+        playbook_name=playbook.name,
+        contract_id=contract.id,
+        review=review,
+    )
+
+
+# --------------------------------------------------------------------------
+# Persisted playbook review (runs + findings)
+#
+# The transient endpoint above stays in place for callers that want a
+# read-only review without writing rows. The endpoints below persist the
+# matcher's failed outcomes into `playbook_review_runs` and
+# `deviation_findings` so reviewers can revisit, mark, and triage them.
+# --------------------------------------------------------------------------
+
+
+@router.post(
+    "/{contract_id}/playbook-review/runs",
+    response_model=ReviewRunDetail,
+    status_code=201,
+)
+async def create_playbook_review_run(
+    contract_id: uuid.UUID,
+    payload: CreateReviewRunRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ReviewRunDetail:
+    """Run a deterministic review and persist its results.
+
+    Behavior:
+      - 404 if the contract or playbook is cross-org or the playbook
+        is inactive (mirrors the transient endpoint; do not leak
+        existence).
+      - 409 if the contract has no segmented clauses yet (consistent
+        with the transient endpoint).
+      - 201 with a ``ReviewRunDetail`` otherwise. The detail carries
+        both the persisted failed findings and the matcher's full
+        per-rule outcomes so the UI can render passes too.
+
+    Side effects:
+      - Inserts one ``PlaybookReviewRun`` row.
+      - Inserts one ``DeviationFinding`` row per failed rule outcome.
+        Pass results are not persisted.
+      - Marks any prior ``finding_status='open'`` findings on this
+        ``(contract, playbook)`` as ``'superseded'``. ``reviewed`` and
+        ``ignored`` findings are left untouched.
+
+    Whereas surfaces information about contracts; it does not provide
+    legal advice.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        load_clauses=True,
+    )
+    playbook = await _get_active_playbook_for_org(
+        session,
+        playbook_id=payload.playbook_id,
+        organization_id=user.organization_id,
+    )
+    clauses = _ordered_clauses(contract)
+    if not clauses:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Contract has no segmented clauses to review yet. Wait for "
+                "segmentation to complete or re-upload the document."
+            ),
+        )
+
+    try:
+        parsed = parse_playbook(playbook.yaml_source)
+    except PlaybookValidationError as exc:
+        log.exception(
+            "Stored playbook failed revalidation during persisted review",
+            extra={"playbook_id": str(playbook.id)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Playbook could not be parsed for review. The stored YAML "
+                "is invalid; deactivate and recreate the playbook."
+            ),
+        ) from exc
+
+    run, findings, review = await run_and_persist_review(
+        session,
+        contract=contract,
+        playbook=playbook,
+        parsed_playbook=parsed,
+        clauses=clauses,
+    )
+    return _run_detail_response(
+        run=run,
+        playbook_name=playbook.name,
+        contract_id=contract.id,
+        findings=findings,
+        review=review,
+    )
+
+
+@router.get(
+    "/{contract_id}/playbook-review/runs",
+    response_model=list[ReviewRunSummary],
+)
+async def list_playbook_review_runs(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> list[ReviewRunSummary]:
+    """List review runs for a contract, newest first. Org scoped."""
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    runs = await list_review_runs_for_contract(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if not runs:
+        return []
+    playbook_names = await _playbook_names_by_id(
+        session,
+        organization_id=user.organization_id,
+        playbook_ids={run.playbook_id for run in runs},
+    )
+    return [
+        _run_summary_response(
+            run=run,
+            playbook_name=playbook_names.get(run.playbook_id, "(unknown playbook)"),
+        )
+        for run in runs
+    ]
+
+
+@router.get(
+    "/{contract_id}/playbook-review/runs/{run_id}",
+    response_model=ReviewRunDetail,
+)
+async def get_playbook_review_run(
+    contract_id: uuid.UUID,
+    run_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ReviewRunDetail:
+    """Return a single review run with its findings and per-rule outcomes.
+
+    Org scoped: a 404 is returned for cross-org runs and for runs whose
+    contract is not in the caller's org.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        load_clauses=True,
+    )
+    run = await get_review_run_for_org(
+        session,
+        run_id=run_id,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Review run not found.")
+
+    playbook = await _get_playbook_for_org_any_status(
+        session,
+        playbook_id=run.playbook_id,
+        organization_id=user.organization_id,
+    )
+    findings = await list_findings_for_run(session, run_id=run.id)
+
+    # Recompute the matcher's per-rule outcomes so the UI can render
+    # passes alongside the persisted fails. The matcher is deterministic
+    # and reads only `contract.clauses`; the contract's clause set may
+    # have changed since the run was written, in which case the
+    # recomputed results may differ from the persisted findings. That's
+    # the intended trade-off: the run row remains the audit signal of
+    # "we ran this on date X with these counts"; the per-rule view
+    # reflects the contract as it stands now.
+    review = None
+    try:
+        parsed = parse_playbook(playbook.yaml_source)
+        review = match_playbook(parsed, _ordered_clauses(contract))
+    except PlaybookValidationError:
+        log.warning(
+            "Stored playbook failed revalidation; serving run without per-rule view",
+            extra={"playbook_id": str(playbook.id)},
+        )
+
+    return _run_detail_response(
+        run=run,
+        playbook_name=playbook.name,
+        contract_id=contract.id,
+        findings=findings,
+        review=review,
+    )
+
+
+@router.get(
+    "/{contract_id}/findings",
+    response_model=list[DeviationFindingResponse],
+)
+async def list_contract_findings(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+    playbook_id: uuid.UUID | None = None,
+    finding_status: str | None = None,
+    severity: str | None = None,
+    review_run_id: uuid.UUID | None = None,
+    include_superseded: bool = False,
+) -> list[DeviationFindingResponse]:
+    """List findings for a contract with optional filters.
+
+    By default ``superseded`` rows are omitted so the UI's default
+    "what's open" view doesn't have to know about the rerun sweep.
+    Pass ``?include_superseded=true`` (or filter explicitly with
+    ``?finding_status=superseded``) to surface them.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    findings = await list_findings_for_contract(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+        playbook_id=playbook_id,
+        finding_status=finding_status,
+        severity=severity,
+        review_run_id=review_run_id,
+        include_superseded=include_superseded,
+    )
+    return [_finding_response(f) for f in findings]
+
+
+@router.patch(
+    "/{contract_id}/findings/{finding_id}",
+    response_model=DeviationFindingResponse,
+)
+async def update_contract_finding_status(
+    contract_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    payload: UpdateFindingStatusRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> DeviationFindingResponse:
+    """Update the reviewer workflow state of a finding.
+
+    Only ``finding_status`` is updatable. Deterministic fields
+    (``status``, ``message``, span, ``rule_*``) are immutable through
+    this endpoint. Org scoped: a 404 is returned for cross-org or
+    cross-contract findings.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    finding = await get_finding_for_org(
+        session,
+        finding_id=finding_id,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    try:
+        await update_finding_status(
+            session, finding=finding, new_status=payload.finding_status
+        )
+    except InvalidFindingStatusError as exc:
+        # Pydantic validates the literal at the boundary; this is a
+        # belt-and-braces 422 in case service-layer rules diverge.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _finding_response(finding)
 
 
 @router.get("/{contract_id}/download")
@@ -416,6 +815,30 @@ def _ordered_clauses(contract: Contract) -> list[Clause]:
     return sorted(contract.clauses, key=lambda c: c.ordinal)
 
 
+async def _get_active_playbook_for_org(
+    session: AsyncSession,
+    *,
+    playbook_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> Playbook:
+    """Fetch a playbook scoped to an org, requiring it be active.
+
+    Returns 404 — not 403 — both for cross-org access and for
+    deactivated playbooks. Mirrors the playbooks router so callers
+    can't distinguish "playbook does not exist" from "playbook exists
+    but you cannot see it".
+    """
+    stmt = select(Playbook).where(
+        Playbook.id == playbook_id,
+        Playbook.organization_id == organization_id,
+    )
+    result = await session.execute(stmt)
+    playbook = result.scalar_one_or_none()
+    if playbook is None or not playbook.is_active:
+        raise HTTPException(status_code=404, detail="Playbook not found.")
+    return playbook
+
+
 def _derive_title(title: str | None, filename: str) -> str:
     clean = title.strip() if title else ""
     if clean:
@@ -493,3 +916,121 @@ def _detail_response(contract: Contract) -> ContractDetailResponse:
         ClauseResponse.model_validate(clause) for clause in _ordered_clauses(contract)
     ]
     return ContractDetailResponse.model_validate(data)
+
+
+# --------------------------------------------------------------------------
+# Persisted-review helpers
+# --------------------------------------------------------------------------
+
+
+async def _get_playbook_for_org_any_status(
+    session: AsyncSession,
+    *,
+    playbook_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> Playbook:
+    """Fetch a playbook scoped to an org, regardless of ``is_active``.
+
+    The active-only variant 404s on deactivated playbooks so callers
+    can't run new reviews against them. Run-detail / list responses
+    must still resolve the playbook name even after deactivation, so
+    this helper allows inactive rows. A 404 is still returned for
+    cross-org access.
+    """
+    stmt = select(Playbook).where(
+        Playbook.id == playbook_id,
+        Playbook.organization_id == organization_id,
+    )
+    result = await session.execute(stmt)
+    playbook = result.scalar_one_or_none()
+    if playbook is None:
+        raise HTTPException(status_code=404, detail="Playbook not found.")
+    return playbook
+
+
+async def _playbook_names_by_id(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    playbook_ids: set[uuid.UUID],
+) -> dict[uuid.UUID, str]:
+    """Bulk-load playbook names for a set of ids, scoped to one org."""
+    if not playbook_ids:
+        return {}
+    stmt = select(Playbook.id, Playbook.name).where(
+        Playbook.organization_id == organization_id,
+        Playbook.id.in_(playbook_ids),
+    )
+    result = await session.execute(stmt)
+    return {row.id: row.name for row in result}
+
+
+def _run_summary_response(
+    *, run: PlaybookReviewRun, playbook_name: str
+) -> ReviewRunSummary:
+    return ReviewRunSummary(
+        id=run.id,
+        organization_id=run.organization_id,
+        contract_id=run.contract_id,
+        playbook_id=run.playbook_id,
+        playbook_name=playbook_name,
+        rules_checked=run.rules_checked,
+        passed_count=run.passed_count,
+        failed_count=run.failed_count,
+        created_at=run.created_at,
+    )
+
+
+def _run_detail_response(
+    *,
+    run: PlaybookReviewRun,
+    playbook_name: str,
+    contract_id: uuid.UUID,
+    findings: Sequence[DeviationFinding],
+    review,
+) -> ReviewRunDetail:
+    summary = _run_summary_response(run=run, playbook_name=playbook_name)
+    summary_data = summary.model_dump()
+    finding_responses = [_finding_response(f) for f in findings]
+    if review is None:
+        results: list = []
+    else:
+        # Reuse the transient endpoint's response builder so the
+        # per-rule shape is identical between the two surfaces.
+        results = review_to_response(
+            playbook_id=run.playbook_id,
+            playbook_name=playbook_name,
+            contract_id=contract_id,
+            review=review,
+        ).results
+    return ReviewRunDetail(
+        **summary_data, findings=finding_responses, results=results
+    )
+
+
+def _finding_response(finding: DeviationFinding) -> DeviationFindingResponse:
+    return DeviationFindingResponse(
+        id=finding.id,
+        organization_id=finding.organization_id,
+        contract_id=finding.contract_id,
+        playbook_id=finding.playbook_id,
+        review_run_id=finding.review_run_id,
+        rule_id=finding.rule_id,
+        rule_title=finding.rule_title,
+        rule_type=finding.rule_type,
+        clause_type=finding.clause_type,
+        severity=finding.severity,
+        status=finding.status,  # type: ignore[arg-type]
+        finding_status=finding.finding_status,  # type: ignore[arg-type]
+        message=finding.message,
+        clause_id=finding.clause_id,
+        evidence_text=finding.evidence_text,
+        span_start=finding.span_start,
+        span_end=finding.span_end,
+        matched_terms=list(finding.matched_terms or ()),
+        expected_value=finding.expected_value,
+        guidance=finding.guidance,
+        preferred_language=finding.preferred_language,
+        created_at=finding.created_at,
+        updated_at=finding.updated_at,
+    )

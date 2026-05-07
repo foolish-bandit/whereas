@@ -14,6 +14,14 @@ import type {
   PlaybookValidationIssue,
 } from "../types/playbooks";
 import type {
+  DeviationFinding,
+  ListFindingsFilters,
+  ReviewRunDetail,
+  ReviewRunSummary,
+  ReviewerFindingStatus,
+} from "../types/findings";
+import type { PlaybookReviewResult } from "../types/review";
+import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
   SetupStatus,
@@ -532,6 +540,162 @@ export async function deactivatePlaybook(
   const data = await call<PlaybookSummary>(
     `/api/playbooks/${encodeURIComponent(id)}`,
     { method: "DELETE" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+// --------------------------------------------------------------------------
+// Playbook review (transient, deterministic)
+//
+// PR #21 surface. Results are not persisted — every call recomputes
+// against the contract's current clauses. In demo mode this returns a
+// hardcoded result for the sample NDA + sample playbook.
+// --------------------------------------------------------------------------
+
+export async function reviewContractWithPlaybook(
+  contractId: string,
+  playbookId: string,
+  options: ApiOptions = {},
+): Promise<PlaybookReviewResult> {
+  if (isDemoMode()) {
+    return mockApi.reviewContractWithPlaybook(contractId, playbookId, options);
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  const init: RequestInit = {
+    method: "POST",
+    body: JSON.stringify({ playbook_id: playbookId }),
+  };
+  const data = await dispatch<PlaybookReviewResult>(
+    `/api/contracts/${encodeURIComponent(contractId)}/playbook-review`,
+    init,
+    headers,
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+// --------------------------------------------------------------------------
+// Persisted playbook review (runs + findings)
+//
+// PR #22 surface. Creating a run persists the matcher's failed outcomes
+// as `DeviationFinding` rows under a parent `PlaybookReviewRun`; passes
+// are not stored. Reviewers can update each finding's `finding_status`
+// (open / reviewed / ignored) via PATCH.
+// --------------------------------------------------------------------------
+
+export async function createPlaybookReviewRun(
+  contractId: string,
+  playbookId: string,
+  options: ApiOptions = {},
+): Promise<ReviewRunDetail> {
+  if (isDemoMode()) {
+    return mockApi.createPlaybookReviewRun(contractId, playbookId, options);
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  const init: RequestInit = {
+    method: "POST",
+    body: JSON.stringify({ playbook_id: playbookId }),
+  };
+  const data = await dispatch<ReviewRunDetail>(
+    `/api/contracts/${encodeURIComponent(contractId)}/playbook-review/runs`,
+    init,
+    headers,
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function listPlaybookReviewRuns(
+  contractId: string,
+  options: ApiOptions = {},
+): Promise<ReviewRunSummary[]> {
+  if (isDemoMode()) {
+    return mockApi.listPlaybookReviewRuns(contractId, options);
+  }
+  const data = await call<ReviewRunSummary[]>(
+    `/api/contracts/${encodeURIComponent(contractId)}/playbook-review/runs`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getPlaybookReviewRun(
+  contractId: string,
+  runId: string,
+  options: ApiOptions = {},
+): Promise<ReviewRunDetail> {
+  if (isDemoMode()) {
+    return mockApi.getPlaybookReviewRun(contractId, runId, options);
+  }
+  const data = await call<ReviewRunDetail>(
+    `/api/contracts/${encodeURIComponent(
+      contractId,
+    )}/playbook-review/runs/${encodeURIComponent(runId)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+function buildFindingsQueryString(filters: ListFindingsFilters): string {
+  const params = new URLSearchParams();
+  if (filters.playbook_id) params.set("playbook_id", filters.playbook_id);
+  if (filters.finding_status) params.set("finding_status", filters.finding_status);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.review_run_id) params.set("review_run_id", filters.review_run_id);
+  if (filters.include_superseded) params.set("include_superseded", "true");
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function listContractFindings(
+  contractId: string,
+  filters: ListFindingsFilters = {},
+  options: ApiOptions = {},
+): Promise<DeviationFinding[]> {
+  if (isDemoMode()) {
+    return mockApi.listContractFindings(contractId, filters, options);
+  }
+  const qs = buildFindingsQueryString(filters);
+  const data = await call<DeviationFinding[]>(
+    `/api/contracts/${encodeURIComponent(contractId)}/findings${qs}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateFindingStatus(
+  contractId: string,
+  findingId: string,
+  status: ReviewerFindingStatus,
+  options: ApiOptions = {},
+): Promise<DeviationFinding> {
+  if (isDemoMode()) {
+    return mockApi.updateFindingStatus(contractId, findingId, status, options);
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  const init: RequestInit = {
+    method: "PATCH",
+    body: JSON.stringify({ finding_status: status }),
+  };
+  const data = await dispatch<DeviationFinding>(
+    `/api/contracts/${encodeURIComponent(
+      contractId,
+    )}/findings/${encodeURIComponent(findingId)}`,
+    init,
+    headers,
     options,
   );
   return scrubSecrets(data);

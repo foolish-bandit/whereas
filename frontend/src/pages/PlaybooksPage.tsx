@@ -69,10 +69,10 @@ export default function PlaybooksPage() {
         <div>
           <h1 className="font-serif text-2xl text-ink">Playbooks</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            YAML-defined libraries of your firm's review positions. Whereas
-            does not yet match playbook rules against contracts; the
-            deviation engine is the next step. Whereas surfaces information
-            about contracts; it does not provide legal advice.
+            YAML-defined libraries of your firm's review positions. Open a
+            contract and use the Review tab to run a playbook against its
+            segmented clauses. Whereas surfaces information about contracts;
+            it does not provide legal advice.
           </p>
         </div>
       </div>

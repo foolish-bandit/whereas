@@ -45,6 +45,7 @@ TENANT_SCOPED_TABLES: list[str] = [
     "clauses",
     "playbooks",
     "deviation_findings",
+    "playbook_review_runs",
     "audit_events",
     "users",
 ]
@@ -52,9 +53,15 @@ TENANT_SCOPED_TABLES: list[str] = [
 
 # Tables that carry an `organization_id` column directly. Their policies
 # compare that column against the session setting.
+#
+# `deviation_findings` and `playbook_review_runs` are direct-org as of
+# the persisted-findings migration: both carry `organization_id` so the
+# policy reads cleanly without an EXISTS subquery on `contracts`.
 _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "contracts",
     "playbooks",
+    "deviation_findings",
+    "playbook_review_runs",
     "audit_events",
     "users",
 )
@@ -65,7 +72,6 @@ _DIRECT_ORG_TABLES: tuple[str, ...] = (
 _INDIRECT_ORG_TABLES: tuple[str, ...] = (
     "extracted_fields",
     "clauses",
-    "deviation_findings",
 )
 
 
