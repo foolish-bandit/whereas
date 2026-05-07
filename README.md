@@ -61,6 +61,9 @@ For frontend-only development (without the full Docker stack), see
 `http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
 (default `http://localhost:8000`).
 
+For an end-to-end local setup (infra + backend + frontend + first-run
+workspace), see [docs/local-developer-quickstart.md](docs/local-developer-quickstart.md).
+
 On first run, open the app, go to **Settings**, and click
 **Create local development workspace**. That creates an organization, a
 wrapped master key, and an active user, and stores the dev user UUID in
