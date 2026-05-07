@@ -538,6 +538,22 @@ function RuleResultList({
               </div>
             </div>
             <p className="mt-1.5 text-xs text-ink-muted">{rule.message}</p>
+            {rule.matched_terms.length > 0 && (
+              <p className="mt-1 text-[11px] text-ink-subtle">
+                Matched terms:{" "}
+                <span className="font-mono text-ink-muted">
+                  {rule.matched_terms.join(", ")}
+                </span>
+              </p>
+            )}
+            {rule.expected_value !== null && (
+              <p className="mt-1 text-[11px] text-ink-subtle">
+                Expected value:{" "}
+                <span className="font-mono text-ink-muted">
+                  {rule.expected_value}
+                </span>
+              </p>
+            )}
             {hasEvidence ? (
               <button
                 type="button"
@@ -567,7 +583,12 @@ function RuleResultList({
                 No matching clause to cite.
               </p>
             )}
-            <PlaybookGuidance rule={rule} />
+            {rule.guidance && (
+              <p className="mt-1.5 text-[11px] text-ink-subtle">
+                <span className="text-ink-subtle">Guidance:</span>{" "}
+                {rule.guidance}
+              </p>
+            )}
             {finding && (
               <FindingStatusControls
                 finding={finding}
@@ -578,79 +599,6 @@ function RuleResultList({
         );
       })}
     </ul>
-  );
-}
-
-interface PlaybookGuidanceProps {
-  rule: PlaybookRuleMatchResult;
-}
-
-/**
- * Compact firm-authored guidance block.
- *
- * Surfaces the rule-level fields the playbook author wrote — guidance,
- * preferred_language, expected_value, matched_terms — so a failed
- * finding tells the reviewer not just *that* a clause failed but also
- * what the firm wants in its place. The fields are sourced verbatim
- * from the YAML rule (or from the persisted finding row, which copies
- * them at write time); nothing is generated.
- *
- * Rendered as visually secondary to the title/message/evidence: muted
- * surface, smaller type, left rule. Hidden entirely when none of the
- * four fields is set, so passes and rules without guidance don't grow
- * an empty section.
- */
-function PlaybookGuidance({ rule }: PlaybookGuidanceProps) {
-  const hasGuidance = Boolean(rule.guidance);
-  const hasPreferredLanguage = Boolean(rule.preferred_language);
-  const hasExpectedValue = rule.expected_value !== null;
-  const hasMatchedTerms = rule.matched_terms.length > 0;
-  if (
-    !hasGuidance &&
-    !hasPreferredLanguage &&
-    !hasExpectedValue &&
-    !hasMatchedTerms
-  ) {
-    return null;
-  }
-  return (
-    <section
-      aria-label="Playbook guidance"
-      className="mt-2 rounded border-l-2 border-rule bg-canvas-subtle px-2.5 py-2"
-    >
-      <p className="text-[10px] font-medium uppercase tracking-wide text-ink-subtle">
-        Playbook guidance
-      </p>
-      {hasGuidance && (
-        <p className="mt-1 text-[11px] text-ink-muted">{rule.guidance}</p>
-      )}
-      {hasPreferredLanguage && (
-        <div className="mt-1.5">
-          <p className="text-[10px] uppercase tracking-wide text-ink-subtle">
-            Preferred language
-          </p>
-          <pre className="mt-0.5 whitespace-pre-wrap rounded border border-rule bg-canvas px-2 py-1.5 font-sans text-[11px] leading-relaxed text-ink-muted">
-            {rule.preferred_language}
-          </pre>
-        </div>
-      )}
-      {hasExpectedValue && (
-        <p className="mt-1.5 text-[11px] text-ink-subtle">
-          Expected value:{" "}
-          <span className="font-mono text-ink-muted">
-            {rule.expected_value}
-          </span>
-        </p>
-      )}
-      {hasMatchedTerms && (
-        <p className="mt-1 text-[11px] text-ink-subtle">
-          Matched terms:{" "}
-          <span className="font-mono text-ink-muted">
-            {rule.matched_terms.join(", ")}
-          </span>
-        </p>
-      )}
-    </section>
   );
 }
 

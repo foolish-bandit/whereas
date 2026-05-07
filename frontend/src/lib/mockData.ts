@@ -289,8 +289,6 @@ export const MOCK_NDA_PLAYBOOK_ID = "00000000-0000-4000-8000-000000000101";
 export const MOCK_DEACTIVATED_PLAYBOOK_ID =
   "00000000-0000-4000-8000-000000000102";
 
-const MUTUAL_NDA_PREFERRED_GOVERNING_LAW = `This Agreement shall be governed by and construed in accordance with the laws of the State of California, without regard to its conflict of laws principles. Any disputes arising under this Agreement shall be resolved in the state or federal courts located in San Francisco, California.`;
-
 const MUTUAL_NDA_PLAYBOOK_YAML = `name: "Mutual NDA Review Playbook (sample)"
 description: "Baseline review rules for mutual NDAs. Example only — not legal advice."
 version: "1.0"
@@ -311,9 +309,6 @@ rules:
     severity: "medium"
     rule_type: "preferred_value"
     expected_value: "California"
-    guidance: "We require California governing law for mutual NDAs originating in our California office. Substitute the firm-preferred clause below verbatim."
-    preferred_language: |
-      ${MUTUAL_NDA_PREFERRED_GOVERNING_LAW}
   - id: "assignment-consent-required"
     title: "Assignment should require consent"
     clause_type: "assignment"
@@ -322,7 +317,6 @@ rules:
     required_terms:
       - "consent"
       - "prior written consent"
-    guidance: "Assignment without prior written consent is unacceptable. If the contract is silent on assignment, request the firm-preferred clause."
 `;
 
 const MUTUAL_NDA_RULES: PlaybookRuleSummary[] = [
@@ -348,12 +342,6 @@ const MUTUAL_NDA_RULES: PlaybookRuleSummary[] = [
     severity: "medium",
   },
 ];
-
-const MUTUAL_NDA_GOVERNING_LAW_GUIDANCE =
-  "We require California governing law for mutual NDAs originating in our California office. Substitute the firm-preferred clause below verbatim.";
-
-const MUTUAL_NDA_ASSIGNMENT_GUIDANCE =
-  "Assignment without prior written consent is unacceptable. If the contract is silent on assignment, request the firm-preferred clause.";
 
 const MUTUAL_NDA_PARSED_RULES: Record<string, unknown> = {
   name: "Mutual NDA Review Playbook (sample)",
@@ -381,8 +369,8 @@ const MUTUAL_NDA_PARSED_RULES: Record<string, unknown> = {
       rule_type: "preferred_value",
       expected_value: "California",
       description: null,
-      guidance: MUTUAL_NDA_GOVERNING_LAW_GUIDANCE,
-      preferred_language: MUTUAL_NDA_PREFERRED_GOVERNING_LAW,
+      guidance: null,
+      preferred_language: null,
     },
     {
       id: "assignment-consent-required",
@@ -392,7 +380,7 @@ const MUTUAL_NDA_PARSED_RULES: Record<string, unknown> = {
       rule_type: "text_contains",
       required_terms: ["consent", "prior written consent"],
       description: null,
-      guidance: MUTUAL_NDA_ASSIGNMENT_GUIDANCE,
+      guidance: null,
       preferred_language: null,
     },
   ],
@@ -534,8 +522,8 @@ const NDA_VS_NDA_PLAYBOOK_REVIEW: PlaybookReviewResult = {
       matched_terms: [],
       expected_value: "California",
       description: null,
-      guidance: MUTUAL_NDA_GOVERNING_LAW_GUIDANCE,
-      preferred_language: MUTUAL_NDA_PREFERRED_GOVERNING_LAW,
+      guidance: null,
+      preferred_language: null,
     },
     {
       rule_id: "assignment-consent-required",
@@ -555,7 +543,7 @@ const NDA_VS_NDA_PLAYBOOK_REVIEW: PlaybookReviewResult = {
       matched_terms: [],
       expected_value: null,
       description: null,
-      guidance: MUTUAL_NDA_ASSIGNMENT_GUIDANCE,
+      guidance: null,
       preferred_language: null,
     },
   ],
