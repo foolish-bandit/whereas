@@ -700,32 +700,3 @@ export async function updateFindingStatus(
   );
   return scrubSecrets(data);
 }
-
-
-export async function getClauseTemplates(options: ApiOptions & { clause_type?: string; include_inactive?: boolean } = {}): Promise<ClauseTemplate[]> {
-  if (isDemoMode()) return mockApi.getClauseTemplates(options);
-  const params = new URLSearchParams();
-  if (options.clause_type) params.set("clause_type", options.clause_type);
-  if (options.include_inactive) params.set("include_inactive", "true");
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const data = await call<ClauseTemplate[]>(`/api/clause-templates${qs}`, { method: "GET" }, options);
-  return scrubSecrets(data);
-}
-
-export async function createClauseTemplate(payload: Partial<ClauseTemplate> & { name: string; clause_type: string; text: string }, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  if (isDemoMode()) return mockApi.createClauseTemplate(payload, options);
-  const data = await call<ClauseTemplate>("/api/clause-templates", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) }, options);
-  return scrubSecrets(data);
-}
-
-export async function updateClauseTemplate(id: string, payload: Partial<ClauseTemplate>, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  if (isDemoMode()) return mockApi.updateClauseTemplate(id, payload, options);
-  const data = await call<ClauseTemplate>(`/api/clause-templates/${encodeURIComponent(id)}`, { method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) }, options);
-  return scrubSecrets(data);
-}
-
-export async function deactivateClauseTemplate(id: string, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  if (isDemoMode()) return mockApi.deactivateClauseTemplate(id, options);
-  const data = await call<ClauseTemplate>(`/api/clause-templates/${encodeURIComponent(id)}`, { method: "DELETE" }, options);
-  return scrubSecrets(data);
-}

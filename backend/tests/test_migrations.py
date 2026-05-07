@@ -61,7 +61,6 @@ _EXPECTED_TABLES: frozenset[str] = frozenset(
         "extracted_fields",
         "deviation_findings",
         "playbook_review_runs",
-        "clause_templates",
     }
 )
 
