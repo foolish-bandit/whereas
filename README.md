@@ -74,6 +74,20 @@ A hosted UI preview, running in demo mode against fictional sample data,
 is at **https://whereas.pages.dev/**. No real contracts; nothing uploaded
 there is sent anywhere.
 
+
+## Frontend (local dev)
+
+The frontend lives in `frontend/` and is a React + Vite workspace UI.
+
+```
+cd frontend
+npm install
+npm run dev
+```
+
+Set `VITE_API_BASE_URL` (defaults to `http://localhost:8000`) if your API runs elsewhere.
+In the UI, open **Settings / Dev Auth** and set a Development User ID (UUID) used for the `X-Whereas-Dev-User` header in local development.
+
 ## Project status
 
 - [x] Repo scaffold
