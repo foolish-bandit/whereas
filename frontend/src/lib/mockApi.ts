@@ -30,7 +30,6 @@ import type {
 } from "../types/findings";
 import type { PlaybookDetail, PlaybookSummary } from "../types/playbooks";
 import type { PlaybookReviewResult } from "../types/review";
-import type { ClauseTemplate } from "../types/clauseTemplates";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -506,47 +505,4 @@ export function __resetMockState(): void {
   for (const k of Object.keys(sessionFindingsById)) {
     delete sessionFindingsById[k];
   }
-}
-
-const sessionClauseTemplates: ClauseTemplate[] = [
-  {
-    id: "ct-1",
-    name: "Mutual NDA confidentiality clause",
-    clause_type: "confidentiality",
-    text: "Each party shall keep Confidential Information in strict confidence...",
-    description: "Baseline mutual NDA language",
-    jurisdiction: "California",
-    contract_type: "mutual_nda",
-    version: "1.0",
-    source: "Legal",
-    tags: ["nda", "mutual"],
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
-
-export async function getClauseTemplates(options: ApiOptions & { clause_type?: string; include_inactive?: boolean } = {}): Promise<ClauseTemplate[]> {
-  await delay(MOCK_LATENCY_MS, options.signal);
-  return sessionClauseTemplates.filter((t) => (options.include_inactive ? true : t.is_active)).filter((t) => (options.clause_type ? t.clause_type === options.clause_type : true));
-}
-
-export async function createClauseTemplate(payload: Partial<ClauseTemplate> & { name: string; clause_type: string; text: string }, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  await delay(MOCK_LATENCY_MS, options.signal);
-  const now = new Date().toISOString();
-  const row: ClauseTemplate = { id: `ct-${Date.now().toString(36)}`, name: payload.name, clause_type: payload.clause_type, text: payload.text, description: payload.description ?? null, jurisdiction: payload.jurisdiction ?? null, contract_type: payload.contract_type ?? null, version: payload.version ?? null, source: payload.source ?? null, tags: payload.tags ?? null, is_active: true, created_at: now, updated_at: now };
-  sessionClauseTemplates.unshift(row);
-  return row;
-}
-
-export async function updateClauseTemplate(id: string, payload: Partial<ClauseTemplate>, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  await delay(MOCK_LATENCY_MS, options.signal);
-  const idx = sessionClauseTemplates.findIndex((x) => x.id === id);
-  if (idx < 0) throw new ApiError(404, "Clause template not found.");
-  sessionClauseTemplates[idx] = { ...sessionClauseTemplates[idx], ...payload, updated_at: new Date().toISOString() };
-  return sessionClauseTemplates[idx];
-}
-
-export async function deactivateClauseTemplate(id: string, options: ApiOptions = {}): Promise<ClauseTemplate> {
-  return updateClauseTemplate(id, { is_active: false }, options);
 }
