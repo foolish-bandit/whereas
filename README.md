@@ -80,7 +80,7 @@ there is sent anywhere.
 - [ ] Document upload + storage
 - [ ] Metadata extraction with span citations
 - [x] Clause segmentation (v1: heuristic, exact-span grounded — see note below)
-- [ ] Playbook YAML schema and deviation engine
+- [ ] Playbook YAML schema and deviation engine (schema + loader landed; deviation engine pending)
 - [ ] DocuSeal integration (embedded + auth bridge)
 - [ ] RAG Q&A
 - [ ] Permissioning model
@@ -103,6 +103,34 @@ clause library, RAG Q&A); it is **not** a clause manager, **not** an
 LLM-driven classifier, and **not** legal advice. Clause types are
 labelled conservatively from a CUAD-inspired taxonomy when the
 heuristics are confident, and left unclassified otherwise.
+
+### Playbook schema and rule loader
+
+Playbooks are firm-defined YAML documents that capture review
+positions on a particular contract type — for example, "for mutual
+NDAs in California, governing law should be California; assignment
+must require prior written consent." They are validated by
+`backend/app/services/playbook_loader.py` and persisted per
+organization in the `playbooks` table. The v1 schema supports three
+rule types:
+
+- `required_clause` — a clause of the named `clause_type` should be
+  present somewhere in the contract.
+- `preferred_value` — a specific extracted value is preferred (e.g.
+  governing law = California). Carries an `expected_value`.
+- `text_contains` — the clause text must contain *all* of the listed
+  `required_terms` (case-insensitive). At least one term required.
+
+The API surface (`/api/playbooks`) supports validate, create, list,
+detail, and soft-delete (deactivate). An example playbook ships under
+`backend/app/services/playbook_examples/mutual_nda.yaml`, and the
+read-only **Playbooks** page in the frontend renders them with a
+right-hand YAML pane.
+
+This PR ships the schema and loader. The deviation engine — matching
+parsed rules against segmented clauses, generating findings,
+suggesting redlines — is the next step. Whereas surfaces information
+about contracts; it does not provide legal advice.
 
 ## Contributing
 

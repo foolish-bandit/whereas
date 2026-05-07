@@ -11,6 +11,11 @@ import type {
   ContractListItem,
   ExtractedField,
 } from "../types/contracts";
+import type {
+  PlaybookDetail,
+  PlaybookRuleSummary,
+  PlaybookSummary,
+} from "../types/playbooks";
 
 const PDF_MIME = "application/pdf";
 const DOCX_MIME =
@@ -269,3 +274,181 @@ export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
 
 export const MOCK_NDA_FULL_TEXT = MUTUAL_NDA_TEXT;
 export const MOCK_NDA_CLAUSES = NDA_CLAUSES;
+
+// --------------------------------------------------------------------------
+// Playbooks (demo mode)
+//
+// One published example playbook plus a deactivated one, so the UI can
+// exercise both states. The YAML matches the v1 schema in
+// `backend/app/services/playbook_loader.py`. These are fictional review
+// rules for demonstration only — not legal advice.
+// --------------------------------------------------------------------------
+
+export const MOCK_NDA_PLAYBOOK_ID = "00000000-0000-4000-8000-000000000101";
+export const MOCK_DEACTIVATED_PLAYBOOK_ID =
+  "00000000-0000-4000-8000-000000000102";
+
+const MUTUAL_NDA_PLAYBOOK_YAML = `name: "Mutual NDA Review Playbook (sample)"
+description: "Baseline review rules for mutual NDAs. Example only — not legal advice."
+version: "1.0"
+jurisdiction: "California"
+contract_type: "mutual_nda"
+
+rules:
+  - id: "confidentiality-definition-required"
+    title: "Confidential Information definition should be present"
+    clause_type: "confidentiality"
+    severity: "high"
+    rule_type: "required_clause"
+    description: "The agreement should define confidential information."
+    guidance: "Look for a clause defining what information is protected."
+  - id: "governing-law-california"
+    title: "Governing law should be California"
+    clause_type: "governing_law"
+    severity: "medium"
+    rule_type: "preferred_value"
+    expected_value: "California"
+  - id: "assignment-consent-required"
+    title: "Assignment should require consent"
+    clause_type: "assignment"
+    severity: "medium"
+    rule_type: "text_contains"
+    required_terms:
+      - "consent"
+      - "prior written consent"
+`;
+
+const MUTUAL_NDA_RULES: PlaybookRuleSummary[] = [
+  {
+    id: "confidentiality-definition-required",
+    title: "Confidential Information definition should be present",
+    rule_type: "required_clause",
+    clause_type: "confidentiality",
+    severity: "high",
+  },
+  {
+    id: "governing-law-california",
+    title: "Governing law should be California",
+    rule_type: "preferred_value",
+    clause_type: "governing_law",
+    severity: "medium",
+  },
+  {
+    id: "assignment-consent-required",
+    title: "Assignment should require consent",
+    rule_type: "text_contains",
+    clause_type: "assignment",
+    severity: "medium",
+  },
+];
+
+const MUTUAL_NDA_PARSED_RULES: Record<string, unknown> = {
+  name: "Mutual NDA Review Playbook (sample)",
+  description:
+    "Baseline review rules for mutual NDAs. Example only — not legal advice.",
+  version: "1.0",
+  jurisdiction: "California",
+  contract_type: "mutual_nda",
+  rules: [
+    {
+      id: "confidentiality-definition-required",
+      title: "Confidential Information definition should be present",
+      clause_type: "confidentiality",
+      severity: "high",
+      rule_type: "required_clause",
+      description: "The agreement should define confidential information.",
+      guidance: "Look for a clause defining what information is protected.",
+      preferred_language: null,
+    },
+    {
+      id: "governing-law-california",
+      title: "Governing law should be California",
+      clause_type: "governing_law",
+      severity: "medium",
+      rule_type: "preferred_value",
+      expected_value: "California",
+      description: null,
+      guidance: null,
+      preferred_language: null,
+    },
+    {
+      id: "assignment-consent-required",
+      title: "Assignment should require consent",
+      clause_type: "assignment",
+      severity: "medium",
+      rule_type: "text_contains",
+      required_terms: ["consent", "prior written consent"],
+      description: null,
+      guidance: null,
+      preferred_language: null,
+    },
+  ],
+};
+
+const MUTUAL_NDA_PLAYBOOK_DETAIL: PlaybookDetail = {
+  id: MOCK_NDA_PLAYBOOK_ID,
+  name: "Mutual NDA Review Playbook (sample)",
+  description:
+    "Baseline review rules for mutual NDAs. Example only — not legal advice.",
+  jurisdiction: "California",
+  contract_type: "mutual_nda",
+  version: "1.0",
+  is_active: true,
+  rule_count: MUTUAL_NDA_RULES.length,
+  created_at: "2026-01-15T10:30:00Z",
+  updated_at: "2026-01-15T10:30:00Z",
+  yaml_source: MUTUAL_NDA_PLAYBOOK_YAML,
+  parsed_rules: MUTUAL_NDA_PARSED_RULES,
+  rules: MUTUAL_NDA_RULES,
+};
+
+const DEACTIVATED_PLAYBOOK_DETAIL: PlaybookDetail = {
+  id: MOCK_DEACTIVATED_PLAYBOOK_ID,
+  name: "Vendor MSA Playbook (sample, deactivated)",
+  description: "An older revision of the vendor MSA playbook.",
+  jurisdiction: null,
+  contract_type: "vendor_msa",
+  version: "0.9",
+  is_active: false,
+  rule_count: 0,
+  created_at: "2025-12-01T09:00:00Z",
+  updated_at: "2026-01-10T17:00:00Z",
+  yaml_source: 'name: "Vendor MSA Playbook (sample, deactivated)"\nrules: []\n',
+  parsed_rules: {
+    name: "Vendor MSA Playbook (sample, deactivated)",
+    rules: [],
+  },
+  rules: [],
+};
+
+export const MOCK_PLAYBOOK_LIST: PlaybookSummary[] = [
+  {
+    id: MUTUAL_NDA_PLAYBOOK_DETAIL.id,
+    name: MUTUAL_NDA_PLAYBOOK_DETAIL.name,
+    description: MUTUAL_NDA_PLAYBOOK_DETAIL.description,
+    jurisdiction: MUTUAL_NDA_PLAYBOOK_DETAIL.jurisdiction,
+    contract_type: MUTUAL_NDA_PLAYBOOK_DETAIL.contract_type,
+    version: MUTUAL_NDA_PLAYBOOK_DETAIL.version,
+    is_active: MUTUAL_NDA_PLAYBOOK_DETAIL.is_active,
+    rule_count: MUTUAL_NDA_PLAYBOOK_DETAIL.rule_count,
+    created_at: MUTUAL_NDA_PLAYBOOK_DETAIL.created_at,
+    updated_at: MUTUAL_NDA_PLAYBOOK_DETAIL.updated_at,
+  },
+  {
+    id: DEACTIVATED_PLAYBOOK_DETAIL.id,
+    name: DEACTIVATED_PLAYBOOK_DETAIL.name,
+    description: DEACTIVATED_PLAYBOOK_DETAIL.description,
+    jurisdiction: DEACTIVATED_PLAYBOOK_DETAIL.jurisdiction,
+    contract_type: DEACTIVATED_PLAYBOOK_DETAIL.contract_type,
+    version: DEACTIVATED_PLAYBOOK_DETAIL.version,
+    is_active: DEACTIVATED_PLAYBOOK_DETAIL.is_active,
+    rule_count: DEACTIVATED_PLAYBOOK_DETAIL.rule_count,
+    created_at: DEACTIVATED_PLAYBOOK_DETAIL.created_at,
+    updated_at: DEACTIVATED_PLAYBOOK_DETAIL.updated_at,
+  },
+];
+
+export const MOCK_PLAYBOOK_DETAIL_BY_ID: Record<string, PlaybookDetail> = {
+  [MOCK_NDA_PLAYBOOK_ID]: MUTUAL_NDA_PLAYBOOK_DETAIL,
+  [MOCK_DEACTIVATED_PLAYBOOK_ID]: DEACTIVATED_PLAYBOOK_DETAIL,
+};

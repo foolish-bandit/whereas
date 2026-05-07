@@ -276,21 +276,42 @@ class Clause(Base):
 
 
 class Playbook(Base):
-    """A YAML-defined library of firm positions on contract terms."""
+    """A YAML-defined library of firm positions on contract terms.
+
+    Playbooks are organization-scoped. `yaml_source` is the verbatim YAML
+    the user submitted (so the editor can round-trip without losing
+    formatting); `parsed_rules` is the validated, normalized projection
+    used by downstream rule matching. The two are kept in sync at write
+    time only — re-validating an existing playbook never rewrites
+    `yaml_source`.
+
+    The `is_active` flag is a soft toggle. Future deviation analysis
+    will only apply rules from active playbooks; deactivating a
+    playbook does not delete it or its prior findings.
+    """
     __tablename__ = "playbooks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    jurisdiction: Mapped[str | None] = mapped_column(String(128))
+    contract_type: Mapped[str | None] = mapped_column(String(128))
+    version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.0")
     yaml_source: Mapped[str] = mapped_column(Text, nullable=False)
     parsed_rules: Mapped[dict] = mapped_column(JSON, nullable=False)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_playbooks_organization_id", "organization_id"),
+        Index("ix_playbooks_org_name", "organization_id", "name"),
+        Index("ix_playbooks_org_active", "organization_id", "is_active"),
     )
 
 
