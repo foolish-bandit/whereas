@@ -281,6 +281,21 @@ describe("persisted-review mock API (demo mode)", () => {
     expect(run.failed_count).toBe(2);
   });
 
+  it("demo findings include preferred_language and guidance for the governing-law fail", async () => {
+    // The Cloudflare preview renders this run; if the firm-authored
+    // fields are dropped, the Playbook guidance section in the Review
+    // tab will not be visible. Lock the data shape down here.
+    const run = await mockCreate(MOCK_NDA_ID, MOCK_NDA_PLAYBOOK_ID);
+    const govLaw = run.findings.find(
+      (f) => f.rule_id === "governing-law-california",
+    );
+    expect(govLaw).toBeDefined();
+    expect(govLaw?.guidance).toBeTruthy();
+    expect(govLaw?.preferred_language).toBeTruthy();
+    expect(govLaw?.preferred_language).toMatch(/State of California/);
+    expect(govLaw?.expected_value).toBe("California");
+  });
+
   it("listPlaybookReviewRuns returns the runs created during this session", async () => {
     await mockCreate(MOCK_NDA_ID, MOCK_NDA_PLAYBOOK_ID);
     await mockCreate(MOCK_NDA_ID, MOCK_NDA_PLAYBOOK_ID);

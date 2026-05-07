@@ -494,6 +494,205 @@ class TestUpdateFindingStatus:
 
 
 # --------------------------------------------------------------------------
+# Firm-authored playbook guidance fields
+#
+# These fields are sourced verbatim from the YAML rule data; the
+# persistence path copies them off the matcher result without
+# transformation. The Review tab surfaces them so a failed finding
+# tells the reviewer not just *that* a clause failed but also the
+# firm's preferred fallback language.
+# --------------------------------------------------------------------------
+
+
+GUIDANCE_PLAYBOOK_YAML = """
+name: "Firm Playbook"
+description: "Carries guidance/preferred_language across rule types."
+version: "1.0"
+contract_type: "mutual_nda"
+
+rules:
+  - id: "governing-law-california"
+    title: "Governing law should be California"
+    clause_type: "governing_law"
+    severity: "medium"
+    rule_type: "preferred_value"
+    expected_value: "California"
+    guidance: "We require California governing law for this contract type."
+    preferred_language: |
+      This Agreement shall be governed by the laws of the State of California,
+      without regard to conflict of laws principles.
+  - id: "assignment-consent"
+    title: "Assignment requires consent"
+    clause_type: "assignment"
+    severity: "medium"
+    rule_type: "text_contains"
+    required_terms:
+      - "consent"
+      - "prior written"
+    guidance: "Assignment without prior written consent is unacceptable."
+    preferred_language: "Neither Party may assign this Agreement without prior written consent of the other Party."
+"""
+
+
+# Contract text that fails both rules: governing law is Delaware and
+# the assignment clause mentions only "consent" without "prior written".
+GUIDANCE_CONTRACT_TEXT = (
+    "1. Governing Law. This Agreement is governed by Delaware law.\n\n"
+    "2. Assignment. Either Party may assign on consent of the counterparty.\n"
+)
+
+
+async def _seed_guidance_workspace(
+    session: AsyncSession,
+) -> tuple[Contract, Playbook, list[Clause]]:
+    org = Organization(
+        id=uuid.uuid4(),
+        name=f"Org {uuid.uuid4()}",
+        wrapped_master_key=_wrapped_org_key(uuid.uuid4()),
+    )
+    user = User(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        email=f"{uuid.uuid4()}@example.com",
+        password_hash="hash",
+        display_name="Test",
+        is_active=True,
+    )
+    session.add_all([org, user])
+    await session.flush()
+
+    parsed = parse_playbook(GUIDANCE_PLAYBOOK_YAML)
+    playbook = Playbook(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        name=parsed.name,
+        description=parsed.description,
+        jurisdiction=parsed.jurisdiction,
+        contract_type=parsed.contract_type,
+        version=parsed.version,
+        yaml_source=GUIDANCE_PLAYBOOK_YAML,
+        parsed_rules=serialize_playbook(parsed),
+        is_active=True,
+    )
+    contract = Contract(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        uploaded_by=user.id,
+        title="Sample contract",
+        status="ready",
+        s3_key="contracts/sample.pdf",
+        mime_type="application/pdf",
+        file_hash_sha256="b" * 64,
+        full_text=GUIDANCE_CONTRACT_TEXT,
+    )
+    session.add_all([playbook, contract])
+    await session.flush()
+
+    seeds = [
+        ("governing_law", "1. Governing Law. This Agreement is governed by Delaware law."),
+        (
+            "assignment",
+            "2. Assignment. Either Party may assign on consent of the counterparty.",
+        ),
+    ]
+    clauses: list[Clause] = []
+    for ordinal, (clause_type, body) in enumerate(seeds):
+        start = GUIDANCE_CONTRACT_TEXT.index(body)
+        clauses.append(
+            Clause(
+                id=uuid.uuid4(),
+                organization_id=org.id,
+                contract_id=contract.id,
+                ordinal=ordinal,
+                heading=None,
+                clause_type=clause_type,
+                clause_type_source="heuristic",
+                text=body,
+                span_start=start,
+                span_end=start + len(body),
+                confidence=None,
+                segmentation_method="heuristic_v1",
+                model_name=None,
+                prompt_version=None,
+            )
+        )
+    session.add_all(clauses)
+    await session.flush()
+    return contract, playbook, clauses
+
+
+class TestPlaybookGuidanceFields:
+    async def test_guidance_and_preferred_language_round_trip_to_db(
+        self, session: AsyncSession
+    ) -> None:
+        contract, playbook, clauses = await _seed_guidance_workspace(session)
+        parsed = parse_playbook(playbook.yaml_source)
+        run, findings, _ = await run_and_persist_review(
+            session,
+            contract=contract,
+            playbook=playbook,
+            parsed_playbook=parsed,
+            clauses=clauses,
+        )
+        # Re-read from the DB so we exercise the column round-trip, not
+        # just the in-memory return value.
+        rows = (
+            await session.execute(
+                select(DeviationFinding)
+                .where(DeviationFinding.review_run_id == run.id)
+                .order_by(DeviationFinding.rule_id.asc())
+            )
+        ).scalars().all()
+        by_rule = {row.rule_id: row for row in rows}
+        # Both rules should fail given the seeded contract text.
+        assert {row.rule_id for row in rows} == {
+            "governing-law-california",
+            "assignment-consent",
+        }
+        assert len(findings) == len(rows)
+
+        gov = by_rule["governing-law-california"]
+        assert gov.guidance == (
+            "We require California governing law for this contract type."
+        )
+        assert gov.preferred_language is not None
+        assert "State of California" in gov.preferred_language
+        assert gov.expected_value == "California"
+
+        assign = by_rule["assignment-consent"]
+        assert assign.guidance == (
+            "Assignment without prior written consent is unacceptable."
+        )
+        assert assign.preferred_language == (
+            "Neither Party may assign this Agreement without "
+            "prior written consent of the other Party."
+        )
+        # `text_contains` records the partial match the contract had.
+        assert assign.matched_terms == ["consent"]
+
+    async def test_rule_without_guidance_persists_null_fields(
+        self, session: AsyncSession
+    ) -> None:
+        # Sanity check the inverse: the original PLAYBOOK_YAML has no
+        # `preferred_language` or `guidance` on its rules, so persisted
+        # findings must read NULL on those columns rather than empty
+        # strings or fabricated text.
+        _, _, contract, playbook, clauses = await _seed(session)
+        parsed = parse_playbook(playbook.yaml_source)
+        _, findings, _ = await run_and_persist_review(
+            session,
+            contract=contract,
+            playbook=playbook,
+            parsed_playbook=parsed,
+            clauses=clauses,
+        )
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.guidance is None
+        assert f.preferred_language is None
+
+
+# --------------------------------------------------------------------------
 # Source-level sentinel: the persistence module must not import any LLM SDK.
 # --------------------------------------------------------------------------
 
