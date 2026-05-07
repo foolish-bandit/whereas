@@ -29,7 +29,7 @@ import type {
   ContractDetail,
   ExtractedField,
 } from "../types/contracts";
-import type { PlaybookReviewResult } from "../types/review";
+import type { ReviewRunDetail } from "../types/findings";
 
 type LoadState =
   | { kind: "loading" }
@@ -51,8 +51,7 @@ export default function ContractWorkspacePage() {
   const [downloadState, setDownloadState] = useState<DownloadState>({
     kind: "idle",
   });
-  const [reviewResults, setReviewResults] =
-    useState<PlaybookReviewResult | null>(null);
+  const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -105,20 +104,25 @@ export default function ContractWorkspacePage() {
       return { start: clause.span_start, end: clause.span_end };
     }
     if (selectedKey.startsWith("review:")) {
-      // Review evidence keys resolve through the latest review result.
-      // The matcher copies span_start/span_end straight off the Clause
-      // row, which is exact-span-grounded by construction.
-      if (!reviewResults) return null;
+      // Review evidence keys resolve through the active review run.
+      // Both the matcher's per-rule results and the persisted findings
+      // copy span_start/span_end straight off the Clause row, which is
+      // exact-span-grounded by construction.
+      if (!activeRun) return null;
       const ruleId = selectedKey.slice("review:".length);
-      const rule = reviewResults.results.find((r) => r.rule_id === ruleId);
-      if (!rule) return null;
-      if (
-        typeof rule.span_start !== "number" ||
-        typeof rule.span_end !== "number"
-      ) {
-        return null;
+      const rule = activeRun.results.find((r) => r.rule_id === ruleId);
+      if (rule && typeof rule.span_start === "number" && typeof rule.span_end === "number") {
+        return { start: rule.span_start, end: rule.span_end };
       }
-      return { start: rule.span_start, end: rule.span_end };
+      const finding = activeRun.findings.find((f) => f.rule_id === ruleId);
+      if (
+        finding &&
+        typeof finding.span_start === "number" &&
+        typeof finding.span_end === "number"
+      ) {
+        return { start: finding.span_start, end: finding.span_end };
+      }
+      return null;
     }
     const field = contract.extracted_fields.find(
       (f) => fieldKey(f) === selectedKey,
@@ -131,7 +135,7 @@ export default function ContractWorkspacePage() {
       return null;
     }
     return { start: field.span_start, end: field.span_end };
-  }, [contract, selectedKey, reviewResults]);
+  }, [contract, selectedKey, activeRun]);
 
   async function onDownload() {
     if (!contract) return;
@@ -233,7 +237,7 @@ export default function ContractWorkspacePage() {
           }}
           selectedKey={selectedKey}
           onSelect={setSelectedKey}
-          onReviewResultsChange={setReviewResults}
+          onReviewRunChange={setActiveRun}
         />
       </div>
     </div>
@@ -246,7 +250,7 @@ interface SidebarProps {
   onTabChange: (tab: SidebarTab) => void;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
-  onReviewResultsChange: (result: PlaybookReviewResult | null) => void;
+  onReviewRunChange: (run: ReviewRunDetail | null) => void;
 }
 
 function Sidebar({
@@ -255,7 +259,7 @@ function Sidebar({
   onTabChange,
   selectedKey,
   onSelect,
-  onReviewResultsChange,
+  onReviewRunChange,
 }: SidebarProps) {
   const tabs = [
     {
@@ -296,7 +300,7 @@ function Sidebar({
           contractId={contract.id}
           selectedKey={selectedKey}
           onSelect={onSelect}
-          onResultsChange={onReviewResultsChange}
+          onRunChange={onReviewRunChange}
         />
       )}
       <ReviewReminder

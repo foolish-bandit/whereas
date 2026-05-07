@@ -149,6 +149,9 @@ class Contract(Base):
     deviation_findings: Mapped[list[DeviationFinding]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
+    playbook_review_runs: Mapped[list[PlaybookReviewRun]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
 
 
 # ------------------------------------------------------------------
@@ -323,36 +326,183 @@ class DeviationSeverity(StrEnum):
     BLOCKER = "blocker"
 
 
-class DeviationFinding(Base):
-    """A single deviation between a contract's clauses and a playbook's positions."""
-    __tablename__ = "deviation_findings"
+class FindingStatus(StrEnum):
+    """Human-workflow state of a persisted deterministic finding.
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    `OPEN` is the entry state; reviewers can mark a finding `REVIEWED`
+    (acknowledged) or `IGNORED` (deliberately set aside). `SUPERSEDED`
+    is reserved for the rerun path: when a new review run lands for the
+    same (contract, playbook), prior `OPEN` findings transition to
+    `SUPERSEDED` so the latest run is the source of truth without
+    losing the audit trail. Reviewer decisions (`REVIEWED`, `IGNORED`)
+    are deliberately *not* superseded — those are explicit human
+    judgements and re-running the same playbook should not reset them.
+    """
+
+    OPEN = "open"
+    REVIEWED = "reviewed"
+    IGNORED = "ignored"
+    SUPERSEDED = "superseded"
+
+
+class PlaybookReviewRun(Base):
+    """One execution of a playbook against a contract's segmented clauses.
+
+    A review run is the durable audit of *when* a contract was reviewed
+    against a particular playbook. The aggregate counts
+    (`rules_checked`, `passed_count`, `failed_count`) are stored on the
+    run; per-rule failures are stored as `DeviationFinding` rows
+    pointing back at this run via `review_run_id`.
+
+    Pass results are *not* persisted as separate rows — the matcher is
+    deterministic, so anyone who needs the full per-rule pass/fail list
+    for a historical run can re-run the matcher against the same
+    (contract, playbook). The run record itself is what audits "we did
+    review this contract on date X".
+    """
+
+    __tablename__ = "playbook_review_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
     contract_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("contracts.id"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
     )
     playbook_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("playbooks.id"), nullable=False
     )
-    clause_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clauses.id")
+    rules_checked: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    passed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    rule_id: Mapped[str] = mapped_column(String(128), nullable=False)  # from the playbook YAML
-    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    explanation: Mapped[str] = mapped_column(Text, nullable=False)
-    suggested_redline: Mapped[str | None] = mapped_column(Text)
+    contract: Mapped[Contract] = relationship(back_populates="playbook_review_runs")
+    findings: Mapped[list[DeviationFinding]] = relationship(
+        back_populates="review_run", cascade="all, delete-orphan"
+    )
 
-    # Provenance
-    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    __table_args__ = (
+        Index("ix_playbook_review_runs_org", "organization_id"),
+        Index("ix_playbook_review_runs_contract", "contract_id"),
+        Index(
+            "ix_playbook_review_runs_contract_playbook",
+            "contract_id",
+            "playbook_id",
+        ),
+        Index("ix_playbook_review_runs_created_at", "created_at"),
+    )
 
-    # User actions
-    dismissed: Mapped[bool] = mapped_column(default=False)
-    dismissed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    dismissed_reason: Mapped[str | None] = mapped_column(Text)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+class DeviationFinding(Base):
+    """A single failed deterministic rule outcome from a playbook review.
+
+    Findings are written from the deterministic matcher
+    (`app.services.playbook_matcher.match_playbook`) against the
+    contract's segmented clauses. **Only failures are persisted** —
+    pass results would be one-row-per-rule noise that no reviewer
+    triages, and the parent `PlaybookReviewRun` already records
+    `passed_count` / `rules_checked` for audit.
+
+    Span fields (`span_start`, `span_end`, `evidence_text`) are copied
+    verbatim off the source `Clause` row. The matcher does not
+    paraphrase or recompute spans; this row's evidence is the same
+    exact-span citation the segmenter persisted.
+
+    `status` is the deterministic outcome (always `"fail"` for
+    persisted rows in v1; the column is kept so a future change that
+    persists passes does not need a migration). `finding_status` is
+    the human workflow state (see `FindingStatus`). The two are
+    independent: `status` is set once at write time; `finding_status`
+    is updated by reviewers.
+    """
+
+    __tablename__ = "deviation_findings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    playbook_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("playbooks.id"), nullable=False
+    )
+    review_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("playbook_review_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Rule shape — captured at write time so a finding is meaningful
+    # even if the parent playbook is later edited or deactivated.
+    rule_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    rule_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    rule_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    clause_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Deterministic outcome at write time. v1 only persists failures.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    finding_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=FindingStatus.OPEN.value
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Evidence: copied verbatim from the matcher result, which itself
+    # mirrors the source Clause row. ON DELETE SET NULL on `clause_id`
+    # so a future re-segmentation that drops a clause does not orphan
+    # the finding (span fields are still meaningful against the source
+    # text).
+    clause_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clauses.id", ondelete="SET NULL")
+    )
+    evidence_text: Mapped[str | None] = mapped_column(Text)
+    span_start: Mapped[int | None] = mapped_column(Integer)
+    span_end: Mapped[int | None] = mapped_column(Integer)
+    matched_terms: Mapped[list[str] | None] = mapped_column(JSON)
+    expected_value: Mapped[str | None] = mapped_column(Text)
+
+    # Optional rule-level guidance the firm's playbook author wrote.
+    guidance: Mapped[str | None] = mapped_column(Text)
+    preferred_language: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     contract: Mapped[Contract] = relationship(back_populates="deviation_findings")
+    review_run: Mapped[PlaybookReviewRun] = relationship(back_populates="findings")
+
+    __table_args__ = (
+        Index("ix_deviation_findings_organization_id", "organization_id"),
+        Index("ix_deviation_findings_contract_id", "contract_id"),
+        Index("ix_deviation_findings_playbook_id", "playbook_id"),
+        Index(
+            "ix_deviation_findings_contract_playbook",
+            "contract_id",
+            "playbook_id",
+        ),
+        Index(
+            "ix_deviation_findings_contract_status",
+            "contract_id",
+            "finding_status",
+        ),
+        Index("ix_deviation_findings_review_run_id", "review_run_id"),
+        Index("ix_deviation_findings_severity", "severity"),
+    )

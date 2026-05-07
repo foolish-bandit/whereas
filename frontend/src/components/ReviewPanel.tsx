@@ -3,14 +3,20 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   MissingDevUserError,
+  createPlaybookReviewRun,
+  getPlaybookReviewRun,
   getPlaybooks,
-  reviewContractWithPlaybook,
+  listPlaybookReviewRuns,
+  updateFindingStatus,
 } from "../lib/api";
-import type { PlaybookSummary } from "../types/playbooks";
 import type {
-  PlaybookReviewResult,
-  PlaybookRuleMatchResult,
-} from "../types/review";
+  DeviationFinding,
+  ReviewRunDetail,
+  ReviewRunSummary,
+  ReviewerFindingStatus,
+} from "../types/findings";
+import type { PlaybookSummary } from "../types/playbooks";
+import type { PlaybookRuleMatchResult } from "../types/review";
 
 const SEVERITY_RANK: Record<string, number> = {
   blocker: 0,
@@ -26,16 +32,23 @@ const RULE_TYPE_LABELS: Record<string, string> = {
   text_contains: "Text contains",
 };
 
+const FINDING_STATUS_LABELS: Record<string, string> = {
+  open: "Open",
+  reviewed: "Reviewed",
+  ignored: "Ignored",
+  superseded: "Superseded",
+};
+
 interface ReviewPanelProps {
   contractId: string;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
   /**
-   * Called whenever the rendered review changes (loaded, cleared on
+   * Called whenever the rendered run changes (loaded, cleared on
    * contract change, etc.). The parent page uses this to resolve
-   * `review:<rule_id>` selection keys back to their evidence spans.
+   * `review:<rule_id>` selection keys back to evidence spans.
    */
-  onResultsChange?: (result: PlaybookReviewResult | null) => void;
+  onRunChange?: (run: ReviewRunDetail | null) => void;
 }
 
 type PlaybookListState =
@@ -43,37 +56,42 @@ type PlaybookListState =
   | { kind: "loaded"; playbooks: PlaybookSummary[] }
   | { kind: "error"; message: string };
 
-type ReviewState =
+type RunsState =
+  | { kind: "loading" }
+  | { kind: "loaded"; runs: ReviewRunSummary[] }
+  | { kind: "error"; message: string };
+
+type ActiveRunState =
   | { kind: "idle" }
   | { kind: "running" }
-  | { kind: "loaded"; result: PlaybookReviewResult }
+  | { kind: "loading" }
+  | { kind: "loaded"; run: ReviewRunDetail }
   | { kind: "error"; message: string };
 
 export default function ReviewPanel({
   contractId,
   selectedKey,
   onSelect,
-  onResultsChange,
+  onRunChange,
 }: ReviewPanelProps) {
   const [playbookListState, setPlaybookListState] = useState<PlaybookListState>(
     { kind: "loading" },
   );
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>("");
-  const [reviewState, setReviewState] = useState<ReviewState>({ kind: "idle" });
+  const [runsState, setRunsState] = useState<RunsState>({ kind: "loading" });
+  const [activeRun, setActiveRun] = useState<ActiveRunState>({ kind: "idle" });
 
-  // Notify the parent of results changes so it can resolve evidence
-  // selection keys to spans for the document viewer. Effect on
-  // reviewState rather than inline in onRun so contract-change resets
-  // also propagate.
+  // Notify the parent of run changes so it can resolve evidence keys.
   useEffect(() => {
-    if (!onResultsChange) return;
-    if (reviewState.kind === "loaded") {
-      onResultsChange(reviewState.result);
+    if (!onRunChange) return;
+    if (activeRun.kind === "loaded") {
+      onRunChange(activeRun.run);
     } else {
-      onResultsChange(null);
+      onRunChange(null);
     }
-  }, [reviewState, onResultsChange]);
+  }, [activeRun, onRunChange]);
 
+  // Load active playbooks.
   useEffect(() => {
     const controller = new AbortController();
     setPlaybookListState({ kind: "loading" });
@@ -81,8 +99,6 @@ export default function ReviewPanel({
       .then((playbooks) => {
         const active = playbooks.filter((p) => p.is_active);
         setPlaybookListState({ kind: "loaded", playbooks: active });
-        // Auto-select the first active playbook so a one-click review is
-        // possible. The user can switch via the dropdown if needed.
         if (active.length > 0) setSelectedPlaybookId(active[0].id);
       })
       .catch((err) => {
@@ -107,35 +123,104 @@ export default function ReviewPanel({
     return () => controller.abort();
   }, []);
 
-  // If the contract changes (or its segmented clauses do), the review is
-  // stale — clear it so the UI doesn't show outdated results against the
-  // new contract.
+  // Load prior runs for this contract; auto-select the newest.
   useEffect(() => {
-    setReviewState({ kind: "idle" });
+    const controller = new AbortController();
+    setRunsState({ kind: "loading" });
+    setActiveRun({ kind: "idle" });
+    listPlaybookReviewRuns(contractId, { signal: controller.signal })
+      .then((runs) => {
+        setRunsState({ kind: "loaded", runs });
+        if (runs.length > 0) {
+          loadRun(runs[0].id, controller.signal);
+        }
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        if (err instanceof MissingDevUserError) {
+          setRunsState({
+            kind: "error",
+            message:
+              "Set a development user ID in Settings before viewing reviews.",
+          });
+          return;
+        }
+        if (err instanceof ApiError) {
+          setRunsState({ kind: "error", message: err.message });
+          return;
+        }
+        setRunsState({ kind: "error", message: "Could not load review runs." });
+      });
+    return () => controller.abort();
+    // We deliberately exclude `loadRun` from deps; it captures
+    // setActiveRun, which is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
 
-  async function onRun() {
-    if (!selectedPlaybookId) return;
-    setReviewState({ kind: "running" });
+  async function loadRun(runId: string, signal?: AbortSignal): Promise<void> {
+    setActiveRun({ kind: "loading" });
     try {
-      const result = await reviewContractWithPlaybook(
-        contractId,
-        selectedPlaybookId,
-      );
-      setReviewState({ kind: "loaded", result });
+      const run = await getPlaybookReviewRun(contractId, runId, { signal });
+      setActiveRun({ kind: "loaded", run });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof ApiError) {
+        setActiveRun({ kind: "error", message: err.message });
+        return;
+      }
+      setActiveRun({ kind: "error", message: "Could not load review run." });
+    }
+  }
+
+  async function onRun(): Promise<void> {
+    if (!selectedPlaybookId) return;
+    setActiveRun({ kind: "running" });
+    try {
+      const run = await createPlaybookReviewRun(contractId, selectedPlaybookId);
+      setActiveRun({ kind: "loaded", run });
+      // Refresh the runs list to include the new entry at the top.
+      const runs = await listPlaybookReviewRuns(contractId);
+      setRunsState({ kind: "loaded", runs });
     } catch (err) {
       if (err instanceof MissingDevUserError) {
-        setReviewState({ kind: "error", message: err.message });
+        setActiveRun({ kind: "error", message: err.message });
         return;
       }
       if (err instanceof ApiError) {
-        setReviewState({ kind: "error", message: err.message });
+        setActiveRun({ kind: "error", message: err.message });
         return;
       }
-      setReviewState({
-        kind: "error",
-        message: "Could not run the review.",
+      setActiveRun({ kind: "error", message: "Could not run the review." });
+    }
+  }
+
+  async function onUpdateFinding(
+    findingId: string,
+    status: ReviewerFindingStatus,
+  ): Promise<void> {
+    try {
+      const updated = await updateFindingStatus(contractId, findingId, status);
+      setActiveRun((prev) => {
+        if (prev.kind !== "loaded") return prev;
+        const findings = prev.run.findings.map((f) =>
+          f.id === findingId ? updated : f,
+        );
+        return { kind: "loaded", run: { ...prev.run, findings } };
       });
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Could not update the finding.";
+      setActiveRun((prev) =>
+        prev.kind === "loaded"
+          ? { kind: "loaded", run: prev.run }
+          : { kind: "error", message },
+      );
+      // Surface the error inline by adding a transient message; for
+      // simplicity we rely on the next refresh. A toast system would
+      // belong in a follow-up.
+      console.warn("update finding failed", err);
     }
   }
 
@@ -145,8 +230,8 @@ export default function ReviewPanel({
         <h2 className="text-sm font-medium text-ink">Playbook review</h2>
         <p className="mt-0.5 text-xs text-ink-subtle">
           Deterministic rule matching against this contract&rsquo;s segmented
-          clauses. Whereas surfaces information about contracts; it does not
-          provide legal advice.
+          clauses. Findings are saved per run. Whereas surfaces information
+          about contracts; it does not provide legal advice.
         </p>
       </div>
 
@@ -160,21 +245,29 @@ export default function ReviewPanel({
           type="button"
           onClick={onRun}
           disabled={
-            !selectedPlaybookId || reviewState.kind === "running" ||
+            !selectedPlaybookId || activeRun.kind === "running" ||
             playbookListState.kind !== "loaded" ||
             playbookListState.playbooks.length === 0
           }
           className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-xs font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {reviewState.kind === "running" ? "Running…" : "Run review"}
+          {activeRun.kind === "running" ? "Running…" : "Run review and save"}
         </button>
       </div>
 
       <div className="border-t border-rule px-4 py-3">
-        <ResultsArea
-          state={reviewState}
+        <RunHistory
+          runsState={runsState}
+          activeRunId={
+            activeRun.kind === "loaded" ? activeRun.run.id : null
+          }
+          onSelect={(runId) => loadRun(runId)}
+        />
+        <ActiveRunArea
+          state={activeRun}
           selectedKey={selectedKey}
           onSelect={onSelect}
+          onUpdateFinding={onUpdateFinding}
         />
       </div>
     </div>
@@ -193,14 +286,10 @@ function PlaybookPicker({
   onChange,
 }: PlaybookPickerProps) {
   if (state.kind === "loading") {
-    return (
-      <p className="text-xs text-ink-subtle">Loading playbooks…</p>
-    );
+    return <p className="text-xs text-ink-subtle">Loading playbooks…</p>;
   }
   if (state.kind === "error") {
-    return (
-      <p className="text-xs text-danger">{state.message}</p>
-    );
+    return <p className="text-xs text-danger">{state.message}</p>;
   }
   if (state.playbooks.length === 0) {
     return (
@@ -228,130 +317,240 @@ function PlaybookPicker({
   );
 }
 
-interface ResultsAreaProps {
-  state: ReviewState;
-  selectedKey: string | null;
-  onSelect: (key: string | null) => void;
+interface RunHistoryProps {
+  runsState: RunsState;
+  activeRunId: string | null;
+  onSelect: (runId: string) => void;
 }
 
-function ResultsArea({
+function RunHistory({ runsState, activeRunId, onSelect }: RunHistoryProps) {
+  if (runsState.kind === "loading") {
+    return <p className="text-xs text-ink-subtle">Loading prior runs…</p>;
+  }
+  if (runsState.kind === "error") {
+    return <p className="text-xs text-danger">{runsState.message}</p>;
+  }
+  if (runsState.runs.length === 0) {
+    return null;
+  }
+  if (runsState.runs.length === 1) {
+    // One run isn't worth a picker; the latest-run summary below covers it.
+    return null;
+  }
+  return (
+    <div className="mb-3 rounded border border-rule bg-canvas-subtle px-2.5 py-2">
+      <p className="mb-1 text-[11px] uppercase tracking-wide text-ink-subtle">
+        Prior runs
+      </p>
+      <ul className="space-y-1">
+        {runsState.runs.map((run) => {
+          const isActive = run.id === activeRunId;
+          return (
+            <li key={run.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(run.id)}
+                aria-pressed={isActive}
+                className={[
+                  "flex w-full items-center justify-between rounded px-2 py-1 text-left text-[11px] transition-colors",
+                  isActive
+                    ? "bg-info-soft text-ink"
+                    : "text-ink-muted hover:bg-canvas",
+                ].join(" ")}
+              >
+                <span className="truncate">
+                  {run.playbook_name}
+                  <span className="ml-1 text-ink-subtle">
+                    · {formatRunDate(run.created_at)}
+                  </span>
+                </span>
+                <span className="ml-2 whitespace-nowrap text-ink-subtle">
+                  {run.failed_count}f / {run.passed_count}p
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+interface ActiveRunAreaProps {
+  state: ActiveRunState;
+  selectedKey: string | null;
+  onSelect: (key: string | null) => void;
+  onUpdateFinding: (
+    findingId: string,
+    status: ReviewerFindingStatus,
+  ) => void;
+}
+
+function ActiveRunArea({
   state,
   selectedKey,
   onSelect,
-}: ResultsAreaProps) {
+  onUpdateFinding,
+}: ActiveRunAreaProps) {
   if (state.kind === "idle") {
     return (
       <p className="text-xs text-ink-subtle">
-        Run a review to see deterministic rule outcomes. Results are not
-        persisted.
+        Run a review to see deterministic rule outcomes saved against this
+        contract.
       </p>
     );
   }
   if (state.kind === "running") {
     return <p className="text-xs text-ink-subtle">Running review…</p>;
   }
+  if (state.kind === "loading") {
+    return <p className="text-xs text-ink-subtle">Loading review run…</p>;
+  }
   if (state.kind === "error") {
     return <p className="text-xs text-danger">{state.message}</p>;
   }
-  const { result } = state;
-  if (result.results.length === 0) {
+  const { run } = state;
+  if (run.results.length === 0 && run.findings.length === 0) {
     return (
-      <p className="text-xs text-ink-subtle">
-        This playbook has no rules; nothing to evaluate.
-      </p>
+      <div className="space-y-2">
+        <RunSummary run={run} />
+        <p className="text-xs text-ink-subtle">
+          This playbook has no rules; nothing to evaluate.
+        </p>
+      </div>
     );
   }
   return (
     <div className="space-y-3">
-      <Summary result={result} />
+      <RunSummary run={run} />
       <RuleResultList
-        results={result.results}
+        run={run}
         selectedKey={selectedKey}
         onSelect={onSelect}
+        onUpdateFinding={onUpdateFinding}
       />
     </div>
   );
 }
 
-function Summary({ result }: { result: PlaybookReviewResult }) {
+function RunSummary({ run }: { run: ReviewRunDetail }) {
   return (
-    <div className="flex flex-wrap gap-2 text-[11px]">
-      <span className="rounded-full border border-success-ring bg-success-soft px-2 py-0.5 text-success">
-        {result.passed_count} passed
-      </span>
-      <span className="rounded-full border border-danger-ring bg-danger-soft px-2 py-0.5 text-danger">
-        {result.failed_count} failed
-      </span>
-      <span className="rounded-full border border-rule bg-canvas-subtle px-2 py-0.5 text-ink-muted">
-        {result.rules_checked} rule{result.rules_checked === 1 ? "" : "s"}{" "}
-        checked
-      </span>
+    <div className="rounded border border-rule bg-canvas-subtle px-3 py-2">
+      <p className="text-xs font-medium text-ink">{run.playbook_name}</p>
+      <p className="mt-0.5 text-[11px] text-ink-subtle">
+        Run {formatRunDate(run.created_at)}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        <span className="rounded-full border border-success-ring bg-success-soft px-2 py-0.5 text-success">
+          {run.passed_count} passed
+        </span>
+        <span className="rounded-full border border-danger-ring bg-danger-soft px-2 py-0.5 text-danger">
+          {run.failed_count} failed
+        </span>
+        <span className="rounded-full border border-rule bg-canvas px-2 py-0.5 text-ink-muted">
+          {run.rules_checked} rule{run.rules_checked === 1 ? "" : "s"} checked
+        </span>
+      </div>
     </div>
   );
 }
 
 interface RuleResultListProps {
-  results: PlaybookRuleMatchResult[];
+  run: ReviewRunDetail;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
+  onUpdateFinding: (
+    findingId: string,
+    status: ReviewerFindingStatus,
+  ) => void;
+}
+
+interface RowModel {
+  rule: PlaybookRuleMatchResult;
+  finding: DeviationFinding | null;
 }
 
 function RuleResultList({
-  results,
+  run,
   selectedKey,
   onSelect,
+  onUpdateFinding,
 }: RuleResultListProps) {
+  const rows = useMemo<RowModel[]>(() => {
+    const findingByRule = new Map<string, DeviationFinding>();
+    for (const f of run.findings) {
+      findingByRule.set(f.rule_id, f);
+    }
+    // Prefer the recomputed per-rule list if present; otherwise fall
+    // back to one row per persisted finding (run history when the
+    // contract has been re-segmented since the run, etc.).
+    if (run.results.length > 0) {
+      return run.results.map((rule) => ({
+        rule,
+        finding: findingByRule.get(rule.rule_id) ?? null,
+      }));
+    }
+    return run.findings.map((f) => ({
+      rule: findingToRuleResult(f),
+      finding: f,
+    }));
+  }, [run.findings, run.results]);
+
   const sorted = useMemo(() => {
-    return [...results].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       // Failures first; within each group, by severity then title.
-      if (a.status !== b.status) {
-        return a.status === "fail" ? -1 : 1;
+      if (a.rule.status !== b.rule.status) {
+        return a.rule.status === "fail" ? -1 : 1;
       }
-      const sa = SEVERITY_RANK[a.severity] ?? 99;
-      const sb = SEVERITY_RANK[b.severity] ?? 99;
+      const sa = SEVERITY_RANK[a.rule.severity] ?? 99;
+      const sb = SEVERITY_RANK[b.rule.severity] ?? 99;
       if (sa !== sb) return sa - sb;
-      return a.title.localeCompare(b.title);
+      return a.rule.title.localeCompare(b.rule.title);
     });
-  }, [results]);
+  }, [rows]);
 
   return (
     <ul className="divide-y divide-rule">
-      {sorted.map((r) => {
-        const key = `review:${r.rule_id}`;
+      {sorted.map(({ rule, finding }) => {
+        const key = `review:${rule.rule_id}`;
         const hasEvidence =
-          typeof r.span_start === "number" && typeof r.span_end === "number";
+          typeof rule.span_start === "number" &&
+          typeof rule.span_end === "number";
         const isSelected = key === selectedKey;
         return (
-          <li key={r.rule_id} className="py-3">
+          <li key={rule.rule_id} className="py-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <StatusPill status={r.status} />
-                  <SeverityBadge severity={r.severity} />
+                  <StatusPill status={rule.status} />
+                  <SeverityBadge severity={rule.severity} />
+                  {finding && (
+                    <FindingStatusBadge status={finding.finding_status} />
+                  )}
                 </div>
                 <h3 className="mt-1.5 text-sm font-medium text-ink">
-                  {r.title}
+                  {rule.title}
                 </h3>
                 <p className="mt-0.5 font-mono text-[11px] text-ink-subtle">
-                  {RULE_TYPE_LABELS[r.rule_type] ?? r.rule_type} ·{" "}
-                  {r.clause_type}
+                  {RULE_TYPE_LABELS[rule.rule_type] ?? rule.rule_type} ·{" "}
+                  {rule.clause_type}
                 </p>
               </div>
             </div>
-            <p className="mt-1.5 text-xs text-ink-muted">{r.message}</p>
-            {r.matched_terms.length > 0 && (
+            <p className="mt-1.5 text-xs text-ink-muted">{rule.message}</p>
+            {rule.matched_terms.length > 0 && (
               <p className="mt-1 text-[11px] text-ink-subtle">
                 Matched terms:{" "}
                 <span className="font-mono text-ink-muted">
-                  {r.matched_terms.join(", ")}
+                  {rule.matched_terms.join(", ")}
                 </span>
               </p>
             )}
-            {r.expected_value !== null && (
+            {rule.expected_value !== null && (
               <p className="mt-1 text-[11px] text-ink-subtle">
                 Expected value:{" "}
                 <span className="font-mono text-ink-muted">
-                  {r.expected_value}
+                  {rule.expected_value}
                 </span>
               </p>
             )}
@@ -367,13 +566,13 @@ function RuleResultList({
                 ].join(" ")}
                 aria-pressed={isSelected}
               >
-                {r.clause_heading && (
+                {rule.clause_heading && (
                   <div className="mb-0.5 font-medium text-ink">
-                    {r.clause_heading}
+                    {rule.clause_heading}
                   </div>
                 )}
                 <div className="line-clamp-3 text-ink-muted">
-                  {r.evidence_text ?? "Citation available"}
+                  {rule.evidence_text ?? "Citation available"}
                 </div>
                 <div className="mt-1 text-[10px] text-ink-subtle">
                   Click to highlight in document
@@ -384,16 +583,70 @@ function RuleResultList({
                 No matching clause to cite.
               </p>
             )}
-            {r.guidance && (
+            {rule.guidance && (
               <p className="mt-1.5 text-[11px] text-ink-subtle">
                 <span className="text-ink-subtle">Guidance:</span>{" "}
-                {r.guidance}
+                {rule.guidance}
               </p>
+            )}
+            {finding && (
+              <FindingStatusControls
+                finding={finding}
+                onUpdate={onUpdateFinding}
+              />
             )}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+interface FindingStatusControlsProps {
+  finding: DeviationFinding;
+  onUpdate: (findingId: string, status: ReviewerFindingStatus) => void;
+}
+
+function FindingStatusControls({
+  finding,
+  onUpdate,
+}: FindingStatusControlsProps) {
+  const buttons: Array<{
+    key: ReviewerFindingStatus;
+    label: string;
+    visibleWhen: ReadonlyArray<DeviationFinding["finding_status"]>;
+  }> = [
+    {
+      key: "reviewed",
+      label: "Mark reviewed",
+      visibleWhen: ["open", "ignored", "superseded"],
+    },
+    {
+      key: "ignored",
+      label: "Mark ignored",
+      visibleWhen: ["open", "reviewed", "superseded"],
+    },
+    {
+      key: "open",
+      label: "Reopen",
+      visibleWhen: ["reviewed", "ignored", "superseded"],
+    },
+  ];
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {buttons
+        .filter((b) => b.visibleWhen.includes(finding.finding_status))
+        .map((b) => (
+          <button
+            key={b.key}
+            type="button"
+            onClick={() => onUpdate(finding.id, b.key)}
+            className="inline-flex items-center rounded border border-rule bg-canvas-subtle px-2 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-canvas-muted"
+          >
+            {b.label}
+          </button>
+        ))}
+    </div>
   );
 }
 
@@ -440,4 +693,75 @@ function SeverityBadge({ severity }: { severity: string }) {
       {severity}
     </span>
   );
+}
+
+function FindingStatusBadge({
+  status,
+}: {
+  status: DeviationFinding["finding_status"];
+}) {
+  const color = (() => {
+    switch (status) {
+      case "reviewed":
+        return "border-success-ring bg-success-soft text-success";
+      case "ignored":
+        return "border-rule bg-canvas-subtle text-ink-muted";
+      case "superseded":
+        return "border-rule bg-canvas-subtle text-ink-subtle";
+      case "open":
+      default:
+        return "border-warning-ring bg-warning-soft text-warning";
+    }
+  })();
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
+        color,
+      ].join(" ")}
+    >
+      {FINDING_STATUS_LABELS[status] ?? status}
+    </span>
+  );
+}
+
+function formatRunDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+/**
+ * Construct a `PlaybookRuleMatchResult` from a persisted finding.
+ *
+ * Only used as a fallback when a run's per-rule recomputation isn't
+ * available (e.g. the playbook was deactivated between runs and
+ * revalidation failed). The resulting row carries `status: "fail"`
+ * since persisted findings are failures.
+ */
+function findingToRuleResult(
+  f: DeviationFinding,
+): PlaybookRuleMatchResult {
+  return {
+    rule_id: f.rule_id,
+    title: f.rule_title,
+    rule_type: f.rule_type,
+    clause_type: f.clause_type,
+    severity: f.severity,
+    status: "fail",
+    message: f.message,
+    clause_id: f.clause_id,
+    clause_ordinal: null,
+    clause_heading: null,
+    evidence_text: f.evidence_text,
+    span_start: f.span_start,
+    span_end: f.span_end,
+    matched_terms: [...f.matched_terms],
+    expected_value: f.expected_value,
+    description: null,
+    guidance: f.guidance,
+    preferred_language: f.preferred_language,
+  };
 }

@@ -134,16 +134,43 @@ clauses and return pass/fail results per rule. The matching engine
 (`backend/app/services/playbook_matcher.py`) is **deterministic** —
 no LLM call, no embeddings, no paraphrase inference — and only uses
 the data that is already exact-span-grounded by the segmenter. The
-endpoint is `POST /api/contracts/{contract_id}/playbook-review`; the
-contract detail page exposes a **Review** tab that runs it and
-highlights the cited evidence span in the document viewer when an
+transient endpoint is `POST /api/contracts/{contract_id}/playbook-review`;
+the contract detail page's **Review** tab also runs the persisted
+flow described below and highlights the cited evidence span when an
 evidence row is clicked.
 
-Results are **transient** in this release. Nothing is persisted: no
-`DeviationFinding` rows, no audit row, no review history. Persisted
-findings, the reviewer/dismiss workflow, and LLM-driven analysis of
-clause text remain future work. Whereas surfaces information about
-contracts; it does not provide legal advice.
+### Persisted playbook review findings
+
+A review can now be saved as a `PlaybookReviewRun` with one
+`DeviationFinding` row per failed deterministic outcome. Pass results
+are not persisted as separate rows; the run record carries the
+aggregate `rules_checked` / `passed_count` / `failed_count` so the
+audit signal is preserved without per-rule pass noise. Findings are
+generated from firm-authored YAML playbooks and remain
+exact-span-grounded — the matcher copies `span_start` / `span_end`
+straight off the source `Clause` row.
+
+Endpoints (under `/api/contracts/{contract_id}`):
+
+- `POST /playbook-review/runs` — run the matcher and save the failed
+  findings under a new `PlaybookReviewRun`. Marks any prior `open`
+  findings on the same `(contract, playbook)` as `superseded`;
+  `reviewed` and `ignored` findings are left alone so re-running a
+  playbook does not silently reset deliberate human decisions.
+- `GET /playbook-review/runs` and
+  `GET /playbook-review/runs/{run_id}` — list runs / fetch a run's
+  findings and per-rule outcomes.
+- `GET /findings` — list a contract's findings, with optional
+  filters on `playbook_id`, `finding_status`, `severity`, and
+  `review_run_id`.
+- `PATCH /findings/{finding_id}` — update the reviewer workflow
+  status (`open` / `reviewed` / `ignored`). Deterministic fields
+  (status, message, span, rule metadata) are immutable through this
+  endpoint.
+
+LLM redlines and suggested replacement language remain future work.
+Findings are not legal advice — Whereas surfaces information about
+contracts; it does not replace human review.
 
 ## Contributing
 

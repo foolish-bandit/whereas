@@ -60,6 +60,7 @@ _EXPECTED_TABLES: frozenset[str] = frozenset(
         "clauses",
         "extracted_fields",
         "deviation_findings",
+        "playbook_review_runs",
     }
 )
 
@@ -373,6 +374,160 @@ def test_playbook_indexes_present(upgraded_db: PostgresContainer) -> None:
     }
     missing = expected - names
     assert not missing, f"Missing playbook indexes: {missing}"
+
+
+def test_deviation_findings_columns_present(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """Migration 0005 reshapes deviation_findings for persisted determinism.
+
+    The legacy LLM-oriented columns (``title``, ``explanation``,
+    ``suggested_redline``, ``model_name``, ``confidence``,
+    ``dismissed*``) are gone; the new columns the persistence service
+    relies on must all be present with the right nullability.
+    """
+    expected = {
+        "organization_id": ("uuid", "NO"),
+        "contract_id": ("uuid", "NO"),
+        "playbook_id": ("uuid", "NO"),
+        "review_run_id": ("uuid", "NO"),
+        "rule_id": ("character varying", "NO"),
+        "rule_title": ("character varying", "NO"),
+        "rule_type": ("character varying", "NO"),
+        "clause_type": ("character varying", "NO"),
+        "severity": ("character varying", "NO"),
+        "status": ("character varying", "NO"),
+        "finding_status": ("character varying", "NO"),
+        "message": ("text", "NO"),
+        "clause_id": ("uuid", "YES"),
+        "evidence_text": ("text", "YES"),
+        "span_start": ("integer", "YES"),
+        "span_end": ("integer", "YES"),
+        "expected_value": ("text", "YES"),
+        "guidance": ("text", "YES"),
+        "preferred_language": ("text", "YES"),
+        "created_at": ("timestamp with time zone", "NO"),
+        "updated_at": ("timestamp with time zone", "NO"),
+    }
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'deviation_findings'
+            """
+        )
+        rows = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    for column, (expected_type, expected_nullable) in expected.items():
+        assert column in rows, f"deviation_findings.{column} missing"
+        data_type, is_nullable = rows[column]
+        assert data_type == expected_type, (
+            f"deviation_findings.{column}: expected type {expected_type!r}, "
+            f"got {data_type!r}"
+        )
+        assert is_nullable == expected_nullable, (
+            f"deviation_findings.{column}: expected is_nullable={expected_nullable!r}, "
+            f"got {is_nullable!r}"
+        )
+
+    # Legacy columns are gone.
+    for legacy in (
+        "title",
+        "explanation",
+        "suggested_redline",
+        "model_name",
+        "confidence",
+        "dismissed",
+        "dismissed_by",
+        "dismissed_reason",
+    ):
+        assert legacy not in rows, (
+            f"legacy column deviation_findings.{legacy} survived migration 0005"
+        )
+
+
+def test_deviation_findings_indexes_present(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """Migration 0005 creates the indexes the API list paths use."""
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT indexname
+              FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND tablename = 'deviation_findings'
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+    expected = {
+        "ix_deviation_findings_organization_id",
+        "ix_deviation_findings_contract_id",
+        "ix_deviation_findings_playbook_id",
+        "ix_deviation_findings_contract_playbook",
+        "ix_deviation_findings_contract_status",
+        "ix_deviation_findings_review_run_id",
+        "ix_deviation_findings_severity",
+    }
+    missing = expected - names
+    assert not missing, f"Missing deviation_findings indexes: {missing}"
+
+
+def test_playbook_review_runs_columns_and_indexes_present(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """Migration 0005 creates playbook_review_runs with the expected shape."""
+    expected = {
+        "id": ("uuid", "NO"),
+        "organization_id": ("uuid", "NO"),
+        "contract_id": ("uuid", "NO"),
+        "playbook_id": ("uuid", "NO"),
+        "rules_checked": ("integer", "NO"),
+        "failed_count": ("integer", "NO"),
+        "passed_count": ("integer", "NO"),
+        "created_at": ("timestamp with time zone", "NO"),
+    }
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'playbook_review_runs'
+            """
+        )
+        rows = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    for column, (expected_type, expected_nullable) in expected.items():
+        assert column in rows, f"playbook_review_runs.{column} missing"
+        data_type, is_nullable = rows[column]
+        assert data_type == expected_type, (
+            f"playbook_review_runs.{column}: expected type {expected_type!r}, "
+            f"got {data_type!r}"
+        )
+        assert is_nullable == expected_nullable, (
+            f"playbook_review_runs.{column}: "
+            f"expected is_nullable={expected_nullable!r}, got {is_nullable!r}"
+        )
+
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT indexname
+              FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND tablename = 'playbook_review_runs'
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+    expected_indexes = {
+        "ix_playbook_review_runs_org",
+        "ix_playbook_review_runs_contract",
+        "ix_playbook_review_runs_contract_playbook",
+        "ix_playbook_review_runs_created_at",
+    }
+    missing = expected_indexes - names
+    assert not missing, f"Missing playbook_review_runs indexes: {missing}"
 
 
 def test_rls_policies_match_spec(upgraded_db: PostgresContainer) -> None:
