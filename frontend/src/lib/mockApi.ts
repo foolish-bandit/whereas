@@ -21,6 +21,7 @@ import type {
   ContractListItem,
   UploadContractResponse,
 } from "../types/contracts";
+import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
   DeviationFinding,
   ListFindingsFilters,
@@ -504,5 +505,59 @@ export function __resetMockState(): void {
   }
   for (const k of Object.keys(sessionFindingsById)) {
     delete sessionFindingsById[k];
+  }
+  sessionClauseTemplates.length = 0;
+}
+
+const DEMO_CLAUSE_TEMPLATES: ClauseTemplate[] = [
+  { id: "ct-1", organization_id: "demo-org", name: "Mutual NDA confidentiality clause", clause_type: "confidentiality", text: "Each Party shall keep Confidential Information strictly confidential...", description: "Baseline NDA confidentiality", jurisdiction: "California", contract_type: "mutual_nda", version: "1.0", source: "Firm standard", tags: ["nda","core"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
+  { id: "ct-2", organization_id: "demo-org", name: "Governing law clause", clause_type: "governing_law", text: "This Agreement is governed by California law...", description: null, jurisdiction: "California", contract_type: "msa", version: "1.0", source: null, tags: ["governing-law"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
+  { id: "ct-3", organization_id: "demo-org", name: "Assignment clause", clause_type: "assignment", text: "Neither Party may assign this Agreement without prior written consent...", description: null, jurisdiction: null, contract_type: "msa", version: null, source: null, tags: ["assignment"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
+];
+
+const sessionClauseTemplates: ClauseTemplate[] = [];
+
+export async function listClauseTemplates(filters: { clause_type?: string; jurisdiction?: string; contract_type?: string; tag?: string; include_inactive?: boolean } = {}, options: ApiOptions = {}): Promise<ClauseTemplate[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  let rows = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES];
+  if (!filters.include_inactive) rows = rows.filter((r) => r.is_active);
+  if (filters.clause_type) rows = rows.filter((r) => r.clause_type === filters.clause_type);
+  if (filters.jurisdiction) rows = rows.filter((r) => r.jurisdiction === filters.jurisdiction);
+  if (filters.contract_type) rows = rows.filter((r) => r.contract_type === filters.contract_type);
+  if (filters.tag) rows = rows.filter((r) => r.tags.includes(filters.tag!));
+  return rows;
+}
+
+export async function createClauseTemplate(payload: ClauseTemplateCreateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const now = new Date().toISOString();
+  const row: ClauseTemplate = { id: `ct-${Date.now()}`, organization_id: "demo-org", is_active: true, created_at: now, updated_at: now, description: null, jurisdiction: null, contract_type: null, version: null, source: null, ...payload, tags: payload.tags ?? [] };
+  sessionClauseTemplates.unshift(row);
+  return row;
+}
+
+export async function getClauseTemplate(id: string, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES].find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Clause template not found.");
+  return row;
+}
+
+export async function updateClauseTemplate(id: string, payload: ClauseTemplateUpdateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const idx = sessionClauseTemplates.findIndex((r) => r.id === id);
+  if (idx < 0) throw new ApiError(404, "Clause template not found.");
+  const updated = { ...sessionClauseTemplates[idx], ...payload, updated_at: new Date().toISOString(), tags: payload.tags ?? sessionClauseTemplates[idx].tags };
+  sessionClauseTemplates[idx] = updated;
+  return updated;
+}
+
+export async function deleteClauseTemplate(id: string, options: ApiOptions = {}): Promise<void> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const rows = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES];
+  const row = rows.find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Clause template not found.");
+  if (sessionClauseTemplates.find((r) => r.id === id)) {
+    await updateClauseTemplate(id, { is_active: false }, options);
   }
 }

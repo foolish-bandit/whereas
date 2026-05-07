@@ -21,6 +21,7 @@ import type {
   ReviewerFindingStatus,
 } from "../types/findings";
 import type { PlaybookReviewResult } from "../types/review";
+import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
@@ -699,4 +700,55 @@ export async function updateFindingStatus(
     options,
   );
   return scrubSecrets(data);
+}
+
+
+export interface ClauseTemplateListFilters {
+  clause_type?: string;
+  jurisdiction?: string;
+  contract_type?: string;
+  tag?: string;
+  include_inactive?: boolean;
+}
+
+function clauseTemplateQuery(filters: ClauseTemplateListFilters = {}): string {
+  const params = new URLSearchParams();
+  for (const [k,v] of Object.entries(filters)) {
+    if (v === undefined || v === null || v === "") continue;
+    params.set(k, String(v));
+  }
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listClauseTemplates(filters: ClauseTemplateListFilters = {}, options: ApiOptions = {}): Promise<ClauseTemplate[]> {
+  if (isDemoMode()) return mockApi.listClauseTemplates(filters, options);
+  const data = await call<ClauseTemplate[]>(`/api/clause-templates${clauseTemplateQuery(filters)}`, { method: "GET" }, options);
+  return scrubSecrets(data);
+}
+
+export async function createClauseTemplate(payload: ClauseTemplateCreateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  if (isDemoMode()) return mockApi.createClauseTemplate(payload, options);
+  const data = await call<ClauseTemplate>(`/api/clause-templates`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) }, options);
+  return scrubSecrets(data);
+}
+
+export async function getClauseTemplate(id: string, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  if (isDemoMode()) return mockApi.getClauseTemplate(id, options);
+  const data = await call<ClauseTemplate>(`/api/clause-templates/${encodeURIComponent(id)}`, { method: "GET" }, options);
+  return scrubSecrets(data);
+}
+
+export async function updateClauseTemplate(id: string, payload: ClauseTemplateUpdateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
+  if (isDemoMode()) return mockApi.updateClauseTemplate(id, payload, options);
+  const data = await call<ClauseTemplate>(`/api/clause-templates/${encodeURIComponent(id)}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) }, options);
+  return scrubSecrets(data);
+}
+
+export async function deleteClauseTemplate(id: string, options: ApiOptions = {}): Promise<void> {
+  if (isDemoMode()) return mockApi.deleteClauseTemplate(id, options);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const res = await fetch(`${baseUrl()}/api/clause-templates/${encodeURIComponent(id)}`, { method: "DELETE", headers, signal: options.signal });
+  if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
 }
