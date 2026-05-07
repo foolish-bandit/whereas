@@ -8,7 +8,7 @@ Built-in clause extraction, playbook deviation analysis, and embedded e-signatur
 
 ---
 
-## What it does
+## What it does 
 
 Whereas is a self-hostable contract management system aimed at small and mid-sized legal teams who don't want their contracts living on someone else's server. It covers the post-execution side of contract lifecycle management:
 
