@@ -56,6 +56,11 @@ For production deployment, read [docs/deployment-guide.md](docs/deployment-guide
 
 For the security architecture and threat model, see [docs/security-model.md](docs/security-model.md).
 
+For frontend-only development (without the full Docker stack), see
+[frontend/README.md](frontend/README.md). The frontend dev server runs on
+`http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
+(default `http://localhost:8000`).
+
 ## Project status
 
 - [x] Repo scaffold
