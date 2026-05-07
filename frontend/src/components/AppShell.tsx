@@ -1,11 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 
+import DemoModeBanner from "./DemoModeBanner";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 import DevUserBanner from "./DevUserBanner";
 import { getDevUserId } from "../lib/devUser";
+import { isDemoMode } from "../lib/env";
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  const demo = isDemoMode();
   const [devUserId, setDevUserIdState] = useState<string | null>(() =>
     getDevUserId(),
   );
@@ -31,8 +34,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-full min-h-screen bg-canvas-subtle">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header devUserId={devUserId} />
-        {!devUserId && <DevUserBanner />}
+        <Header devUserId={devUserId} demoMode={demo} />
+        {demo && <DemoModeBanner />}
+        {!demo && !devUserId && <DevUserBanner />}
         <main className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-7xl px-6 py-8 lg:px-10">
             {children}
