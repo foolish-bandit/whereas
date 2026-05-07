@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import FirstRunSetupCard from "../components/FirstRunSetupCard";
 import {
   clearDevUserId,
   getDevUserId,
@@ -66,6 +67,18 @@ export default function SettingsPage() {
             This deployment is running in demo mode with mock data. The
             development user ID is not used; you can leave it blank.
           </p>
+        </div>
+      )}
+
+      {!demo && (
+        <div className="mt-6 max-w-2xl">
+          <FirstRunSetupCard
+            hasDevUser={stored !== null}
+            onCompleted={() => {
+              setValue(getDevUserId() ?? "");
+              setStored(getDevUserId());
+            }}
+          />
         </div>
       )}
 

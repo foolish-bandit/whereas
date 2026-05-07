@@ -6,6 +6,11 @@ import type {
   ContractListItem,
   UploadContractResponse,
 } from "../types/contracts";
+import type {
+  CreateDevSetupRequest,
+  CreateDevSetupResponse,
+  SetupStatus,
+} from "../types/setup";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -109,15 +114,12 @@ async function parseJson<T>(response: Response): Promise<T> {
   }
 }
 
-async function call<T>(
+async function dispatch<T>(
   path: string,
   init: RequestInit,
-  options: ApiOptions = {},
+  headers: Headers,
+  options: ApiOptions,
 ): Promise<T> {
-  const headers = new Headers(init.headers);
-  for (const [k, v] of Object.entries(devHeaders())) {
-    headers.set(k, v);
-  }
   let response: Response;
   try {
     response = await fetch(`${baseUrl()}${path}`, {
@@ -140,6 +142,32 @@ async function call<T>(
     throw new ApiError(response.status, message);
   }
   return parseJson<T>(response);
+}
+
+async function call<T>(
+  path: string,
+  init: RequestInit,
+  options: ApiOptions = {},
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  return dispatch<T>(path, init, headers, options);
+}
+
+/**
+ * Like `call()` but does NOT include the X-Whereas-Dev-User header. Used
+ * by endpoints that exist precisely to bootstrap the dev user
+ * (i.e. /api/setup/*).
+ */
+async function callPublic<T>(
+  path: string,
+  init: RequestInit,
+  options: ApiOptions = {},
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  return dispatch<T>(path, init, headers, options);
 }
 
 const SECRET_KEYS = new Set([
@@ -267,4 +295,43 @@ export async function downloadContract(
     filename: m ? m[1] : null,
     mimeType: response.headers.get("Content-Type") ?? blob.type,
   };
+}
+
+// --------------------------------------------------------------------------
+// First-run setup (dev only). Endpoints are open and DO NOT require the
+// X-Whereas-Dev-User header — they exist to bootstrap that user.
+//
+// In demo mode these helpers throw a clean ApiError instead of dispatching:
+// the setup card is hidden in demo mode so this is just a safety rail
+// against accidental calls.
+// --------------------------------------------------------------------------
+
+export async function getSetupStatus(
+  options: ApiOptions = {},
+): Promise<SetupStatus> {
+  if (isDemoMode()) {
+    throw new ApiError(
+      400,
+      "Setup is not available in demo mode.",
+    );
+  }
+  return callPublic<SetupStatus>("/api/setup/status", { method: "GET" }, options);
+}
+
+export async function createDevSetup(
+  payload: CreateDevSetupRequest = {},
+  options: ApiOptions = {},
+): Promise<CreateDevSetupResponse> {
+  if (isDemoMode()) {
+    throw new ApiError(
+      400,
+      "Setup is not available in demo mode.",
+    );
+  }
+  const init: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  };
+  return callPublic<CreateDevSetupResponse>("/api/setup/dev", init, options);
 }

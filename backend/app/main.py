@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import auth, contracts, docuseal_bridge, playbooks, qa
+from app.api import auth, contracts, docuseal_bridge, playbooks, qa, setup
 from app.core.config import get_settings
 from app.core.database import engine
 from app.core.logging import configure_logging
@@ -46,6 +46,7 @@ app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"]
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(qa.router, prefix="/api/qa", tags=["qa"])
 app.include_router(docuseal_bridge.router, prefix="/api/docuseal", tags=["docuseal"])
+app.include_router(setup.router, prefix="/api/setup", tags=["setup"])
 
 
 @app.get("/api/health")
