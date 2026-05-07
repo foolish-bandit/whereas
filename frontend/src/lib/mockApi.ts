@@ -8,13 +8,19 @@
  *   the session, which is the only behavior worth preserving here.
  */
 import { ApiError, type DownloadResult, type UploadInput } from "./api";
-import { MOCK_DETAIL_BY_ID, MOCK_LIST } from "./mockData";
+import {
+  MOCK_DETAIL_BY_ID,
+  MOCK_LIST,
+  MOCK_PLAYBOOK_DETAIL_BY_ID,
+  MOCK_PLAYBOOK_LIST,
+} from "./mockData";
 import type {
   Clause,
   ContractDetail,
   ContractListItem,
   UploadContractResponse,
 } from "../types/contracts";
+import type { PlaybookDetail, PlaybookSummary } from "../types/playbooks";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -144,6 +150,28 @@ export async function downloadContract(
     filename,
     mimeType: "text/plain",
   };
+}
+
+export async function getPlaybooks(
+  options: ApiOptions & { activeOnly?: boolean } = {},
+): Promise<PlaybookSummary[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (options.activeOnly) {
+    return MOCK_PLAYBOOK_LIST.filter((p) => p.is_active);
+  }
+  return MOCK_PLAYBOOK_LIST;
+}
+
+export async function getPlaybook(
+  id: string,
+  options: ApiOptions = {},
+): Promise<PlaybookDetail> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = MOCK_PLAYBOOK_DETAIL_BY_ID[id];
+  if (!detail) {
+    throw new ApiError(404, "Playbook not found.");
+  }
+  return detail;
 }
 
 /**

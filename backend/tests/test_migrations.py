@@ -318,6 +318,63 @@ def test_clauses_unique_contract_ordinal_constraint(
     assert "uq_clauses_contract_ordinal" in names
 
 
+def test_playbook_metadata_columns_present(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """Migration 0004 adds jurisdiction, contract_type, version to playbooks.
+
+    `version` is NOT NULL with a default of '1.0'; the other two are
+    nullable since most playbooks won't carry a jurisdiction.
+    """
+    expected = {
+        "jurisdiction": ("character varying", "YES"),
+        "contract_type": ("character varying", "YES"),
+        "version": ("character varying", "NO"),
+    }
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'playbooks'
+            """
+        )
+        rows = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    for column, (expected_type, expected_nullable) in expected.items():
+        assert column in rows, f"playbooks.{column} missing"
+        data_type, is_nullable = rows[column]
+        assert data_type == expected_type, (
+            f"playbooks.{column}: expected type {expected_type!r}, "
+            f"got {data_type!r}"
+        )
+        assert is_nullable == expected_nullable, (
+            f"playbooks.{column}: expected is_nullable={expected_nullable!r}, "
+            f"got {is_nullable!r}"
+        )
+
+
+def test_playbook_indexes_present(upgraded_db: PostgresContainer) -> None:
+    """Migration 0004 adds composite indexes for the playbook lookup paths."""
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT indexname
+              FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND tablename = 'playbooks'
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+    expected = {
+        "ix_playbooks_organization_id",
+        "ix_playbooks_org_name",
+        "ix_playbooks_org_active",
+    }
+    missing = expected - names
+    assert not missing, f"Missing playbook indexes: {missing}"
+
+
 def test_rls_policies_match_spec(upgraded_db: PostgresContainer) -> None:
     """`pg_policies` after upgrade matches what rls.py says it created.
 

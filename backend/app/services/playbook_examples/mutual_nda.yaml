@@ -1,0 +1,45 @@
+# Example playbook for a mutual non-disclosure agreement (NDA).
+#
+# This file is shipped only as an example of the v1 playbook YAML
+# format. It is NOT a legal opinion and is NOT firm-specific guidance.
+# Whereas surfaces information about contracts; it does not provide
+# legal advice. Replace these positions with your firm's actual
+# review standards before using.
+#
+# Schema reference: backend/app/services/playbook_loader.py
+name: "Mutual NDA Review Playbook"
+description: "Baseline review rules for mutual NDAs."
+version: "1.0"
+jurisdiction: "California"
+contract_type: "mutual_nda"
+
+rules:
+  - id: "confidentiality-definition-required"
+    title: "Confidential Information definition should be present"
+    clause_type: "confidentiality"
+    severity: "high"
+    rule_type: "required_clause"
+    description: "The agreement should define confidential information."
+    guidance: "Look for a clause defining what information is protected."
+    preferred_language: null
+
+  - id: "governing-law-california"
+    title: "Governing law should be California"
+    clause_type: "governing_law"
+    severity: "medium"
+    rule_type: "preferred_value"
+    expected_value: "California"
+    description: "The governing law clause should select California law."
+    guidance: "Flag non-California governing law for attorney review."
+    preferred_language: "This Agreement shall be governed by the laws of the State of California."
+
+  - id: "assignment-consent-required"
+    title: "Assignment should require consent"
+    clause_type: "assignment"
+    severity: "medium"
+    rule_type: "text_contains"
+    required_terms:
+      - "consent"
+      - "prior written consent"
+    description: "Assignment should generally require prior written consent."
+    guidance: "Flag assignment clauses that allow transfer without consent."

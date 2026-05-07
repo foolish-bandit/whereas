@@ -8,6 +8,12 @@ import type {
   UploadContractResponse,
 } from "../types/contracts";
 import type {
+  PlaybookDetail,
+  PlaybookSummary,
+  PlaybookValidateResponse,
+  PlaybookValidationIssue,
+} from "../types/playbooks";
+import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
   SetupStatus,
@@ -348,4 +354,184 @@ export async function createDevSetup(
     body: JSON.stringify(payload ?? {}),
   };
   return callPublic<CreateDevSetupResponse>("/api/setup/dev", init, options);
+}
+
+// --------------------------------------------------------------------------
+// Playbooks
+//
+// In demo mode, GET / list calls return the static demo data from
+// `mockApi`; create/validate/deactivate are not supported in demo mode
+// because a "saved" playbook in a stateless preview would mislead.
+// --------------------------------------------------------------------------
+
+/**
+ * Thrown by `validatePlaybook` and `createPlaybook` when the server
+ * rejects the YAML with structured per-field validation errors.
+ *
+ * The router returns 400 with `{detail: {ok: false, errors: [...]}}`,
+ * which `readErrorMessage` would otherwise flatten to a single string.
+ * This subclass preserves the issue list so the UI can render
+ * per-field markers.
+ */
+export class PlaybookValidationError extends ApiError {
+  issues: PlaybookValidationIssue[];
+
+  constructor(issues: PlaybookValidationIssue[]) {
+    const message =
+      issues.length > 0
+        ? issues.map((i) => i.message).join("; ")
+        : "Playbook validation failed.";
+    super(400, message);
+    this.name = "PlaybookValidationError";
+    this.issues = issues;
+  }
+}
+
+interface BackendValidationDetail {
+  ok: false;
+  errors: PlaybookValidationIssue[];
+}
+
+function isValidationDetail(value: unknown): value is BackendValidationDetail {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (v.ok !== false) return false;
+  if (!Array.isArray(v.errors)) return false;
+  return v.errors.every(
+    (e) => e && typeof e === "object" && typeof (e as { message: unknown }).message === "string",
+  );
+}
+
+async function dispatchPlaybookWrite<T>(
+  path: string,
+  body: unknown,
+  options: ApiOptions = {},
+): Promise<T> {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl()}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body ?? {}),
+      signal: options.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(
+      0,
+      "Could not reach the backend. Is the API running?",
+      err instanceof Error ? err.message : undefined,
+    );
+  }
+  if (response.status === 400) {
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = undefined;
+    }
+    const detail =
+      parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>).detail
+        : undefined;
+    if (isValidationDetail(detail)) {
+      throw new PlaybookValidationError(detail.errors);
+    }
+    const message = await readErrorMessage(
+      new Response(parsed === undefined ? "" : JSON.stringify(parsed), {
+        status: 400,
+      }),
+    );
+    throw new ApiError(400, message);
+  }
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new ApiError(response.status, message);
+  }
+  return parseJson<T>(response);
+}
+
+export async function getPlaybooks(
+  options: ApiOptions & { activeOnly?: boolean } = {},
+): Promise<PlaybookSummary[]> {
+  if (isDemoMode()) return mockApi.getPlaybooks(options);
+  const qs = options.activeOnly ? "?active_only=true" : "";
+  const data = await call<PlaybookSummary[]>(
+    `/api/playbooks${qs}`,
+    { method: "GET" },
+    { signal: options.signal },
+  );
+  return scrubSecrets(data);
+}
+
+export async function getPlaybook(
+  id: string,
+  options: ApiOptions = {},
+): Promise<PlaybookDetail> {
+  if (isDemoMode()) return mockApi.getPlaybook(id, options);
+  const data = await call<PlaybookDetail>(
+    `/api/playbooks/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function validatePlaybook(
+  yamlSource: string,
+  options: ApiOptions = {},
+): Promise<PlaybookValidateResponse> {
+  if (isDemoMode()) {
+    throw new ApiError(
+      400,
+      "Playbook validation is not available in demo mode.",
+    );
+  }
+  return dispatchPlaybookWrite<PlaybookValidateResponse>(
+    "/api/playbooks/validate",
+    { yaml_source: yamlSource },
+    options,
+  );
+}
+
+export async function createPlaybook(
+  yamlSource: string,
+  options: ApiOptions = {},
+): Promise<PlaybookDetail> {
+  if (isDemoMode()) {
+    throw new ApiError(
+      400,
+      "Playbook creation is not available in demo mode.",
+    );
+  }
+  const data = await dispatchPlaybookWrite<PlaybookDetail>(
+    "/api/playbooks",
+    { yaml_source: yamlSource },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function deactivatePlaybook(
+  id: string,
+  options: ApiOptions = {},
+): Promise<PlaybookSummary> {
+  if (isDemoMode()) {
+    throw new ApiError(
+      400,
+      "Playbook deactivation is not available in demo mode.",
+    );
+  }
+  const data = await call<PlaybookSummary>(
+    `/api/playbooks/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    options,
+  );
+  return scrubSecrets(data);
 }
