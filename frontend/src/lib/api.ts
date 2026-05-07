@@ -2,6 +2,7 @@ import { getDevUserId } from "./devUser";
 import { isDemoMode } from "./env";
 import * as mockApi from "./mockApi";
 import type {
+  Clause,
   ContractDetail,
   ContractListItem,
   UploadContractResponse,
@@ -217,6 +218,19 @@ export async function getContract(
   if (isDemoMode()) return mockApi.getContract(id, options);
   const data = await call<ContractDetail>(
     `/api/contracts/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getContractClauses(
+  id: string,
+  options: ApiOptions = {},
+): Promise<Clause[]> {
+  if (isDemoMode()) return mockApi.getContractClauses(id, options);
+  const data = await call<Clause[]>(
+    `/api/contracts/${encodeURIComponent(id)}/clauses`,
     { method: "GET" },
     options,
   );

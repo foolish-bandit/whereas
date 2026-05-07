@@ -14,6 +14,7 @@ import {
   __resetMockState,
   downloadContract,
   getContract,
+  getContractClauses,
   getContracts,
   uploadContract,
 } from "../mockApi";
@@ -52,6 +53,34 @@ describe("mockApi", () => {
       expect(fullText.slice(f.span_start!, f.span_end!)).toBe(f.span_text);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the NDA detail with valid span offsets for every clause", async () => {
+    const detail = await getContract(MOCK_NDA_ID);
+    expect(detail.clauses.length).toBeGreaterThan(0);
+    const fullText = detail.full_text!;
+    const seenOrdinals = new Set<number>();
+    for (const c of detail.clauses) {
+      // Span integrity invariant.
+      expect(fullText.slice(c.span_start, c.span_end)).toBe(c.text);
+      // Ordinals are unique per contract.
+      expect(seenOrdinals.has(c.ordinal)).toBe(false);
+      seenOrdinals.add(c.ordinal);
+      expect(c.segmentation_method).toBe("heuristic_v1");
+    }
+  });
+
+  it("getContractClauses returns clauses sorted by ordinal", async () => {
+    const clauses = await getContractClauses(MOCK_NDA_ID);
+    expect(clauses.length).toBeGreaterThan(0);
+    const ordinals = clauses.map((c) => c.ordinal);
+    expect(ordinals).toEqual([...ordinals].sort((a, b) => a - b));
+  });
+
+  it("getContractClauses throws ApiError(404) for unknown ids", async () => {
+    await expect(getContractClauses("does-not-exist")).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it("returns the failed-extraction sample with no fields", async () => {

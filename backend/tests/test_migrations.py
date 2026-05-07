@@ -252,6 +252,72 @@ def test_contract_wrapped_dek_column_shape(
     assert is_nullable == "YES", "wrapped_dek should be nullable"
 
 
+def test_clauses_segmentation_columns_present(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """Migration 0003 reshapes clauses for the v1 segmentation pipeline.
+
+    Verifies the load-bearing additions are NOT NULL where the ORM
+    declares them so a developer who only ran a partial migration
+    catches the divergence here rather than at runtime.
+    """
+    expected = {
+        "organization_id": ("uuid", "NO"),
+        "ordinal": ("integer", "NO"),
+        "heading": ("character varying", "YES"),
+        "clause_type": ("character varying", "YES"),
+        "clause_type_source": ("character varying", "YES"),
+        "confidence": ("double precision", "YES"),
+        "segmentation_method": ("character varying", "NO"),
+        "model_name": ("character varying", "YES"),
+        "prompt_version": ("character varying", "YES"),
+        "updated_at": ("timestamp with time zone", "NO"),
+    }
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'clauses'
+            """
+        )
+        rows = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    for column, (expected_type, expected_nullable) in expected.items():
+        assert column in rows, f"clauses.{column} missing"
+        data_type, is_nullable = rows[column]
+        assert data_type == expected_type, (
+            f"clauses.{column}: expected type {expected_type!r}, "
+            f"got {data_type!r}"
+        )
+        assert is_nullable == expected_nullable, (
+            f"clauses.{column}: expected is_nullable={expected_nullable!r}, "
+            f"got {is_nullable!r}"
+        )
+
+    # The legacy classification_confidence column is gone (renamed to
+    # confidence by 0003). Catching its lingering presence here would
+    # signal a botched migration on a developer's machine.
+    assert "classification_confidence" not in rows
+
+
+def test_clauses_unique_contract_ordinal_constraint(
+    upgraded_db: PostgresContainer,
+) -> None:
+    """`uq_clauses_contract_ordinal` exists so ordinals are stable per contract."""
+    with psycopg.connect(_psycopg_url(upgraded_db)) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT conname
+              FROM pg_constraint
+             WHERE conrelid = 'public.clauses'::regclass
+               AND contype = 'u'
+            """
+        )
+        names = {row[0] for row in cur.fetchall()}
+    assert "uq_clauses_contract_ordinal" in names
+
+
 def test_rls_policies_match_spec(upgraded_db: PostgresContainer) -> None:
     """`pg_policies` after upgrade matches what rls.py says it created.
 

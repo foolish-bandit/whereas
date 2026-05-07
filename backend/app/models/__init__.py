@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -210,34 +211,63 @@ class ExtractedField(Base):
 
 
 class Clause(Base):
-    """A segmented and classified clause from a contract.
+    """A segmented (and optionally classified) clause from a contract.
 
-    Clauses are produced by the segmentation + classification pipeline.
-    Each clause has an embedding for similarity search and RAG.
+    Each row is grounded in `contracts.full_text`: the invariant
+    `Contract.full_text[span_start:span_end] == Clause.text` MUST hold,
+    enforced at persistence time by `clause_segmentation`. Spans are
+    character offsets into the same canonical string the metadata
+    extractor uses, so highlights compose with extraction citations.
+
+    The `embedding` column is reserved for a future RAG layer; v1 leaves
+    it unset.
     """
     __tablename__ = "clauses"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
     contract_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("contracts.id"), nullable=False, index=True
     )
+
+    # Stable position within the contract (0-based, monotonically increasing).
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading: Mapped[str | None] = mapped_column(String(500))
 
     # Position in the document
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Classification (CUAD taxonomy by default)
-    clause_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    classification_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    # Optional classification. `clause_type_source` records how the label
+    # was produced (e.g. "heuristic", "llm", "cuad_taxonomy") so callers
+    # can weigh it. v1 only emits "heuristic" or null.
+    clause_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    clause_type_source: Mapped[str | None] = mapped_column(String(32))
+    confidence: Mapped[float | None] = mapped_column(Float)
 
-    # Embedding for RAG and similarity search
-    # BGE-M3 produces 1024-dim vectors. If you change models, write a migration.
+    # Provenance. `segmentation_method` is required so a future re-run can
+    # tell which clauses came from which strategy version.
+    segmentation_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+
+    # Reserved for the future RAG layer; BGE-M3 = 1024 dims.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     contract: Mapped[Contract] = relationship(back_populates="clauses")
+
+    __table_args__ = (
+        UniqueConstraint("contract_id", "ordinal", name="uq_clauses_contract_ordinal"),
+        Index("ix_clauses_org_contract", "organization_id", "contract_id"),
+    )
 
 
 # ------------------------------------------------------------------

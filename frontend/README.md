@@ -131,6 +131,9 @@ Demo mode **does**:
 - Render extracted-metadata fields with valid `span_start`/`span_end`
   citations into the document text. Clicking a field highlights the cited
   span exactly as it would with a real backend.
+- Surface heuristically segmented clauses for the NDA sample under the
+  workspace's "Clauses" tab. Clicking a clause highlights its source span
+  with the same machinery the metadata fields use.
 - Simulate uploads in memory so the success-card flow works.
 - Return a small `text/plain` placeholder when you click "Download
   original".
@@ -148,6 +151,6 @@ mode.
 ## A reminder
 
 Whereas surfaces information about contracts. It does not provide legal
-advice and does not replace human legal review. Extracted metadata,
-including the demo data shown here, is machine-generated and must be
-reviewed.
+advice and does not replace human legal review. Extracted metadata and
+clause segmentation, including the demo data shown here, are
+machine-generated and must be reviewed.

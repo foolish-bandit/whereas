@@ -6,6 +6,7 @@
  * `mockApi.test.ts`. If you edit the text, regenerate the offsets.
  */
 import type {
+  Clause,
   ContractDetail,
   ContractListItem,
   ExtractedField,
@@ -164,24 +165,107 @@ export const MOCK_LIST: ContractListItem[] = [
   },
 ];
 
+/**
+ * Sample clauses for the NDA mock contract. Each entry's `text` is a
+ * verbatim slice of `MUTUAL_NDA_TEXT` — never paraphrased — so the
+ * highlight pipeline can find them. `mockApi.test.ts` re-asserts this.
+ */
+const NDA_CLAUSES: Clause[] = (() => {
+  const ndaContractId = MOCK_NDA_ID;
+  type ClauseSeed = {
+    heading: string;
+    spanText: string;
+    clause_type: string | null;
+  };
+  const seeds: ClauseSeed[] = [
+    {
+      heading: "Title and Recitals",
+      spanText:
+        'MUTUAL NON-DISCLOSURE AGREEMENT\n\nThis Mutual Non-Disclosure Agreement (the "Agreement") is entered into as of January 15, 2026 (the "Effective Date") by and between Acme Corporation, a Delaware corporation with its principal place of business at 100 Example Street, Wilmington, Delaware ("Acme"), and Globex Industries, Inc., a Nevada corporation with its principal place of business at 200 Sample Avenue, Reno, Nevada ("Globex"). Acme and Globex are sometimes referred to herein individually as a "Party" and collectively as the "Parties".',
+      clause_type: "recitals",
+    },
+    {
+      heading: "1. Purpose",
+      spanText:
+        '1. Purpose. The Parties wish to explore a potential business relationship and, in connection with such discussions, may exchange certain non-public information ("Confidential Information") that each Party desires to protect from unauthorized use or disclosure.',
+      clause_type: "confidentiality",
+    },
+    {
+      heading: "2. Term",
+      spanText:
+        "2. Term. This Agreement shall remain in effect for a period of twenty-four (24) months from the Effective Date, unless earlier terminated as provided herein. The obligations of confidentiality set forth in Section 3 shall survive any expiration or termination of this Agreement for an additional period of three (3) years.",
+      clause_type: "term",
+    },
+    {
+      heading: "3. Confidentiality Obligations",
+      spanText:
+        "3. Confidentiality Obligations. Each Party agrees to (a) hold the other Party's Confidential Information in strict confidence, (b) use such Confidential Information solely for the Purpose, and (c) not disclose such Confidential Information to any third party without the prior written consent of the disclosing Party.",
+      clause_type: "confidentiality",
+    },
+    {
+      heading: "4. Governing Law",
+      spanText:
+        "4. Governing Law. This Agreement shall be governed by and construed in accordance with the laws of the State of Delaware, without regard to its conflict of laws principles. Any disputes arising under this Agreement shall be resolved in the state or federal courts located in Wilmington, Delaware.",
+      clause_type: "governing_law",
+    },
+    {
+      heading: "5. Termination",
+      spanText:
+        "5. Termination. Either Party may terminate this Agreement at any time upon thirty (30) days' prior written notice to the other Party. Upon termination, each Party shall promptly return or destroy all Confidential Information received from the other Party.",
+      clause_type: "termination",
+    },
+    {
+      heading: "Signature block",
+      spanText:
+        "IN WITNESS WHEREOF, the Parties have executed this Agreement as of the Effective Date.",
+      clause_type: "signature",
+    },
+  ];
+  return seeds.map((seed, index) => {
+    const offset = MUTUAL_NDA_TEXT.indexOf(seed.spanText);
+    if (offset < 0) {
+      throw new Error(`mockData: clause span not found for "${seed.heading}"`);
+    }
+    return {
+      id: `00000000-0000-4000-8000-0000000010${String(index).padStart(2, "0")}`,
+      contract_id: ndaContractId,
+      ordinal: index,
+      heading: seed.heading,
+      clause_type: seed.clause_type,
+      clause_type_source: seed.clause_type ? "heuristic" : null,
+      text: seed.spanText,
+      span_start: offset,
+      span_end: offset + seed.spanText.length,
+      confidence: null,
+      segmentation_method: "heuristic_v1",
+      model_name: null,
+      prompt_version: null,
+    } satisfies Clause;
+  });
+})();
+
 export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
   [MOCK_NDA_ID]: {
     ...MOCK_LIST[0],
     full_text: MUTUAL_NDA_TEXT,
     extracted_fields: NDA_FIELDS,
+    clauses: NDA_CLAUSES,
   },
   [MOCK_MSA_ID]: {
     ...MOCK_LIST[1],
     full_text:
       "Master Services Agreement (sample). Extraction is still in progress in this demo; metadata fields will appear here once it completes.",
     extracted_fields: [],
+    clauses: [],
   },
   [MOCK_FAILED_ID]: {
     ...MOCK_LIST[2],
     full_text:
       "Vendor SOW (sample). Extraction failed in this demo to illustrate the UI for that state. The original file would still be downloadable.",
     extracted_fields: [],
+    clauses: [],
   },
 };
 
 export const MOCK_NDA_FULL_TEXT = MUTUAL_NDA_TEXT;
+export const MOCK_NDA_CLAUSES = NDA_CLAUSES;

@@ -10,6 +10,7 @@
 import { ApiError, type DownloadResult, type UploadInput } from "./api";
 import { MOCK_DETAIL_BY_ID, MOCK_LIST } from "./mockData";
 import type {
+  Clause,
   ContractDetail,
   ContractListItem,
   UploadContractResponse,
@@ -65,6 +66,18 @@ export async function getContract(
   return detail;
 }
 
+export async function getContractClauses(
+  id: string,
+  options: ApiOptions = {},
+): Promise<Clause[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[id] ?? MOCK_DETAIL_BY_ID[id];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  return [...detail.clauses].sort((a, b) => a.ordinal - b.ordinal);
+}
+
 export async function uploadContract(
   input: UploadInput,
 ): Promise<UploadContractResponse> {
@@ -99,10 +112,11 @@ export async function uploadContract(
       "mode. Switch to a real backend (clear VITE_WHEREAS_DEMO_MODE) to " +
       "exercise the extraction pipeline.",
     extracted_fields: [],
+    clauses: [],
   };
   sessionList.unshift(item);
   sessionDetailById[id] = detail;
-  return { ...item, extracted_fields: [], message: null };
+  return { ...item, extracted_fields: [], clauses: [], message: null };
 }
 
 export async function downloadContract(
