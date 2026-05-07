@@ -61,6 +61,12 @@ For frontend-only development (without the full Docker stack), see
 `http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
 (default `http://localhost:8000`).
 
+On first run, open the app, go to **Settings**, and click
+**Create local development workspace**. That creates an organization, a
+wrapped master key, and an active user, and stores the dev user UUID in
+your browser. The endpoint backing this (`POST /api/setup/dev`) is
+disabled when `ENVIRONMENT=production`.
+
 A hosted UI preview, running in demo mode against fictional sample data,
 is at **https://whereas.pages.dev/**. No real contracts; nothing uploaded
 there is sent anywhere.

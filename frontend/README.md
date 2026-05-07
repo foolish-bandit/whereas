@@ -27,9 +27,15 @@ cp .env.example .env.local   # adjust VITE_API_BASE_URL if needed
 npm run dev
 ```
 
-Open `http://localhost:5173`, then go to **Settings** and paste the UUID of an
-existing row in your local `users` table. The backend allowlists this origin
-in development (see `backend/app/main.py`); no CORS configuration is needed.
+Open `http://localhost:5173`, then go to **Settings** and click
+**Create local development workspace**. That bootstraps an organization, a
+wrapped master key, and an active user, and stores the dev user UUID in
+your browser. The endpoint backing this (`POST /api/setup/dev`) is
+development-only and returns 403 when `ENVIRONMENT=production`. If you
+already have a UUID from another source you can also paste it directly
+into the Development user ID field. The backend allowlists this origin
+in development (see `backend/app/main.py`); no CORS configuration is
+needed.
 
 ## Local development — demo mode
 

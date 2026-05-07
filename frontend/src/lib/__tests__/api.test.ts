@@ -11,9 +11,11 @@ import {
 import {
   ApiError,
   MissingDevUserError,
+  createDevSetup,
   downloadContract,
   getContract,
   getContracts,
+  getSetupStatus,
   uploadContract,
 } from "../api";
 import { clearDevUserId, setDevUserId } from "../devUser";
@@ -224,6 +226,98 @@ describe("api client", () => {
       );
       await getContracts();
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("first-run setup", () => {
+    it("getSetupStatus calls /api/setup/status without dev user header", async () => {
+      // No setDevUserId — bootstrap endpoints must not require it.
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            setup_required: true,
+            organization_count: 0,
+            user_count: 0,
+            dev_mode_enabled: true,
+            message: "Run setup.",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+      const status = await getSetupStatus();
+      expect(status.setup_required).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain("/api/setup/status");
+      const headers = (init as RequestInit).headers as Headers;
+      expect(headers.has("X-Whereas-Dev-User")).toBe(false);
+    });
+
+    it("createDevSetup posts JSON without dev user header", async () => {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            organization_id: "11111111-1111-4111-8111-111111111111",
+            user_id: "22222222-2222-4222-8222-222222222222",
+            dev_user_id: "22222222-2222-4222-8222-222222222222",
+            organization_name: "Local Workspace",
+            user_email: "dev@whereas.local",
+            message: "Created new development workspace.",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+      const result = await createDevSetup({ organization_name: "Acme" });
+      expect(result.dev_user_id).toBe(
+        "22222222-2222-4222-8222-222222222222",
+      );
+
+      const [, init] = fetchMock.mock.calls[0];
+      const reqInit = init as RequestInit;
+      expect(reqInit.method).toBe("POST");
+      const headers = reqInit.headers as Headers;
+      expect(headers.has("X-Whereas-Dev-User")).toBe(false);
+      expect(headers.get("Content-Type")).toBe("application/json");
+      expect(reqInit.body).toBe(
+        JSON.stringify({ organization_name: "Acme" }),
+      );
+    });
+
+    it("surfaces a friendly message when setup is blocked in production", async () => {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "First-run setup is disabled in production.",
+          }),
+          {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+      await expect(getSetupStatus()).rejects.toMatchObject({
+        name: "ApiError",
+        status: 403,
+        message: "First-run setup is disabled in production.",
+      });
+    });
+
+    it("throws ApiError instead of dispatching when demo mode is on", async () => {
+      vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+      await expect(getSetupStatus()).rejects.toBeInstanceOf(ApiError);
+      await expect(
+        createDevSetup({ organization_name: "X" }),
+      ).rejects.toBeInstanceOf(ApiError);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
