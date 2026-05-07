@@ -16,6 +16,7 @@ import type {
   PlaybookRuleSummary,
   PlaybookSummary,
 } from "../types/playbooks";
+import type { PlaybookReviewResult } from "../types/review";
 
 const PDF_MIME = "application/pdf";
 const DOCX_MIME =
@@ -451,4 +452,103 @@ export const MOCK_PLAYBOOK_LIST: PlaybookSummary[] = [
 export const MOCK_PLAYBOOK_DETAIL_BY_ID: Record<string, PlaybookDetail> = {
   [MOCK_NDA_PLAYBOOK_ID]: MUTUAL_NDA_PLAYBOOK_DETAIL,
   [MOCK_DEACTIVATED_PLAYBOOK_ID]: DEACTIVATED_PLAYBOOK_DETAIL,
+};
+
+// --------------------------------------------------------------------------
+// Playbook review (demo mode)
+//
+// Hardcoded review of the sample NDA against the sample mutual-NDA
+// playbook. The intent is to exercise both pass and fail rendering and
+// the evidence-highlight wiring. Computed manually so the result stays
+// deterministic and obvious; real backends recompute this every call.
+// --------------------------------------------------------------------------
+
+const _confidentialityEvidence = NDA_CLAUSES.find(
+  (c) => c.heading === "1. Purpose",
+);
+const _governingLawEvidence = NDA_CLAUSES.find(
+  (c) => c.heading === "4. Governing Law",
+);
+
+if (!_confidentialityEvidence || !_governingLawEvidence) {
+  throw new Error("mockData: expected sample clauses missing for review");
+}
+
+const NDA_VS_NDA_PLAYBOOK_REVIEW: PlaybookReviewResult = {
+  playbook_id: MOCK_NDA_PLAYBOOK_ID,
+  playbook_name: MUTUAL_NDA_PLAYBOOK_DETAIL.name,
+  contract_id: MOCK_NDA_ID,
+  rules_checked: 3,
+  passed_count: 1,
+  failed_count: 2,
+  results: [
+    {
+      rule_id: "confidentiality-definition-required",
+      title: "Confidential Information definition should be present",
+      rule_type: "required_clause",
+      clause_type: "confidentiality",
+      severity: "high",
+      status: "pass",
+      message: `A 'confidentiality' clause is present (clause #${
+        _confidentialityEvidence.ordinal + 1
+      }).`,
+      clause_id: _confidentialityEvidence.id,
+      clause_ordinal: _confidentialityEvidence.ordinal,
+      clause_heading: _confidentialityEvidence.heading,
+      evidence_text: _confidentialityEvidence.text,
+      span_start: _confidentialityEvidence.span_start,
+      span_end: _confidentialityEvidence.span_end,
+      matched_terms: [],
+      expected_value: null,
+      description: "The agreement should define confidential information.",
+      guidance: "Look for a clause defining what information is protected.",
+      preferred_language: null,
+    },
+    {
+      rule_id: "governing-law-california",
+      title: "Governing law should be California",
+      rule_type: "preferred_value",
+      clause_type: "governing_law",
+      severity: "medium",
+      status: "fail",
+      message:
+        "Preferred value 'California' not found in any 'governing_law' clause.",
+      clause_id: _governingLawEvidence.id,
+      clause_ordinal: _governingLawEvidence.ordinal,
+      clause_heading: _governingLawEvidence.heading,
+      evidence_text: _governingLawEvidence.text,
+      span_start: _governingLawEvidence.span_start,
+      span_end: _governingLawEvidence.span_end,
+      matched_terms: [],
+      expected_value: "California",
+      description: null,
+      guidance: null,
+      preferred_language: null,
+    },
+    {
+      rule_id: "assignment-consent-required",
+      title: "Assignment should require consent",
+      rule_type: "text_contains",
+      clause_type: "assignment",
+      severity: "medium",
+      status: "fail",
+      message:
+        "No clause of type 'assignment' was found in the contract; cannot evaluate required terms.",
+      clause_id: null,
+      clause_ordinal: null,
+      clause_heading: null,
+      evidence_text: null,
+      span_start: null,
+      span_end: null,
+      matched_terms: [],
+      expected_value: null,
+      description: null,
+      guidance: null,
+      preferred_language: null,
+    },
+  ],
+};
+
+export const MOCK_REVIEW_BY_KEY: Record<string, PlaybookReviewResult> = {
+  [`${MOCK_NDA_ID}|${MOCK_NDA_PLAYBOOK_ID}`]: NDA_VS_NDA_PLAYBOOK_REVIEW,
 };

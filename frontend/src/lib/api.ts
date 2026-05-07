@@ -13,6 +13,7 @@ import type {
   PlaybookValidateResponse,
   PlaybookValidationIssue,
 } from "../types/playbooks";
+import type { PlaybookReviewResult } from "../types/review";
 import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
@@ -532,6 +533,39 @@ export async function deactivatePlaybook(
   const data = await call<PlaybookSummary>(
     `/api/playbooks/${encodeURIComponent(id)}`,
     { method: "DELETE" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+// --------------------------------------------------------------------------
+// Playbook review (transient, deterministic)
+//
+// PR #21 surface. Results are not persisted — every call recomputes
+// against the contract's current clauses. In demo mode this returns a
+// hardcoded result for the sample NDA + sample playbook.
+// --------------------------------------------------------------------------
+
+export async function reviewContractWithPlaybook(
+  contractId: string,
+  playbookId: string,
+  options: ApiOptions = {},
+): Promise<PlaybookReviewResult> {
+  if (isDemoMode()) {
+    return mockApi.reviewContractWithPlaybook(contractId, playbookId, options);
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  const init: RequestInit = {
+    method: "POST",
+    body: JSON.stringify({ playbook_id: playbookId }),
+  };
+  const data = await dispatch<PlaybookReviewResult>(
+    `/api/contracts/${encodeURIComponent(contractId)}/playbook-review`,
+    init,
+    headers,
     options,
   );
   return scrubSecrets(data);
