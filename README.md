@@ -168,7 +168,25 @@ Endpoints (under `/api/contracts/{contract_id}`):
   (status, message, span, rule metadata) are immutable through this
   endpoint.
 
-LLM redlines and suggested replacement language remain future work.
+### LLM-suggested redlines (v1)
+
+A reviewer can ask Whereas to generate replacement language for a
+failed finding from the Review tab. Each click of **Suggest redline**
+calls the configured LiteLLM provider (default: local Ollama) and
+persists a new `SuggestedRedline` row tied to the finding. The
+suggestion carries the model name, prompt version, and a confidence
+score; reviewers can accept, reject, or regenerate, and the history
+of prior suggestions is preserved per finding.
+
+Redlines are *not* legal advice and the UI says so. The finding's
+exact-span citation back to the source clause is the load-bearing
+guarantee here — the redline itself is replacement text, but the
+*location* it applies to is grounded in the segmenter's invariant
+(`Contract.full_text[span_start:span_end] == Clause.text`). The
+deterministic finding fields (`status`, `message`, `rule_*`, span)
+remain immutable through the API; only the redline's reviewer status
+is mutable.
+
 Findings are not legal advice — Whereas surfaces information about
 contracts; it does not replace human review.
 

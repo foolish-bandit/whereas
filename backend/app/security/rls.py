@@ -46,6 +46,7 @@ TENANT_SCOPED_TABLES: list[str] = [
     "playbooks",
     "deviation_findings",
     "playbook_review_runs",
+    "suggested_redlines",
     "audit_events",
     "users",
 ]
@@ -62,6 +63,7 @@ _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "playbooks",
     "deviation_findings",
     "playbook_review_runs",
+    "suggested_redlines",
     "audit_events",
     "users",
 )

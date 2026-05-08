@@ -30,6 +30,10 @@ import type {
   ReviewerFindingStatus,
 } from "../types/findings";
 import type { PlaybookDetail, PlaybookSummary } from "../types/playbooks";
+import type {
+  RedlineStatus,
+  SuggestedRedline,
+} from "../types/redlines";
 import type { PlaybookReviewResult } from "../types/review";
 
 interface ApiOptions {
@@ -491,6 +495,92 @@ export async function updateFindingStatus(
   return { ...finding };
 }
 
+// ----- Suggested redlines (demo) -----
+
+const sessionRedlinesByFinding: Record<string, SuggestedRedline[]> = {};
+
+export async function generateRedline(
+  contractId: string,
+  findingId: string,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const finding = sessionFindingsById[findingId];
+  if (!finding || finding.contract_id !== contractId) {
+    throw new ApiError(404, "Finding not found.");
+  }
+  if (finding.status !== "fail") {
+    throw new ApiError(
+      422,
+      "Redlines can only be generated for failed findings.",
+    );
+  }
+  if (!finding.evidence_text || finding.span_start === null) {
+    throw new ApiError(
+      422,
+      "Finding has no clause-level evidence to redline.",
+    );
+  }
+  // Demo redline: prefer the firm's preferred_language verbatim when
+  // present; otherwise echo the evidence with a soft hedge so the UI
+  // has something to render. The mock is deliberately uninspiring —
+  // the real generator is the backend service.
+  const text =
+    finding.preferred_language ??
+    `${finding.evidence_text} (revised to address the rule failure)`;
+  const redline: SuggestedRedline = {
+    id: `redline-${Math.random().toString(36).slice(2, 10)}`,
+    organization_id: finding.organization_id,
+    contract_id: contractId,
+    finding_id: findingId,
+    redline_text: text,
+    rationale:
+      "Demo rationale: this replacement language addresses the rule failure as stated.",
+    model_name: "demo/mock",
+    prompt_version: "redline-v1",
+    confidence: 0.6,
+    status: "proposed",
+    created_by: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const list = sessionRedlinesByFinding[findingId] ?? [];
+  list.unshift(redline);
+  sessionRedlinesByFinding[findingId] = list;
+  return { ...redline };
+}
+
+export async function listRedlines(
+  contractId: string,
+  findingId: string,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const finding = sessionFindingsById[findingId];
+  if (!finding || finding.contract_id !== contractId) {
+    throw new ApiError(404, "Finding not found.");
+  }
+  return (sessionRedlinesByFinding[findingId] ?? []).map((r) => ({ ...r }));
+}
+
+export async function updateRedlineStatus(
+  contractId: string,
+  findingId: string,
+  redlineId: string,
+  status: RedlineStatus,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const list = sessionRedlinesByFinding[findingId] ?? [];
+  const redline = list.find((r) => r.id === redlineId);
+  if (!redline || redline.contract_id !== contractId) {
+    throw new ApiError(404, "Redline not found.");
+  }
+  redline.status = status;
+  redline.updated_at = new Date().toISOString();
+  return { ...redline };
+}
+
 /**
  * Test helper. Clears any uploads recorded during a vitest run so tests
  * don't leak state.
@@ -505,6 +595,9 @@ export function __resetMockState(): void {
   }
   for (const k of Object.keys(sessionFindingsById)) {
     delete sessionFindingsById[k];
+  }
+  for (const k of Object.keys(sessionRedlinesByFinding)) {
+    delete sessionRedlinesByFinding[k];
   }
   sessionClauseTemplates.length = 0;
 }

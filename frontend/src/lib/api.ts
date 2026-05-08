@@ -20,6 +20,10 @@ import type {
   ReviewRunSummary,
   ReviewerFindingStatus,
 } from "../types/findings";
+import type {
+  RedlineStatus,
+  SuggestedRedline,
+} from "../types/redlines";
 import type { PlaybookReviewResult } from "../types/review";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
@@ -673,6 +677,77 @@ export async function listContractFindings(
   );
   return scrubSecrets(data);
 }
+
+// --------------------------------------------------------------------------
+// Suggested redlines (LLM-generated replacement language for findings)
+//
+// Each call to `generateRedline` creates a *new* SuggestedRedline row;
+// the backend never overwrites a prior one. Reviewer accept/reject is a
+// status update on an existing row, not a separate creation path.
+// --------------------------------------------------------------------------
+
+export async function generateRedline(
+  contractId: string,
+  findingId: string,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline> {
+  if (isDemoMode()) {
+    return mockApi.generateRedline(contractId, findingId, options);
+  }
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const data = await dispatch<SuggestedRedline>(
+    `/api/contracts/${encodeURIComponent(contractId)}/findings/${encodeURIComponent(findingId)}/redline`,
+    { method: "POST" },
+    headers,
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function listRedlines(
+  contractId: string,
+  findingId: string,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline[]> {
+  if (isDemoMode()) {
+    return mockApi.listRedlines(contractId, findingId, options);
+  }
+  const data = await call<SuggestedRedline[]>(
+    `/api/contracts/${encodeURIComponent(contractId)}/findings/${encodeURIComponent(findingId)}/redlines`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateRedlineStatus(
+  contractId: string,
+  findingId: string,
+  redlineId: string,
+  status: RedlineStatus,
+  options: ApiOptions = {},
+): Promise<SuggestedRedline> {
+  if (isDemoMode()) {
+    return mockApi.updateRedlineStatus(
+      contractId,
+      findingId,
+      redlineId,
+      status,
+      options,
+    );
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const data = await dispatch<SuggestedRedline>(
+    `/api/contracts/${encodeURIComponent(contractId)}/findings/${encodeURIComponent(findingId)}/redlines/${encodeURIComponent(redlineId)}`,
+    { method: "PATCH", body: JSON.stringify({ status }) },
+    headers,
+    options,
+  );
+  return scrubSecrets(data);
+}
+
 
 export async function updateFindingStatus(
   contractId: string,

@@ -4,10 +4,13 @@ import {
   ApiError,
   MissingDevUserError,
   createPlaybookReviewRun,
+  generateRedline,
   getPlaybookReviewRun,
   getPlaybooks,
   listPlaybookReviewRuns,
+  listRedlines,
   updateFindingStatus,
+  updateRedlineStatus,
 } from "../lib/api";
 import type {
   DeviationFinding,
@@ -16,6 +19,10 @@ import type {
   ReviewerFindingStatus,
 } from "../types/findings";
 import type { PlaybookSummary } from "../types/playbooks";
+import type {
+  RedlineStatus,
+  SuggestedRedline,
+} from "../types/redlines";
 import type { PlaybookRuleMatchResult } from "../types/review";
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -50,6 +57,12 @@ interface ReviewPanelProps {
    */
   onRunChange?: (run: ReviewRunDetail | null) => void;
 }
+
+const REDLINE_STATUS_LABELS: Record<RedlineStatus, string> = {
+  proposed: "Proposed",
+  accepted: "Accepted",
+  rejected: "Rejected",
+};
 
 type PlaybookListState =
   | { kind: "loading" }
@@ -574,6 +587,12 @@ function RuleResultList({
                 onUpdate={onUpdateFinding}
               />
             )}
+            {finding && rule.status === "fail" && hasEvidence && (
+              <RedlineSection
+                contractId={run.contract_id}
+                finding={finding}
+              />
+            )}
           </li>
         );
       })}
@@ -773,6 +792,299 @@ function FindingStatusBadge({
       ].join(" ")}
     >
       {FINDING_STATUS_LABELS[status] ?? status}
+    </span>
+  );
+}
+
+interface RedlineSectionProps {
+  contractId: string;
+  finding: DeviationFinding;
+}
+
+type RedlineSectionState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "loaded"; redlines: SuggestedRedline[] }
+  | { kind: "generating"; redlines: SuggestedRedline[] }
+  | { kind: "error"; message: string; redlines: SuggestedRedline[] };
+
+/**
+ * Per-finding suggested-redline UI.
+ *
+ * Reviewers click "Suggest redline" to generate replacement language
+ * via the LLM. Each generation creates a new ``SuggestedRedline`` row
+ * on the backend; the latest is rendered prominently and prior
+ * suggestions sit collapsed below as history. Accept / reject is a
+ * status update, not an edit, so the source text and confidence stay
+ * tied to the model + prompt that produced them.
+ *
+ * Design principle 9: redlines are not legal advice. The header copy
+ * makes that explicit and the panel never represents a redline as a
+ * "fix"; it is a suggestion for a human to review.
+ */
+function RedlineSection({ contractId, finding }: RedlineSectionProps) {
+  const [state, setState] = useState<RedlineSectionState>({ kind: "idle" });
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const findingId = finding.id;
+
+  // Lazy-load history the first time the section opens. Generation
+  // also flows through here so the new row appears at the top.
+  useEffect(() => {
+    if (!expanded) return;
+    if (state.kind !== "idle") return;
+    let cancelled = false;
+    setState({ kind: "loading" });
+    listRedlines(contractId, findingId)
+      .then((redlines) => {
+        if (cancelled) return;
+        setState({ kind: "loaded", redlines });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message =
+          err instanceof ApiError ? err.message : "Could not load redlines.";
+        setState({ kind: "error", message, redlines: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, contractId, findingId, state.kind]);
+
+  async function onGenerate(): Promise<void> {
+    const previous: SuggestedRedline[] =
+      state.kind === "loaded" || state.kind === "error" ||
+      state.kind === "generating"
+        ? state.redlines
+        : [];
+    setState({ kind: "generating", redlines: previous });
+    try {
+      const created = await generateRedline(contractId, findingId);
+      setState({ kind: "loaded", redlines: [created, ...previous] });
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Could not generate a redline.";
+      setState({ kind: "error", message, redlines: previous });
+    }
+  }
+
+  async function onSetStatus(
+    redlineId: string,
+    status: RedlineStatus,
+  ): Promise<void> {
+    if (state.kind !== "loaded" && state.kind !== "error") return;
+    try {
+      const updated = await updateRedlineStatus(
+        contractId,
+        findingId,
+        redlineId,
+        status,
+      );
+      setState((prev) => {
+        if (prev.kind !== "loaded" && prev.kind !== "error") return prev;
+        const redlines = prev.redlines.map((r) =>
+          r.id === redlineId ? updated : r,
+        );
+        return { kind: "loaded", redlines };
+      });
+    } catch (err) {
+      console.warn("update redline failed", err);
+    }
+  }
+
+  async function onCopy(redline: SuggestedRedline): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(redline.redline_text);
+      setCopiedId(redline.id);
+      window.setTimeout(() => {
+        setCopiedId((prev) => (prev === redline.id ? null : prev));
+      }, 1500);
+    } catch (err) {
+      console.warn("clipboard write failed", err);
+    }
+  }
+
+  const redlines: SuggestedRedline[] =
+    state.kind === "loaded" ||
+    state.kind === "error" ||
+    state.kind === "generating"
+      ? state.redlines
+      : [];
+  const latest = redlines[0] ?? null;
+  const history = redlines.slice(1);
+  const generating = state.kind === "generating";
+
+  return (
+    <section
+      aria-label="Suggested redline"
+      className="mt-2 rounded border border-rule bg-canvas px-2.5 py-2"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink-subtle">
+            Suggested redline
+          </p>
+          <p className="mt-0.5 text-[10px] text-ink-subtle">
+            LLM-generated suggestion for human review. Not legal advice.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (!expanded) setExpanded(true);
+            void onGenerate();
+          }}
+          disabled={generating}
+          className="inline-flex items-center rounded border border-ink bg-canvas px-2 py-1 text-[11px] font-medium text-ink hover:bg-canvas-subtle disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {generating
+            ? "Generating…"
+            : latest
+              ? "Regenerate"
+              : "Suggest redline"}
+        </button>
+      </div>
+
+      {expanded && state.kind === "loading" && (
+        <p className="mt-2 text-[11px] text-ink-subtle">Loading redlines…</p>
+      )}
+      {expanded && state.kind === "error" && (
+        <p className="mt-2 text-[11px] text-danger">{state.message}</p>
+      )}
+
+      {latest && (
+        <RedlineCard
+          redline={latest}
+          isCopied={copiedId === latest.id}
+          onCopy={() => void onCopy(latest)}
+          onSetStatus={(status) => void onSetStatus(latest.id, status)}
+          variant="latest"
+        />
+      )}
+
+      {history.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-ink-subtle hover:text-ink-muted">
+            Prior suggestions ({history.length})
+          </summary>
+          <ul className="mt-1.5 space-y-1.5">
+            {history.map((r) => (
+              <li key={r.id}>
+                <RedlineCard
+                  redline={r}
+                  isCopied={copiedId === r.id}
+                  onCopy={() => void onCopy(r)}
+                  onSetStatus={(status) => void onSetStatus(r.id, status)}
+                  variant="history"
+                />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+interface RedlineCardProps {
+  redline: SuggestedRedline;
+  isCopied: boolean;
+  onCopy: () => void;
+  onSetStatus: (status: RedlineStatus) => void;
+  variant: "latest" | "history";
+}
+
+function RedlineCard({
+  redline,
+  isCopied,
+  onCopy,
+  onSetStatus,
+  variant,
+}: RedlineCardProps) {
+  const isLatest = variant === "latest";
+  const containerClass = isLatest
+    ? "mt-2 rounded border border-rule bg-canvas-subtle px-2.5 py-2"
+    : "rounded border border-rule bg-canvas-subtle px-2.5 py-1.5";
+  return (
+    <div className={containerClass}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <RedlineStatusBadge status={redline.status} />
+        <span className="text-[10px] text-ink-subtle">
+          confidence {Math.round(redline.confidence * 100)}%
+        </span>
+        <span className="text-[10px] text-ink-subtle">
+          · {redline.model_name}
+        </span>
+      </div>
+      <pre className="mt-1.5 whitespace-pre-wrap rounded border border-rule bg-canvas px-2 py-1.5 font-sans text-[11px] leading-relaxed text-ink">
+        {redline.redline_text}
+      </pre>
+      {redline.rationale && (
+        <p className="mt-1.5 text-[11px] text-ink-muted">{redline.rationale}</p>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={onCopy}
+          className="inline-flex items-center rounded border border-rule bg-canvas px-2 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-canvas-muted"
+        >
+          {isCopied ? "Copied" : "Copy"}
+        </button>
+        {redline.status !== "accepted" && (
+          <button
+            type="button"
+            onClick={() => onSetStatus("accepted")}
+            className="inline-flex items-center rounded border border-rule bg-canvas px-2 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-canvas-muted"
+          >
+            Accept
+          </button>
+        )}
+        {redline.status !== "rejected" && (
+          <button
+            type="button"
+            onClick={() => onSetStatus("rejected")}
+            className="inline-flex items-center rounded border border-rule bg-canvas px-2 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-canvas-muted"
+          >
+            Reject
+          </button>
+        )}
+        {redline.status !== "proposed" && (
+          <button
+            type="button"
+            onClick={() => onSetStatus("proposed")}
+            className="inline-flex items-center rounded border border-rule bg-canvas px-2 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-canvas-muted"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RedlineStatusBadge({ status }: { status: RedlineStatus }) {
+  const color = (() => {
+    switch (status) {
+      case "accepted":
+        return "border-success-ring bg-success-soft text-success";
+      case "rejected":
+        return "border-rule bg-canvas-subtle text-ink-muted";
+      case "proposed":
+      default:
+        return "border-warning-ring bg-warning-soft text-warning";
+    }
+  })();
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
+        color,
+      ].join(" ")}
+    >
+      {REDLINE_STATUS_LABELS[status]}
     </span>
   );
 }

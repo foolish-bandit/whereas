@@ -520,6 +520,9 @@ class DeviationFinding(Base):
 
     contract: Mapped[Contract] = relationship(back_populates="deviation_findings")
     review_run: Mapped[PlaybookReviewRun] = relationship(back_populates="findings")
+    suggested_redlines: Mapped[list[SuggestedRedline]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_deviation_findings_organization_id", "organization_id"),
@@ -537,4 +540,98 @@ class DeviationFinding(Base):
         ),
         Index("ix_deviation_findings_review_run_id", "review_run_id"),
         Index("ix_deviation_findings_severity", "severity"),
+    )
+
+
+class SuggestedRedlineStatus(StrEnum):
+    """Reviewer workflow state of an LLM-generated redline.
+
+    A redline is born ``PROPOSED``. A reviewer who acts on it can flip
+    it to ``ACCEPTED`` (will use this language) or ``REJECTED`` (will
+    not). Regenerating a redline does not retroactively touch prior
+    rows; each generation creates a new ``SuggestedRedline`` row so the
+    history of suggestions for a finding is preserved.
+    """
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class SuggestedRedline(Base):
+    """An LLM-generated suggested redline for a failed deviation finding.
+
+    Redlines are *not* deterministic and are *not* legal advice; each
+    row carries the model name, prompt version, and confidence so a
+    reviewer can audit what produced the suggestion. The redline text
+    itself does not get a span citation — the *finding* it attaches to
+    already carries one (``span_start`` / ``span_end`` / ``clause_id``
+    on ``DeviationFinding``), and the redline is the proposed
+    replacement for that exact span.
+
+    Multiple redlines per finding are allowed. Regeneration creates a
+    new row rather than mutating an existing one so the history of
+    suggestions a reviewer saw is preserved. The ``status`` column is
+    the reviewer workflow (proposed/accepted/rejected); it is the only
+    field on this row that is reviewer-mutable through the API.
+    """
+
+    __tablename__ = "suggested_redlines"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("deviation_findings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    redline_text: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=SuggestedRedlineStatus.PROPOSED.value,
+    )
+    # Nullable because the dev-user header path may legitimately omit
+    # an actor in non-production environments. Production auth will
+    # always populate this.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    finding: Mapped[DeviationFinding] = relationship(
+        back_populates="suggested_redlines"
+    )
+
+    __table_args__ = (
+        Index("ix_suggested_redlines_organization_id", "organization_id"),
+        Index("ix_suggested_redlines_contract_id", "contract_id"),
+        Index("ix_suggested_redlines_finding_id", "finding_id"),
+        Index(
+            "ix_suggested_redlines_finding_status",
+            "finding_id",
+            "status",
+        ),
     )

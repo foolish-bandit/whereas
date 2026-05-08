@@ -28,6 +28,7 @@ from app.models import (
     Organization,
     Playbook,
     PlaybookReviewRun,
+    SuggestedRedline,
     User,
 )
 from app.schemas.contracts import (
@@ -48,6 +49,10 @@ from app.schemas.playbook_review import (
     PlaybookReviewRequest,
     PlaybookReviewResult,
     review_to_response,
+)
+from app.schemas.redlines import (
+    SuggestedRedlineResponse,
+    UpdateRedlineStatusRequest,
 )
 from app.security.audit_log import AuditEventType, record_event
 from app.security.encryption import (
@@ -81,6 +86,14 @@ from app.services.playbook_loader import (
     parse_playbook,
 )
 from app.services.playbook_matcher import match_playbook
+from app.services.redline_generator import (
+    InvalidRedlineStatusError,
+    RedlineGenerationError,
+    generate_redline_for_finding,
+    get_redline_for_org,
+    list_redlines_for_finding,
+    update_redline_status,
+)
 from app.services.storage import DocumentStorage
 
 log = logging.getLogger(__name__)
@@ -624,6 +637,150 @@ async def update_contract_finding_status(
     return _finding_response(finding)
 
 
+# --------------------------------------------------------------------------
+# Suggested redlines (LLM-generated replacement language for findings)
+# --------------------------------------------------------------------------
+
+
+@router.post(
+    "/{contract_id}/findings/{finding_id}/redline",
+    response_model=SuggestedRedlineResponse,
+    status_code=201,
+)
+async def generate_finding_redline(
+    contract_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> SuggestedRedlineResponse:
+    """Generate a new LLM-suggested redline for a failed finding.
+
+    Each call creates a *new* ``SuggestedRedline`` row; regeneration
+    does not mutate prior suggestions. The endpoint is the only place
+    redlines are created — accept/reject is a status update on an
+    existing row, not a separate creation path.
+
+    Returns 422 when the finding is not a failure or has no
+    clause-level evidence to redline (the rule failed because the
+    clause is missing entirely). Returns 502 when the LLM call itself
+    fails or returns malformed output, so callers can distinguish
+    "you can't redline this" from "the model is broken."
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    finding = await get_finding_for_org(
+        session,
+        finding_id=finding_id,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    try:
+        redline = await generate_redline_for_finding(
+            session,
+            contract=contract,
+            finding=finding,
+            actor_user_id=user.id,
+        )
+    except RedlineGenerationError as exc:
+        message = str(exc)
+        # Distinguish "we won't redline this" (caller's fault, retry
+        # won't help) from "the LLM is unhappy" (transient / config).
+        not_eligible_markers = (
+            "Redlines can only be generated for failed findings.",
+            "Finding has no clause-level evidence to redline.",
+        )
+        if any(message.startswith(m) for m in not_eligible_markers):
+            raise HTTPException(status_code=422, detail=message) from exc
+        raise HTTPException(status_code=502, detail=message) from exc
+    return _redline_response(redline)
+
+
+@router.get(
+    "/{contract_id}/findings/{finding_id}/redlines",
+    response_model=list[SuggestedRedlineResponse],
+)
+async def list_finding_redlines(
+    contract_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> list[SuggestedRedlineResponse]:
+    """List redlines for a finding, newest first."""
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    finding = await get_finding_for_org(
+        session,
+        finding_id=finding_id,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    redlines = await list_redlines_for_finding(session, finding_id=finding_id)
+    return [_redline_response(r) for r in redlines]
+
+
+@router.patch(
+    "/{contract_id}/findings/{finding_id}/redlines/{redline_id}",
+    response_model=SuggestedRedlineResponse,
+)
+async def update_finding_redline_status(
+    contract_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    redline_id: uuid.UUID,
+    payload: UpdateRedlineStatusRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> SuggestedRedlineResponse:
+    """Update the reviewer workflow state of a suggested redline.
+
+    Only ``status`` is updatable. Generation-time fields
+    (``redline_text``, ``model_name``, ``prompt_version``,
+    ``confidence``, ``rationale``) are immutable through this
+    endpoint. Org scoped: a 404 is returned for cross-org or
+    cross-finding redlines.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    finding = await get_finding_for_org(
+        session,
+        finding_id=finding_id,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    redline = await get_redline_for_org(
+        session,
+        redline_id=redline_id,
+        finding_id=finding_id,
+        organization_id=user.organization_id,
+    )
+    if redline is None:
+        raise HTTPException(status_code=404, detail="Redline not found.")
+    try:
+        await update_redline_status(
+            session, redline=redline, new_status=payload.status
+        )
+    except InvalidRedlineStatusError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _redline_response(redline)
+
+
 @router.get("/{contract_id}/download")
 async def download_contract(
     contract_id: uuid.UUID,
@@ -1005,6 +1162,24 @@ def _run_detail_response(
         ).results
     return ReviewRunDetail(
         **summary_data, findings=finding_responses, results=results
+    )
+
+
+def _redline_response(redline: SuggestedRedline) -> SuggestedRedlineResponse:
+    return SuggestedRedlineResponse(
+        id=redline.id,
+        organization_id=redline.organization_id,
+        contract_id=redline.contract_id,
+        finding_id=redline.finding_id,
+        redline_text=redline.redline_text,
+        rationale=redline.rationale,
+        model_name=redline.model_name,
+        prompt_version=redline.prompt_version,
+        confidence=redline.confidence,
+        status=redline.status,  # type: ignore[arg-type]
+        created_by=redline.created_by,
+        created_at=redline.created_at,
+        updated_at=redline.updated_at,
     )
 
 
