@@ -66,8 +66,22 @@ export default function ContractWorkspacePage() {
     kind: "idle",
   });
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
-  const [originalArtifact, setOriginalArtifact] =
-    useState<ContractArtifact | null>(null);
+  // Three meaningful states for the artifact strip:
+  //   - "loading"  → request in flight, render nothing yet
+  //   - "loaded"   → request resolved; ``artifact`` is the official
+  //                  original_upload row, or ``null`` if the contract
+  //                  predates the artifact model and has not been
+  //                  backfilled. ``null`` lets the UI surface a
+  //                  legacy fallback hint without pretending an
+  //                  artifact exists.
+  //   - "error"    → request failed; treated like loading from the
+  //                  user's perspective (no strip), so the download
+  //                  button stays the only thing that matters.
+  const [artifactState, setArtifactState] = useState<
+    | { kind: "loading" }
+    | { kind: "loaded"; artifact: ContractArtifact | null }
+    | { kind: "error" }
+  >({ kind: "loading" });
 
   useEffect(() => {
     if (!id) return;
@@ -112,20 +126,21 @@ export default function ContractWorkspacePage() {
   useEffect(() => {
     if (!id) return;
     const controller = new AbortController();
-    setOriginalArtifact(null);
+    setArtifactState({ kind: "loading" });
     getContractArtifacts(id, { signal: controller.signal })
       .then((rows) => {
-        // Pick the most recent original_upload artifact. The list is
-        // already ordered newest-first by the backend.
+        if (controller.signal.aborted) return;
         const original =
           rows.find((a) => a.artifact_type === "original_upload") ?? null;
-        setOriginalArtifact(original);
+        setArtifactState({ kind: "loaded", artifact: original });
       })
       .catch(() => {
         // Artifact metadata is a hint, not load-bearing — the contract
         // workspace must remain usable even if the listing endpoint
         // fails or the user lacks access. Swallow here; primary errors
         // are surfaced via the contract load above.
+        if (controller.signal.aborted) return;
+        setArtifactState({ kind: "error" });
       });
     return () => controller.abort();
   }, [id]);
@@ -256,7 +271,7 @@ export default function ContractWorkspacePage() {
         contract={state.contract}
         downloadState={downloadState}
         onDownload={onDownload}
-        originalArtifact={originalArtifact}
+        artifactState={artifactState}
       />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -374,18 +389,23 @@ function Sidebar({
   );
 }
 
+type ArtifactStripState =
+  | { kind: "loading" }
+  | { kind: "loaded"; artifact: ContractArtifact | null }
+  | { kind: "error" };
+
 interface ContractHeaderProps {
   contract: ContractDetail;
   downloadState: DownloadState;
   onDownload: () => void;
-  originalArtifact: ContractArtifact | null;
+  artifactState: ArtifactStripState;
 }
 
 function ContractHeader({
   contract,
   downloadState,
   onDownload,
-  originalArtifact,
+  artifactState,
 }: ContractHeaderProps) {
   return (
     <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
@@ -400,9 +420,10 @@ function ContractHeader({
           <span>Uploaded {formatDate(contract.created_at)}</span>
           <span>Updated {formatDateTime(contract.updated_at)}</span>
         </div>
-        {originalArtifact && (
-          <OriginalArtifactStrip artifact={originalArtifact} />
-        )}
+        <OriginalArtifactStrip
+          state={artifactState}
+          contract={contract}
+        />
       </div>
       <div className="flex flex-col items-end gap-2">
         <button
@@ -426,31 +447,60 @@ function ContractHeader({
 }
 
 function OriginalArtifactStrip({
-  artifact,
+  state,
+  contract,
 }: {
-  artifact: ContractArtifact;
+  state: ArtifactStripState;
+  contract: ContractDetail;
 }) {
   // Whereas tracks the DOCX/PDF as the official legal artifact and the
   // Markdown snapshot as the working representation. This strip is the
   // small affordance in the workspace that makes the original artifact
   // visible without redesigning the page.
+  //
+  // Three rendered cases:
+  //   1. an official original_upload artifact exists → show filename
+  //      and MIME with the "Official" badge.
+  //   2. the artifacts list resolved but is empty → the contract
+  //      predates the artifact model and has not been backfilled yet.
+  //      Surface a quiet "Legacy original" hint so users know the
+  //      Download original button still works against the contract row.
+  //   3. loading or error → render nothing. The Download original
+  //      button stays the load-bearing affordance.
+  if (state.kind !== "loaded") return null;
+  if (state.artifact) {
+    const artifact = state.artifact;
+    return (
+      <div
+        className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
+        data-testid="original-artifact-strip"
+      >
+        <span className="font-medium text-ink">Original artifact</span>
+        {artifact.is_official && (
+          <span className="rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-canvas">
+            Official
+          </span>
+        )}
+        {artifact.filename && (
+          <span className="truncate" title={artifact.filename}>
+            {artifact.filename}
+          </span>
+        )}
+        {artifact.mime_type && <span>{mimeLabel(artifact.mime_type)}</span>}
+      </div>
+    );
+  }
   return (
     <div
-      className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
-      data-testid="original-artifact-strip"
+      className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-dashed border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
+      data-testid="original-artifact-strip-legacy"
     >
       <span className="font-medium text-ink">Original artifact</span>
-      {artifact.is_official && (
-        <span className="rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-canvas">
-          Official
-        </span>
-      )}
-      {artifact.filename && (
-        <span className="truncate" title={artifact.filename}>
-          {artifact.filename}
-        </span>
-      )}
-      {artifact.mime_type && <span>{mimeLabel(artifact.mime_type)}</span>}
+      <span>
+        Legacy original — uploaded before artifact tracking. Download
+        original still works from the contract record.
+      </span>
+      <span>{mimeLabel(contract.mime_type)}</span>
     </div>
   );
 }
