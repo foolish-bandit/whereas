@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 
 import DemoModeBanner from "./DemoModeBanner";
 import Header from "./Header";
@@ -12,6 +13,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [devUserId, setDevUserIdState] = useState<string | null>(() =>
     getDevUserId(),
   );
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   useEffect(() => {
     function onStorage(e: StorageEvent) {
@@ -30,15 +33,29 @@ export default function AppShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Auto-close the mobile drawer whenever the route changes so users
+  // don't get stuck on the previous page's overlay after tapping a
+  // nav link.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
   return (
     <div className="flex h-full min-h-screen bg-canvas-subtle">
-      <Sidebar />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header devUserId={devUserId} demoMode={demo} />
+        <Header
+          devUserId={devUserId}
+          demoMode={demo}
+          onOpenSidebar={() => setSidebarOpen(true)}
+        />
         {demo && <DemoModeBanner />}
         {!demo && !devUserId && <DevUserBanner />}
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-7xl px-6 py-8 lg:px-10">
+          <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
             {children}
           </div>
         </main>

@@ -73,7 +73,7 @@ export default function AgreementTemplatesPage() {
 
   return (
     <div className="space-y-5" data-testid="agreement-templates-page">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-ink">Agreement Templates</h1>
           <p className="mt-1 text-sm text-ink-muted">

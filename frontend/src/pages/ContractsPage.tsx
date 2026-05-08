@@ -83,9 +83,9 @@ export default function ContractsPage() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-2xl text-ink">Contracts</h1>
+          <h1 className="font-serif text-xl text-ink sm:text-2xl">Contracts</h1>
           <p className="mt-1 text-sm text-ink-muted">
             Whereas is an open-source contract repository. Extracted metadata is
             machine-generated and must be reviewed before relying on it.
@@ -93,7 +93,7 @@ export default function ContractsPage() {
         </div>
         <Link
           to="/upload"
-          className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring"
+          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
         >
           Upload contract
         </Link>

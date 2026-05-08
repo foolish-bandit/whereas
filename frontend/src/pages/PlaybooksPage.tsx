@@ -65,9 +65,9 @@ export default function PlaybooksPage() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-2xl text-ink">Playbooks</h1>
+          <h1 className="font-serif text-xl text-ink sm:text-2xl">Playbooks</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
             YAML-defined libraries of your firm's review positions. Open a
             contract and use the Review tab to run a playbook against its
@@ -151,64 +151,106 @@ function PlaybookTable({ playbooks }: { playbooks: PlaybookSummary[] }) {
   if (playbooks.length === 0) return null;
   return (
     <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
-      <table className="min-w-full divide-y divide-rule text-sm">
-        <thead className="bg-canvas-subtle text-xs uppercase tracking-wide text-ink-subtle">
-          <tr>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Name
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Contract type
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Jurisdiction
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Rules
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Status
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Updated
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-rule">
-          {playbooks.map((p) => (
-            <tr key={p.id} className="hover:bg-canvas-subtle">
-              <td className="px-4 py-3">
-                <Link
-                  to={`/playbooks/${p.id}`}
-                  className="font-medium text-ink hover:text-accent-ring"
-                >
-                  {p.name}
-                </Link>
-                {p.description && (
-                  <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">
-                    {p.description}
-                  </p>
-                )}
-              </td>
-              <td className="px-4 py-3 text-ink-muted">
-                {p.contract_type ?? "—"}
-              </td>
-              <td className="px-4 py-3 text-ink-muted">
-                {p.jurisdiction ?? "—"}
-              </td>
-              <td className="px-4 py-3 font-mono text-xs text-ink-muted">
-                {p.rule_count}
-              </td>
-              <td className="px-4 py-3">
-                <StatusPill active={p.is_active} />
-              </td>
-              <td className="px-4 py-3 text-xs text-ink-muted">
-                {formatDate(p.updated_at)}
-              </td>
+      {/* Card layout on small screens. */}
+      <ul className="divide-y divide-rule sm:hidden">
+        {playbooks.map((p) => (
+          <li key={p.id} className="px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <Link
+                to={`/playbooks/${p.id}`}
+                className="font-medium text-ink hover:text-accent-ring"
+              >
+                {p.name}
+              </Link>
+              <StatusPill active={p.is_active} />
+            </div>
+            {p.description && (
+              <p className="mt-1 line-clamp-3 text-xs text-ink-muted">
+                {p.description}
+              </p>
+            )}
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+              <div>
+                <dt className="text-ink-subtle">Contract type</dt>
+                <dd>{p.contract_type ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-subtle">Jurisdiction</dt>
+                <dd>{p.jurisdiction ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-subtle">Rules</dt>
+                <dd className="font-mono">{p.rule_count}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-subtle">Updated</dt>
+                <dd>{formatDate(p.updated_at)}</dd>
+              </div>
+            </dl>
+          </li>
+        ))}
+      </ul>
+
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="min-w-full divide-y divide-rule text-sm">
+          <thead className="bg-canvas-subtle text-xs uppercase tracking-wide text-ink-subtle">
+            <tr>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Name
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Contract type
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Jurisdiction
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Rules
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Status
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Updated
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-rule">
+            {playbooks.map((p) => (
+              <tr key={p.id} className="hover:bg-canvas-subtle">
+                <td className="px-4 py-3">
+                  <Link
+                    to={`/playbooks/${p.id}`}
+                    className="font-medium text-ink hover:text-accent-ring"
+                  >
+                    {p.name}
+                  </Link>
+                  {p.description && (
+                    <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">
+                      {p.description}
+                    </p>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-ink-muted">
+                  {p.contract_type ?? "—"}
+                </td>
+                <td className="px-4 py-3 text-ink-muted">
+                  {p.jurisdiction ?? "—"}
+                </td>
+                <td className="px-4 py-3 font-mono text-xs text-ink-muted">
+                  {p.rule_count}
+                </td>
+                <td className="px-4 py-3">
+                  <StatusPill active={p.is_active} />
+                </td>
+                <td className="px-4 py-3 text-xs text-ink-muted">
+                  {formatDate(p.updated_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

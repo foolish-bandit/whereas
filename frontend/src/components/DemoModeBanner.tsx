@@ -1,12 +1,14 @@
 export default function DemoModeBanner() {
   return (
-    <div className="border-b border-info-ring bg-info-soft px-6 py-2.5 text-sm text-info">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+    <div className="border-b border-info-ring bg-info-soft px-4 py-2.5 text-sm text-info sm:px-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-info" aria-hidden />
-          <p>
-            <span className="font-medium">Demo mode</span>: using sample data.
-            No documents are uploaded.
+          <p className="min-w-0">
+            <span className="font-medium">Demo mode</span>
+            <span className="hidden sm:inline">
+              : using sample data. No documents are uploaded.
+            </span>
           </p>
         </div>
         <a

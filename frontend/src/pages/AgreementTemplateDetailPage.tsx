@@ -197,14 +197,14 @@ export default function AgreementTemplateDetailPage() {
         </header>
         {state.markdown ? (
           <article
-            className="px-6 py-5 font-serif text-ink"
+            className="px-4 py-4 font-serif text-ink sm:px-6 sm:py-5"
             data-testid="agreement-template-markdown-body"
           >
             {renderMarkdown(state.markdown.markdown_text)}
           </article>
         ) : (
           <div
-            className="px-6 py-6 text-sm text-ink-muted"
+            className="px-4 py-5 text-sm text-ink-muted sm:px-6 sm:py-6"
             data-testid="agreement-template-markdown-empty"
           >
             No markdown preview yet. Upload an original DOCX or PDF to
@@ -278,10 +278,10 @@ export default function AgreementTemplateDetailPage() {
             {state.variables.map((v) => (
               <li
                 key={v.id}
-                className="flex items-center justify-between rounded border border-rule px-3 py-2 text-sm"
+                className="flex flex-wrap items-start justify-between gap-2 rounded border border-rule px-3 py-2 text-sm"
                 data-testid="agreement-template-variable-row"
               >
-                <div>
+                <div className="min-w-0 break-words">
                   <code className="text-xs text-ink-subtle">{v.key}</code>
                   <span className="ml-2 text-ink">{v.label}</span>
                   <span className="ml-2 text-xs text-ink-muted">
@@ -291,7 +291,7 @@ export default function AgreementTemplateDetailPage() {
                 </div>
                 <button
                   type="button"
-                  className="text-xs underline"
+                  className="shrink-0 text-xs underline"
                   onClick={() => onDeleteVariable(v.id)}
                 >
                   Remove

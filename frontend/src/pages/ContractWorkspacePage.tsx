@@ -408,9 +408,11 @@ function ContractHeader({
   artifactState,
 }: ContractHeaderProps) {
   return (
-    <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+    <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
       <div className="min-w-0 flex-1">
-        <h1 className="font-serif text-2xl text-ink">{contract.title}</h1>
+        <h1 className="break-words font-serif text-xl text-ink sm:text-2xl">
+          {contract.title}
+        </h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
           <StatusBadge status={contract.status} />
           <span>{mimeLabel(contract.mime_type)}</span>
@@ -425,19 +427,19 @@ function ContractHeader({
           contract={contract}
         />
       </div>
-      <div className="flex flex-col items-end gap-2">
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
         <button
           type="button"
           onClick={onDownload}
           disabled={downloadState.kind === "downloading"}
-          className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
         >
           {downloadState.kind === "downloading"
             ? "Preparing…"
             : "Download original"}
         </button>
         {downloadState.kind === "error" && (
-          <p className="max-w-xs text-right text-xs text-danger">
+          <p className="max-w-xs text-xs text-danger sm:text-right">
             {downloadState.message}
           </p>
         )}

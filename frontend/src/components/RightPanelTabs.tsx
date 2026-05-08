@@ -19,7 +19,7 @@ export default function RightPanelTabs<T extends string>({
     <div
       role="tablist"
       aria-label="Contract workspace panels"
-      className="mb-3 inline-flex rounded-md border border-rule bg-canvas p-0.5"
+      className="mb-3 inline-flex max-w-full overflow-x-auto rounded-md border border-rule bg-canvas p-0.5 scrollbar-thin"
     >
       {tabs.map((tab) => {
         const isActive = tab.id === active;
@@ -31,7 +31,7 @@ export default function RightPanelTabs<T extends string>({
             aria-selected={isActive}
             onClick={() => onChange(tab.id)}
             className={[
-              "rounded px-3 py-1 text-xs font-medium transition-colors",
+              "shrink-0 whitespace-nowrap rounded px-3 py-1 text-xs font-medium transition-colors",
               isActive
                 ? "bg-ink text-canvas"
                 : "text-ink-muted hover:text-ink",
