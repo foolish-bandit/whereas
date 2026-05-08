@@ -65,23 +65,22 @@ export default function SettingsPage() {
       {demo && (
         <div className="mt-4 max-w-2xl rounded-lg border border-info-ring bg-info-soft p-4 text-sm text-info">
           <p>
-            This deployment is running in demo mode with mock data. The
-            development user ID is not used; you can leave it blank.
+            This deployment is running in demo mode with mock data. Setup,
+            uploads, and authoring flows are simulated in the browser; nothing
+            leaves this tab. The development user ID is not used.
           </p>
         </div>
       )}
 
-      {!demo && (
-        <div className="mt-6 max-w-2xl">
-          <FirstRunSetupCard
-            hasDevUser={stored !== null}
-            onCompleted={() => {
-              setValue(getDevUserId() ?? "");
-              setStored(getDevUserId());
-            }}
-          />
-        </div>
-      )}
+      <div className="mt-6 max-w-2xl">
+        <FirstRunSetupCard
+          hasDevUser={stored !== null}
+          onCompleted={() => {
+            setValue(getDevUserId() ?? "");
+            setStored(getDevUserId());
+          }}
+        />
+      </div>
 
       <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5">
         <h2 className="text-sm font-medium text-ink">Development user ID</h2>

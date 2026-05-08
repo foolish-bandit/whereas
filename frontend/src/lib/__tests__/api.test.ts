@@ -373,12 +373,18 @@ describe("api client", () => {
       });
     });
 
-    it("throws ApiError instead of dispatching when demo mode is on", async () => {
+    it("returns simulated setup data in demo mode without calling fetch", async () => {
       vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
-      await expect(getSetupStatus()).rejects.toBeInstanceOf(ApiError);
-      await expect(
-        createDevSetup({ organization_name: "X" }),
-      ).rejects.toBeInstanceOf(ApiError);
+      const status = await getSetupStatus();
+      expect(status.setup_required).toBe(true);
+      expect(status.dev_mode_enabled).toBe(true);
+      const result = await createDevSetup({ organization_name: "X" });
+      expect(result.dev_user_id).toBeTruthy();
+      expect(result.organization_name).toBe("X");
+      // After setup, the status flips so the UI hides the "setup required"
+      // CTA the same way it would against a real bootstrapped backend.
+      const next = await getSetupStatus();
+      expect(next.setup_required).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
