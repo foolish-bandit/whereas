@@ -262,7 +262,7 @@ export default function AgreementTemplateDetailPage() {
         <div className="mt-3 flex items-center gap-3">
           <button
             type="button"
-            className="rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas disabled:opacity-50"
+            className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-auto sm:py-1.5"
             onClick={onCreateVariable}
             disabled={!varKey.trim() || !varLabel.trim()}
           >

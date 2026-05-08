@@ -132,7 +132,7 @@ function SnapshotBody({ snapshot }: { snapshot: ContractMarkdownSnapshot }) {
           </ul>
         </div>
       )}
-      <div className="max-h-[70vh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:max-h-[calc(100vh-13rem)]">
+      <div className="max-h-mobile-viewer overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:max-h-[calc(100vh-13rem)]">
         <article
           className="font-serif text-ink"
           data-testid="markdown-body"

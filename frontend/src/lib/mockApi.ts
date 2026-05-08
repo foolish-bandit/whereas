@@ -231,11 +231,22 @@ export async function downloadContract(
   };
 }
 
+function _applyCannedDeactivations<T extends { id: string; is_active: boolean }>(
+  rows: T[],
+): T[] {
+  return rows.map((p) =>
+    cannedDeactivations.has(p.id) ? { ...p, is_active: false } : p,
+  );
+}
+
 export async function getPlaybooks(
   options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookSummary[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  const merged = [...sessionPlaybookList, ...MOCK_PLAYBOOK_LIST];
+  const merged = _applyCannedDeactivations([
+    ...sessionPlaybookList,
+    ...MOCK_PLAYBOOK_LIST,
+  ]);
   if (options.includeInactive) {
     return merged;
   }
@@ -247,10 +258,13 @@ export async function getPlaybook(
   options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookDetail> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  const detail = sessionPlaybookDetailById[id] ?? MOCK_PLAYBOOK_DETAIL_BY_ID[id];
-  if (!detail) {
+  const raw = sessionPlaybookDetailById[id] ?? MOCK_PLAYBOOK_DETAIL_BY_ID[id];
+  if (!raw) {
     throw new ApiError(404, "Playbook not found.");
   }
+  const detail = cannedDeactivations.has(id)
+    ? { ...raw, is_active: false }
+    : raw;
   if (!detail.is_active && !options.includeInactive) {
     throw new ApiError(404, "Playbook not found.");
   }
@@ -581,6 +595,7 @@ export function __resetMockState(): void {
   for (const k of Object.keys(sessionPlaybookDetailById)) {
     delete sessionPlaybookDetailById[k];
   }
+  cannedDeactivations.clear();
   demoSetupCompleted = false;
 }
 
@@ -1154,27 +1169,38 @@ export async function createPlaybook(
   return detail;
 }
 
+// Tracks deactivations layered over the canned MOCK_PLAYBOOK_LIST so
+// the demo can flip an active sample playbook to "deactivated" the same
+// way a real backend would.
+const cannedDeactivations = new Set<string>();
+
 export async function deactivatePlaybook(
   id: string,
   options: ApiOptions = {},
 ): Promise<PlaybookSummary> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  const detail = sessionPlaybookDetailById[id];
-  if (!detail) {
-    throw new ApiError(
-      404,
-      "Demo: only playbooks created during this session can be deactivated.",
-    );
+  const sessionDetail = sessionPlaybookDetailById[id];
+  if (sessionDetail) {
+    sessionDetail.is_active = false;
+    sessionDetail.updated_at = new Date().toISOString();
+    const idx = sessionPlaybookList.findIndex((p) => p.id === id);
+    if (idx >= 0) {
+      sessionPlaybookList[idx] = {
+        ...sessionPlaybookList[idx],
+        is_active: false,
+        updated_at: sessionDetail.updated_at,
+      };
+    }
+    return { ...sessionPlaybookList[idx] };
   }
-  detail.is_active = false;
-  detail.updated_at = new Date().toISOString();
-  const idx = sessionPlaybookList.findIndex((p) => p.id === id);
-  if (idx >= 0) {
-    sessionPlaybookList[idx] = {
-      ...sessionPlaybookList[idx],
-      is_active: false,
-      updated_at: detail.updated_at,
-    };
+  const canned = MOCK_PLAYBOOK_LIST.find((p) => p.id === id);
+  if (!canned) {
+    throw new ApiError(404, "Playbook not found.");
   }
-  return { ...sessionPlaybookList[idx] };
+  cannedDeactivations.add(id);
+  return {
+    ...canned,
+    is_active: false,
+    updated_at: new Date().toISOString(),
+  };
 }

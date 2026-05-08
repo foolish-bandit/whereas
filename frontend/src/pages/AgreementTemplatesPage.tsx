@@ -117,7 +117,7 @@ export default function AgreementTemplatesPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="w-fit rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas disabled:opacity-50"
+            className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-fit sm:py-1.5"
             onClick={onCreate}
             disabled={creating || !name.trim()}
           >
