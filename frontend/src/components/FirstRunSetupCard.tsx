@@ -137,7 +137,7 @@ export default function FirstRunSetupCard({
         <div className="mt-4">
           <Link
             to="/contracts"
-            className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring"
+            className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
           >
             Go to contracts
           </Link>
@@ -232,7 +232,7 @@ export default function FirstRunSetupCard({
           <button
             type="submit"
             disabled={submitState.kind === "submitting"}
-            className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
           >
             {submitState.kind === "submitting"
               ? "Setting up…"

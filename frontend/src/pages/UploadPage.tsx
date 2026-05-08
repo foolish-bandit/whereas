@@ -76,17 +76,17 @@ export default function UploadPage() {
             · stored with id{" "}
             <span className="font-mono text-xs">{state.result.id}</span>
           </p>
-          <div className="mt-4 flex flex-wrap gap-3">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Link
               to={`/contracts/${state.result.id}`}
-              className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring"
+              className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
             >
               Open contract workspace
             </Link>
             <button
               type="button"
               onClick={reset}
-              className="inline-flex items-center rounded border border-rule bg-canvas px-3 py-1.5 text-sm font-medium text-ink hover:border-rule-strong"
+              className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-rule-strong sm:w-auto sm:py-1.5"
             >
               Upload another
             </button>
@@ -153,11 +153,11 @@ export default function UploadPage() {
           />
         )}
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <button
             type="submit"
             disabled={!file || state.kind === "submitting"}
-            className="inline-flex items-center rounded border border-ink bg-ink px-4 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-4 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
           >
             {state.kind === "submitting" ? "Uploading…" : "Upload contract"}
           </button>

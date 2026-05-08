@@ -65,24 +65,24 @@ export default function SettingsPage() {
       {demo && (
         <div className="mt-4 max-w-2xl rounded-lg border border-info-ring bg-info-soft p-4 text-sm text-info">
           <p>
-            This deployment is running in demo mode with mock data. The
-            development user ID is not used; you can leave it blank.
+            This deployment is running in demo mode with mock data. Setup,
+            uploads, and authoring flows are simulated in the browser; nothing
+            leaves this tab. The development user ID is not used.
           </p>
         </div>
       )}
 
-      {!demo && (
-        <div className="mt-6 max-w-2xl">
-          <FirstRunSetupCard
-            hasDevUser={stored !== null}
-            onCompleted={() => {
-              setValue(getDevUserId() ?? "");
-              setStored(getDevUserId());
-            }}
-          />
-        </div>
-      )}
+      <div className="mt-6 max-w-2xl">
+        <FirstRunSetupCard
+          hasDevUser={stored !== null}
+          onCompleted={() => {
+            setValue(getDevUserId() ?? "");
+            setStored(getDevUserId());
+          }}
+        />
+      </div>
 
+      {!demo && (
       <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5">
         <h2 className="text-sm font-medium text-ink">Development user ID</h2>
         <p className="mt-1 text-xs text-ink-muted">
@@ -107,17 +107,17 @@ export default function SettingsPage() {
           {saved && !error && (
             <p className="text-sm text-success">Saved.</p>
           )}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
             <button
               type="submit"
-              className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-canvas hover:bg-accent-ring"
+              className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
             >
               Save
             </button>
             <button
               type="button"
               onClick={onClear}
-              className="inline-flex items-center rounded border border-rule bg-canvas px-3 py-1.5 text-sm font-medium text-ink hover:border-rule-strong"
+              className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-rule-strong sm:w-auto sm:py-1.5"
             >
               Clear
             </button>
@@ -134,6 +134,7 @@ export default function SettingsPage() {
           </p>
         </div>
       </div>
+      )}
 
       <BrowserCapabilitiesCard />
 

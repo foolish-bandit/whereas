@@ -70,7 +70,7 @@ export default function DocumentViewer({
           <div className="flex items-center gap-2">{rightSlot}</div>
         )}
       </div>
-      <div className="max-h-[70vh] overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:max-h-[calc(100vh-13rem)]">
+      <div className="max-h-mobile-viewer overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:max-h-[calc(100vh-13rem)]">
         <pre className="whitespace-pre-wrap break-words font-serif text-[15px] leading-relaxed text-ink">
           {split.kind === "valid" ? (
             <>

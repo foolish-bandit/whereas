@@ -249,7 +249,7 @@ export default function ReviewPanel({
             playbookListState.kind !== "loaded" ||
             playbookListState.playbooks.length === 0
           }
-          className="inline-flex items-center rounded border border-ink bg-ink px-3 py-1.5 text-xs font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-xs font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
         >
           {activeRun.kind === "running" ? "Running…" : "Run review and save"}
         </button>

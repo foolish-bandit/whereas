@@ -4,19 +4,50 @@ import { Link } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
-import { ApiError, MissingDevUserError, getPlaybooks } from "../lib/api";
+import {
+  ApiError,
+  MissingDevUserError,
+  PlaybookValidationError,
+  createPlaybook,
+  getPlaybooks,
+  validatePlaybook,
+} from "../lib/api";
 import { formatDate } from "../lib/format";
-import type { PlaybookSummary } from "../types/playbooks";
+import type {
+  PlaybookSummary,
+  PlaybookValidateResponse,
+} from "../types/playbooks";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "loaded"; playbooks: PlaybookSummary[] }
   | { kind: "error"; title: string; description: string };
 
+const STARTER_YAML = `name: "Example NDA Playbook"
+description: "Starter rules — edit to taste."
+version: "1.0"
+jurisdiction: "California"
+contract_type: "mutual_nda"
+
+rules:
+  - id: "confidentiality-required"
+    title: "Confidentiality clause should be present"
+    clause_type: "confidentiality"
+    severity: "high"
+    rule_type: "required_clause"
+  - id: "governing-law-california"
+    title: "Governing law should be California"
+    clause_type: "governing_law"
+    severity: "medium"
+    rule_type: "preferred_value"
+    expected_value: "California"
+`;
+
 export default function PlaybooksPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [includeInactive, setIncludeInactive] = useState<boolean>(false);
   const [search, setSearch] = useState<string>("");
+  const [authorOpen, setAuthorOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,6 +94,15 @@ export default function PlaybooksPage() {
     });
   }, [state, search]);
 
+  function onCreated(summary: PlaybookSummary) {
+    setState((prev) =>
+      prev.kind === "loaded"
+        ? { kind: "loaded", playbooks: [summary, ...prev.playbooks] }
+        : prev,
+    );
+    setAuthorOpen(false);
+  }
+
   return (
     <div>
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
@@ -75,7 +115,22 @@ export default function PlaybooksPage() {
             it does not provide legal advice.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setAuthorOpen((v) => !v)}
+          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
+          aria-expanded={authorOpen}
+        >
+          {authorOpen ? "Close editor" : "New playbook"}
+        </button>
       </div>
+
+      {authorOpen && (
+        <PlaybookAuthor
+          onCreated={onCreated}
+          onCancel={() => setAuthorOpen(false)}
+        />
+      )}
 
       {state.kind === "loaded" && state.playbooks.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -267,5 +322,163 @@ function StatusPill({ active }: { active: boolean }) {
     <span className="inline-flex items-center rounded-full border border-rule bg-canvas-muted px-2 py-0.5 text-[11px] font-medium text-ink-subtle">
       Deactivated
     </span>
+  );
+}
+
+interface PlaybookAuthorProps {
+  onCreated: (summary: PlaybookSummary) => void;
+  onCancel: () => void;
+}
+
+type AuthorState =
+  | { kind: "idle" }
+  | { kind: "validating" }
+  | { kind: "validated"; preview: PlaybookValidateResponse }
+  | { kind: "creating" }
+  | { kind: "error"; message: string; issues?: string[] };
+
+function PlaybookAuthor({ onCreated, onCancel }: PlaybookAuthorProps) {
+  const [yaml, setYaml] = useState(STARTER_YAML);
+  const [state, setState] = useState<AuthorState>({ kind: "idle" });
+
+  function handleError(err: unknown): AuthorState {
+    if (err instanceof PlaybookValidationError) {
+      return {
+        kind: "error",
+        message: "Validation failed.",
+        issues: err.issues.map((i) =>
+          i.path ? `${i.path}: ${i.message}` : i.message,
+        ),
+      };
+    }
+    if (err instanceof MissingDevUserError) {
+      return {
+        kind: "error",
+        message:
+          "Set a development user ID in Settings before creating a playbook.",
+      };
+    }
+    if (err instanceof ApiError) {
+      return { kind: "error", message: err.message };
+    }
+    return { kind: "error", message: "An unexpected error occurred." };
+  }
+
+  async function onValidate() {
+    setState({ kind: "validating" });
+    try {
+      const preview = await validatePlaybook(yaml);
+      setState({ kind: "validated", preview });
+    } catch (err) {
+      setState(handleError(err));
+    }
+  }
+
+  async function onCreate() {
+    setState({ kind: "creating" });
+    try {
+      const detail = await createPlaybook(yaml);
+      onCreated({
+        id: detail.id,
+        name: detail.name,
+        description: detail.description,
+        jurisdiction: detail.jurisdiction,
+        contract_type: detail.contract_type,
+        version: detail.version,
+        is_active: detail.is_active,
+        rule_count: detail.rule_count,
+        created_at: detail.created_at,
+        updated_at: detail.updated_at,
+      });
+    } catch (err) {
+      setState(handleError(err));
+    }
+  }
+
+  return (
+    <section
+      aria-label="New playbook"
+      className="mb-6 rounded-lg border border-rule bg-canvas p-4 sm:p-5"
+    >
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-medium text-ink">New playbook</h2>
+        <p className="text-xs text-ink-subtle">
+          Paste or edit YAML below. Validate first to preview the parsed rules.
+        </p>
+      </header>
+      <textarea
+        value={yaml}
+        onChange={(e) => {
+          setYaml(e.target.value);
+          if (state.kind !== "idle") setState({ kind: "idle" });
+        }}
+        spellCheck={false}
+        rows={14}
+        aria-label="Playbook YAML"
+        className="mt-3 block w-full resize-y rounded border border-rule bg-canvas-subtle px-3 py-2 font-mono text-xs leading-relaxed text-ink"
+      />
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <button
+          type="button"
+          onClick={onValidate}
+          disabled={state.kind === "validating" || state.kind === "creating"}
+          className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-rule-strong disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
+        >
+          {state.kind === "validating" ? "Validating…" : "Validate"}
+        </button>
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={state.kind === "creating" || state.kind === "validating"}
+          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
+        >
+          {state.kind === "creating" ? "Creating…" : "Create playbook"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink-muted hover:text-ink sm:w-auto sm:py-1.5"
+        >
+          Cancel
+        </button>
+      </div>
+
+      {state.kind === "validated" && (
+        <div
+          className="mt-3 rounded border border-success-ring bg-success-soft px-3 py-2 text-xs text-ink-muted"
+          role="status"
+        >
+          <p className="font-medium text-success">
+            Validated · {state.preview.rule_count} rule
+            {state.preview.rule_count === 1 ? "" : "s"}
+          </p>
+          <p className="mt-0.5 text-ink-muted">
+            <span className="font-medium text-ink">{state.preview.name}</span>
+            {state.preview.contract_type
+              ? ` · ${state.preview.contract_type}`
+              : ""}
+            {state.preview.jurisdiction
+              ? ` · ${state.preview.jurisdiction}`
+              : ""}
+          </p>
+        </div>
+      )}
+
+      {state.kind === "error" && (
+        <div
+          className="mt-3 rounded border border-danger-ring bg-danger-soft px-3 py-2 text-xs text-danger"
+          role="alert"
+        >
+          <p className="font-medium">{state.message}</p>
+          {state.issues && state.issues.length > 0 && (
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+              {state.issues.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

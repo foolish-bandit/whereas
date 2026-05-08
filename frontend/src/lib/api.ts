@@ -398,12 +398,7 @@ export async function downloadContract(
 export async function getSetupStatus(
   options: ApiOptions = {},
 ): Promise<SetupStatus> {
-  if (isDemoMode()) {
-    throw new ApiError(
-      400,
-      "Setup is not available in demo mode.",
-    );
-  }
+  if (isDemoMode()) return mockApi.getSetupStatus(options);
   return callPublic<SetupStatus>("/api/setup/status", { method: "GET" }, options);
 }
 
@@ -411,12 +406,7 @@ export async function createDevSetup(
   payload: CreateDevSetupRequest = {},
   options: ApiOptions = {},
 ): Promise<CreateDevSetupResponse> {
-  if (isDemoMode()) {
-    throw new ApiError(
-      400,
-      "Setup is not available in demo mode.",
-    );
-  }
+  if (isDemoMode()) return mockApi.createDevSetup(payload, options);
   const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -557,12 +547,7 @@ export async function validatePlaybook(
   yamlSource: string,
   options: ApiOptions = {},
 ): Promise<PlaybookValidateResponse> {
-  if (isDemoMode()) {
-    throw new ApiError(
-      400,
-      "Playbook validation is not available in demo mode.",
-    );
-  }
+  if (isDemoMode()) return mockApi.validatePlaybook(yamlSource, options);
   return dispatchPlaybookWrite<PlaybookValidateResponse>(
     "/api/playbooks/validate",
     { yaml_source: yamlSource },
@@ -574,12 +559,7 @@ export async function createPlaybook(
   yamlSource: string,
   options: ApiOptions = {},
 ): Promise<PlaybookDetail> {
-  if (isDemoMode()) {
-    throw new ApiError(
-      400,
-      "Playbook creation is not available in demo mode.",
-    );
-  }
+  if (isDemoMode()) return mockApi.createPlaybook(yamlSource, options);
   const data = await dispatchPlaybookWrite<PlaybookDetail>(
     "/api/playbooks",
     { yaml_source: yamlSource },
@@ -592,12 +572,7 @@ export async function deactivatePlaybook(
   id: string,
   options: ApiOptions = {},
 ): Promise<PlaybookSummary> {
-  if (isDemoMode()) {
-    throw new ApiError(
-      400,
-      "Playbook deactivation is not available in demo mode.",
-    );
-  }
+  if (isDemoMode()) return mockApi.deactivatePlaybook(id, options);
   const data = await call<PlaybookSummary>(
     `/api/playbooks/${encodeURIComponent(id)}`,
     { method: "DELETE" },

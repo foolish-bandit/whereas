@@ -42,8 +42,18 @@ import type {
   ReviewRunSummary,
   ReviewerFindingStatus,
 } from "../types/findings";
-import type { PlaybookDetail, PlaybookSummary } from "../types/playbooks";
+import type {
+  PlaybookDetail,
+  PlaybookRuleSummary,
+  PlaybookSummary,
+  PlaybookValidateResponse,
+} from "../types/playbooks";
 import type { PlaybookReviewResult } from "../types/review";
+import type {
+  CreateDevSetupRequest,
+  CreateDevSetupResponse,
+  SetupStatus,
+} from "../types/setup";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -221,14 +231,26 @@ export async function downloadContract(
   };
 }
 
+function _applyCannedDeactivations<T extends { id: string; is_active: boolean }>(
+  rows: T[],
+): T[] {
+  return rows.map((p) =>
+    cannedDeactivations.has(p.id) ? { ...p, is_active: false } : p,
+  );
+}
+
 export async function getPlaybooks(
   options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookSummary[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
+  const merged = _applyCannedDeactivations([
+    ...sessionPlaybookList,
+    ...MOCK_PLAYBOOK_LIST,
+  ]);
   if (options.includeInactive) {
-    return MOCK_PLAYBOOK_LIST;
+    return merged;
   }
-  return MOCK_PLAYBOOK_LIST.filter((p) => p.is_active);
+  return merged.filter((p) => p.is_active);
 }
 
 export async function getPlaybook(
@@ -236,10 +258,13 @@ export async function getPlaybook(
   options: ApiOptions & { includeInactive?: boolean } = {},
 ): Promise<PlaybookDetail> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  const detail = MOCK_PLAYBOOK_DETAIL_BY_ID[id];
-  if (!detail) {
+  const raw = sessionPlaybookDetailById[id] ?? MOCK_PLAYBOOK_DETAIL_BY_ID[id];
+  if (!raw) {
     throw new ApiError(404, "Playbook not found.");
   }
+  const detail = cannedDeactivations.has(id)
+    ? { ...raw, is_active: false }
+    : raw;
   if (!detail.is_active && !options.includeInactive) {
     throw new ApiError(404, "Playbook not found.");
   }
@@ -566,6 +591,12 @@ export function __resetMockState(): void {
     delete sessionFindingsById[k];
   }
   sessionClauseTemplates.length = 0;
+  sessionPlaybookList.length = 0;
+  for (const k of Object.keys(sessionPlaybookDetailById)) {
+    delete sessionPlaybookDetailById[k];
+  }
+  cannedDeactivations.clear();
+  demoSetupCompleted = false;
 }
 
 const DEMO_CLAUSE_TEMPLATES: ClauseTemplate[] = [
@@ -927,4 +958,249 @@ export async function deleteAgreementTemplateVariable(
   demoAgreementTemplateVariables[templateId] = list.filter(
     (v) => v.id !== variableId,
   );
+}
+
+// ---------------------------------------------------------------------------
+// First-run setup (demo mode)
+//
+// The real backend exposes /api/setup/{status,dev} so a fresh deployment
+// can bootstrap an organization + dev user. Demo mode reproduces the
+// surface so the FirstRunSetupCard renders the same way it would
+// against a real, never-set-up backend — and the user can click through
+// to see the success card.
+// ---------------------------------------------------------------------------
+
+let demoSetupCompleted = false;
+const DEMO_DEV_USER_ID = "00000000-0000-4000-8000-000000000001";
+
+export async function getSetupStatus(
+  options: ApiOptions = {},
+): Promise<SetupStatus> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (demoSetupCompleted) {
+    return {
+      setup_required: false,
+      organization_count: 1,
+      user_count: 1,
+      dev_mode_enabled: true,
+      message: "Demo workspace already initialized.",
+    };
+  }
+  return {
+    setup_required: true,
+    organization_count: 0,
+    user_count: 0,
+    dev_mode_enabled: true,
+    message:
+      "Demo workspace. Setup is simulated — nothing leaves the browser.",
+  };
+}
+
+export async function createDevSetup(
+  payload: CreateDevSetupRequest = {},
+  options: ApiOptions = {},
+): Promise<CreateDevSetupResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  demoSetupCompleted = true;
+  return {
+    organization_id: DEMO_ORG_ID,
+    user_id: DEMO_DEV_USER_ID,
+    dev_user_id: DEMO_DEV_USER_ID,
+    organization_name: payload.organization_name?.trim() || "Demo Workspace",
+    user_email: payload.user_email?.trim() || "demo@whereas.local",
+    message:
+      "Demo workspace created. This is a simulated bootstrap — no real " +
+      "data was stored.",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Playbook authoring (demo mode)
+//
+// The real app exposes validate/create/deactivate over /api/playbooks.
+// Demo mode runs a tiny structural validator over the YAML so the
+// authoring surface is exercised without shipping a full YAML parser
+// in the demo bundle. Created playbooks live in module-scoped memory
+// and are merged into the playbook list returned by `getPlaybooks`.
+// ---------------------------------------------------------------------------
+
+const sessionPlaybookList: PlaybookSummary[] = [];
+const sessionPlaybookDetailById: Record<string, PlaybookDetail> = {};
+
+const NAME_RE = /^name\s*:\s*(.+?)\s*$/m;
+const DESCRIPTION_RE = /^description\s*:\s*(.+?)\s*$/m;
+const VERSION_RE = /^version\s*:\s*['"]?([\w.-]+)['"]?\s*$/m;
+const JURISDICTION_RE = /^jurisdiction\s*:\s*(.+?)\s*$/m;
+const CONTRACT_TYPE_RE = /^contract_type\s*:\s*(.+?)\s*$/m;
+
+function _stripQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function _parsePlaybookYaml(yamlSource: string): {
+  name: string;
+  description: string | null;
+  version: string;
+  jurisdiction: string | null;
+  contract_type: string | null;
+  rules: PlaybookRuleSummary[];
+} | null {
+  // The demo doesn't ship a YAML parser. We surface the most-common
+  // top-level fields with regex so the authoring flow renders something
+  // believable. Returns null when the document doesn't look like a
+  // playbook (no name, no rules block).
+  const nameMatch = NAME_RE.exec(yamlSource);
+  if (!nameMatch) return null;
+  const name = _stripQuotes(nameMatch[1]);
+  const description = DESCRIPTION_RE.exec(yamlSource)?.[1];
+  const version = VERSION_RE.exec(yamlSource)?.[1] ?? "1.0";
+  const jurisdiction = JURISDICTION_RE.exec(yamlSource)?.[1];
+  const contractType = CONTRACT_TYPE_RE.exec(yamlSource)?.[1];
+  // Each rule is identified by an `- id:` line. We then look forward for
+  // a `title:` and `severity:` to fill out the row.
+  const rules: PlaybookRuleSummary[] = [];
+  const ruleRe = /-\s*id\s*:\s*([\w.-]+)\s*\n([\s\S]*?)(?=\n\s*-\s*id\s*:|\Z)/g;
+  let match: RegExpExecArray | null;
+  while ((match = ruleRe.exec(yamlSource)) !== null) {
+    const ruleId = match[1].trim();
+    const body = match[2];
+    const title = /title\s*:\s*(.+?)\s*$/m.exec(body)?.[1] ?? ruleId;
+    const ruleType =
+      /rule_type\s*:\s*(.+?)\s*$/m.exec(body)?.[1] ?? "required_clause";
+    const clauseType =
+      /clause_type\s*:\s*(.+?)\s*$/m.exec(body)?.[1] ?? "general";
+    const severity =
+      /severity\s*:\s*(.+?)\s*$/m.exec(body)?.[1] ?? "medium";
+    rules.push({
+      id: ruleId,
+      title: _stripQuotes(title),
+      rule_type: _stripQuotes(ruleType),
+      clause_type: _stripQuotes(clauseType),
+      severity: _stripQuotes(severity),
+    });
+  }
+  if (rules.length === 0) return null;
+  return {
+    name,
+    description: description ? _stripQuotes(description) : null,
+    version,
+    jurisdiction: jurisdiction ? _stripQuotes(jurisdiction) : null,
+    contract_type: contractType ? _stripQuotes(contractType) : null,
+    rules,
+  };
+}
+
+export async function validatePlaybook(
+  yamlSource: string,
+  options: ApiOptions = {},
+): Promise<PlaybookValidateResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const parsed = _parsePlaybookYaml(yamlSource);
+  if (!parsed) {
+    throw new ApiError(
+      400,
+      "Demo validator: YAML must define `name:` and at least one `- id:` rule.",
+    );
+  }
+  return {
+    ok: true,
+    schema_version: "demo",
+    name: parsed.name,
+    description: parsed.description,
+    jurisdiction: parsed.jurisdiction,
+    contract_type: parsed.contract_type,
+    version: parsed.version,
+    rule_count: parsed.rules.length,
+    rules: parsed.rules,
+  };
+}
+
+export async function createPlaybook(
+  yamlSource: string,
+  options: ApiOptions = {},
+): Promise<PlaybookDetail> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const parsed = _parsePlaybookYaml(yamlSource);
+  if (!parsed) {
+    throw new ApiError(
+      400,
+      "Demo validator: YAML must define `name:` and at least one `- id:` rule.",
+    );
+  }
+  const now = new Date().toISOString();
+  const id = `demo-playbook-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  const detail: PlaybookDetail = {
+    id,
+    name: parsed.name,
+    description: parsed.description,
+    jurisdiction: parsed.jurisdiction,
+    contract_type: parsed.contract_type,
+    version: parsed.version,
+    is_active: true,
+    rule_count: parsed.rules.length,
+    created_at: now,
+    updated_at: now,
+    yaml_source: yamlSource,
+    parsed_rules: { rules: parsed.rules },
+    rules: parsed.rules,
+  };
+  sessionPlaybookDetailById[id] = detail;
+  sessionPlaybookList.unshift({
+    id: detail.id,
+    name: detail.name,
+    description: detail.description,
+    jurisdiction: detail.jurisdiction,
+    contract_type: detail.contract_type,
+    version: detail.version,
+    is_active: detail.is_active,
+    rule_count: detail.rule_count,
+    created_at: detail.created_at,
+    updated_at: detail.updated_at,
+  });
+  return detail;
+}
+
+// Tracks deactivations layered over the canned MOCK_PLAYBOOK_LIST so
+// the demo can flip an active sample playbook to "deactivated" the same
+// way a real backend would.
+const cannedDeactivations = new Set<string>();
+
+export async function deactivatePlaybook(
+  id: string,
+  options: ApiOptions = {},
+): Promise<PlaybookSummary> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const sessionDetail = sessionPlaybookDetailById[id];
+  if (sessionDetail) {
+    sessionDetail.is_active = false;
+    sessionDetail.updated_at = new Date().toISOString();
+    const idx = sessionPlaybookList.findIndex((p) => p.id === id);
+    if (idx >= 0) {
+      sessionPlaybookList[idx] = {
+        ...sessionPlaybookList[idx],
+        is_active: false,
+        updated_at: sessionDetail.updated_at,
+      };
+    }
+    return { ...sessionPlaybookList[idx] };
+  }
+  const canned = MOCK_PLAYBOOK_LIST.find((p) => p.id === id);
+  if (!canned) {
+    throw new ApiError(404, "Playbook not found.");
+  }
+  cannedDeactivations.add(id);
+  return {
+    ...canned,
+    is_active: false,
+    updated_at: new Date().toISOString(),
+  };
 }

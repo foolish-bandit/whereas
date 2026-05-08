@@ -119,7 +119,7 @@ export default function ClausesPanel({
           No clauses match the current filters.
         </p>
       ) : (
-        <ul className="max-h-[70vh] divide-y divide-rule overflow-y-auto lg:max-h-[calc(100vh-22rem)]">
+        <ul className="max-h-mobile-viewer divide-y divide-rule overflow-y-auto lg:max-h-[calc(100vh-22rem)]">
           {filtered.map((clause) => {
             const key = clauseSelectionKey(clause);
             const isSelected = key === selectedKey;

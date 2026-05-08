@@ -3,7 +3,12 @@ import { Link, useParams } from "react-router-dom";
 
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
-import { ApiError, MissingDevUserError, getPlaybook } from "../lib/api";
+import {
+  ApiError,
+  MissingDevUserError,
+  deactivatePlaybook,
+  getPlaybook,
+} from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import type {
   PlaybookDetail,
@@ -16,9 +21,17 @@ type LoadState =
   | { kind: "loaded"; playbook: PlaybookDetail }
   | { kind: "error"; title: string; description: string };
 
+type DeactivateState =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | { kind: "error"; message: string };
+
 export default function PlaybookDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [deactivate, setDeactivate] = useState<DeactivateState>({
+    kind: "idle",
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -91,15 +104,47 @@ export default function PlaybookDetailPage() {
   }
 
   const { playbook } = state;
+
+  async function onDeactivate() {
+    if (!playbook.is_active) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Deactivate "${playbook.name}"? It will be hidden from the active list and cannot be run against new contracts.`,
+      )
+    ) {
+      return;
+    }
+    setDeactivate({ kind: "submitting" });
+    try {
+      const updated = await deactivatePlaybook(playbook.id);
+      setState({
+        kind: "loaded",
+        playbook: { ...playbook, is_active: updated.is_active, updated_at: updated.updated_at },
+      });
+      setDeactivate({ kind: "idle" });
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError
+          ? err.message
+          : err instanceof ApiError
+            ? err.message
+            : "Could not deactivate the playbook.";
+      setDeactivate({ kind: "error", message });
+    }
+  }
+
   return (
     <div>
       <Link to="/playbooks" className="text-sm text-ink-muted hover:text-ink">
         ← Back to playbooks
       </Link>
 
-      <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+      <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
-          <h1 className="font-serif text-2xl text-ink">{playbook.name}</h1>
+          <h1 className="break-words font-serif text-xl text-ink sm:text-2xl">
+            {playbook.name}
+          </h1>
           {playbook.description && (
             <p className="mt-1 max-w-3xl text-sm text-ink-muted">
               {playbook.description}
@@ -122,6 +167,25 @@ export default function PlaybookDetailPage() {
             <span>Updated {formatDateTime(playbook.updated_at)}</span>
           </div>
         </div>
+        {playbook.is_active && (
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+            <button
+              type="button"
+              onClick={onDeactivate}
+              disabled={deactivate.kind === "submitting"}
+              className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-danger-ring hover:text-danger disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
+            >
+              {deactivate.kind === "submitting"
+                ? "Deactivating…"
+                : "Deactivate"}
+            </button>
+            {deactivate.kind === "error" && (
+              <p className="max-w-xs text-xs text-danger sm:text-right">
+                {deactivate.message}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
