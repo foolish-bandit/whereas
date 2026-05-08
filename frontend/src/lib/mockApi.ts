@@ -18,6 +18,7 @@ import {
 } from "./mockData";
 import type {
   Clause,
+  ContractArtifact,
   ContractDetail,
   ContractListItem,
   ContractMarkdownSnapshot,
@@ -111,6 +112,35 @@ export async function getContractMarkdown(
     throw new ApiError(404, "Contract not found.");
   }
   return MOCK_MARKDOWN_BY_CONTRACT_ID[id] ?? null;
+}
+
+export async function getContractArtifacts(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractArtifact[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[id] ?? MOCK_DETAIL_BY_ID[id];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  // Demo mode synthesizes a single original_upload artifact off the
+  // contract row so the workspace can render the metadata strip.
+  return [
+    {
+      id: `${id}-artifact`,
+      contract_id: id,
+      artifact_type: "original_upload",
+      storage_backend: "s3",
+      filename: `${detail.title}.${detail.mime_type === "application/pdf" ? "pdf" : "docx"}`,
+      mime_type: detail.mime_type,
+      file_hash_sha256: detail.file_hash_sha256,
+      size_bytes: null,
+      source: "user_upload",
+      is_official: true,
+      created_at: detail.created_at,
+      metadata_json: null,
+    },
+  ];
 }
 
 export async function uploadContract(

@@ -30,6 +30,7 @@ from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     Clause,
     Contract,
+    ContractArtifact,
     ContractMarkdownSnapshot,
     ContractStatus,
     ExtractedField,
@@ -100,6 +101,7 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             ExtractedField.__table__,
             Clause.__table__,
             ContractMarkdownSnapshot.__table__,
+            ContractArtifact.__table__,
         ]
     else:
         engine = create_async_engine(_container_async_url(postgres_container), echo=False)
@@ -1075,3 +1077,144 @@ async def test_get_markdown_skips_failed_snapshots(
         headers=_headers(user_org.user),
     )
     assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Contract artifacts
+# --------------------------------------------------------------------------
+
+
+async def test_upload_creates_original_upload_artifact(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="vendor.pdf"),
+        data={"title": "Vendor MSA"},
+    )
+    assert upload.status_code == 201
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    rows = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    artifact = rows[0]
+    assert artifact.artifact_type == "original_upload"
+    assert artifact.is_official is True
+    assert artifact.source == "user_upload"
+    assert artifact.storage_backend == "s3"
+    assert artifact.storage_key == f"documents/{contract_id}.enc"
+    assert artifact.filename == "vendor.pdf"
+    assert artifact.mime_type == "application/pdf"
+    assert artifact.file_hash_sha256 == hashlib.sha256(_PDF_BYTES).hexdigest()
+    assert artifact.size_bytes == len(_PDF_BYTES)
+    assert artifact.organization_id == user_org.org.id
+    assert artifact.created_by == user_org.user.id
+
+
+async def test_list_artifacts_returns_metadata_for_org(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="vendor.pdf"),
+    )
+    contract_id = upload.json()["id"]
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["artifact_type"] == "original_upload"
+    assert row["is_official"] is True
+    assert row["filename"] == "vendor.pdf"
+    assert row["mime_type"] == "application/pdf"
+    assert row["source"] == "user_upload"
+    assert row["storage_backend"] == "s3"
+    # Listing is metadata-only — never expose the raw object key.
+    assert "storage_key" not in row
+    _assert_no_secrets(rows)
+
+
+async def test_list_artifacts_orders_newest_first(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    later = ContractArtifact(
+        organization_id=user_org.org.id,
+        contract_id=contract_id,
+        artifact_type="signed_pdf",
+        storage_backend="s3",
+        storage_key=f"documents/{contract_id}.signed.enc",
+        filename="signed.pdf",
+        mime_type="application/pdf",
+        is_official=True,
+        source="docuseal",
+        created_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    db_session.add(later)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    rows = response.json()
+    assert [r["artifact_type"] for r in rows] == [
+        "signed_pdf",
+        "original_upload",
+    ]
+
+
+async def test_list_artifacts_cross_org_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user_org(db_session, email="art-a@example.com")
+    other = await _create_user_org(db_session, email="art-b@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(owner.user),
+        files=_file_tuple(),
+    )
+    contract_id = upload.json()["id"]
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts",
+        headers=_headers(other.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_list_artifacts_requires_dev_user_header(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(f"/api/contracts/{uuid.uuid4()}/artifacts")
+    assert response.status_code == 401

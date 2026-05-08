@@ -30,6 +30,21 @@ const CONTRACT_DETAIL = {
   clauses: [],
 };
 
+const ARTIFACT = {
+  id: "44444444-4444-4444-8444-444444444444",
+  contract_id: CONTRACT_ID,
+  artifact_type: "original_upload",
+  storage_backend: "s3",
+  filename: "vendor-msa.pdf",
+  mime_type: "application/pdf",
+  file_hash_sha256: "0".repeat(64),
+  size_bytes: 12345,
+  source: "user_upload",
+  is_official: true,
+  created_at: "2026-05-01T00:00:00Z",
+  metadata_json: null,
+};
+
 const SNAPSHOT = {
   id: "33333333-3333-4333-8333-333333333333",
   contract_id: CONTRACT_ID,
@@ -51,15 +66,20 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function setupFetch(
   fetchMock: Mock,
-  options: { snapshot?: object | null } = {},
+  options: { snapshot?: object | null; artifacts?: object[] } = {},
 ) {
   const snapshot =
     "snapshot" in options ? options.snapshot ?? null : SNAPSHOT;
+  const artifacts =
+    "artifacts" in options ? options.artifacts ?? [] : [ARTIFACT];
   fetchMock.mockImplementation(async (url: string) => {
     if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
       return snapshot
         ? jsonResponse(snapshot)
         : jsonResponse({ detail: "not found" }, 404);
+    }
+    if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+      return jsonResponse(artifacts);
     }
     if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
       return jsonResponse(CONTRACT_DETAIL);
@@ -135,6 +155,28 @@ describe("ContractWorkspacePage markdown integration", () => {
       screen.getByRole("heading", { name: /original document text/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Some plain text body.")).toBeInTheDocument();
+  });
+
+  it("renders the original artifact metadata strip when an artifact is returned", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    const strip = await screen.findByTestId("original-artifact-strip");
+    expect(strip).toHaveTextContent(/original artifact/i);
+    expect(strip).toHaveTextContent(/official/i);
+    expect(strip).toHaveTextContent("vendor-msa.pdf");
+    expect(strip).toHaveTextContent(/pdf/i);
+  });
+
+  it("does not render the artifact strip when the artifacts list is empty", async () => {
+    setupFetch(fetchMock, { artifacts: [] });
+    renderPage();
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Workspace markdown",
+    });
+    expect(
+      screen.queryByTestId("original-artifact-strip"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the empty state when the contract has no markdown snapshot", async () => {

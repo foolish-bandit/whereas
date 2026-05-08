@@ -15,6 +15,7 @@ import {
   MissingDevUserError,
   downloadContract,
   getContract,
+  getContractArtifacts,
 } from "../lib/api";
 import { clauseHasValidSpan } from "../lib/clauses";
 import { fieldKey } from "../lib/fields";
@@ -27,6 +28,7 @@ import {
 } from "../lib/format";
 import type {
   Clause,
+  ContractArtifact,
   ContractDetail,
   ExtractedField,
 } from "../types/contracts";
@@ -64,6 +66,8 @@ export default function ContractWorkspacePage() {
     kind: "idle",
   });
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
+  const [originalArtifact, setOriginalArtifact] =
+    useState<ContractArtifact | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -101,6 +105,27 @@ export default function ContractWorkspacePage() {
           title: "Could not load contract",
           description: "An unexpected error occurred.",
         });
+      });
+    return () => controller.abort();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    const controller = new AbortController();
+    setOriginalArtifact(null);
+    getContractArtifacts(id, { signal: controller.signal })
+      .then((rows) => {
+        // Pick the most recent original_upload artifact. The list is
+        // already ordered newest-first by the backend.
+        const original =
+          rows.find((a) => a.artifact_type === "original_upload") ?? null;
+        setOriginalArtifact(original);
+      })
+      .catch(() => {
+        // Artifact metadata is a hint, not load-bearing — the contract
+        // workspace must remain usable even if the listing endpoint
+        // fails or the user lacks access. Swallow here; primary errors
+        // are surfaced via the contract load above.
       });
     return () => controller.abort();
   }, [id]);
@@ -231,6 +256,7 @@ export default function ContractWorkspacePage() {
         contract={state.contract}
         downloadState={downloadState}
         onDownload={onDownload}
+        originalArtifact={originalArtifact}
       />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -352,12 +378,14 @@ interface ContractHeaderProps {
   contract: ContractDetail;
   downloadState: DownloadState;
   onDownload: () => void;
+  originalArtifact: ContractArtifact | null;
 }
 
 function ContractHeader({
   contract,
   downloadState,
   onDownload,
+  originalArtifact,
 }: ContractHeaderProps) {
   return (
     <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
@@ -372,6 +400,9 @@ function ContractHeader({
           <span>Uploaded {formatDate(contract.created_at)}</span>
           <span>Updated {formatDateTime(contract.updated_at)}</span>
         </div>
+        {originalArtifact && (
+          <OriginalArtifactStrip artifact={originalArtifact} />
+        )}
       </div>
       <div className="flex flex-col items-end gap-2">
         <button
@@ -390,6 +421,36 @@ function ContractHeader({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function OriginalArtifactStrip({
+  artifact,
+}: {
+  artifact: ContractArtifact;
+}) {
+  // Whereas tracks the DOCX/PDF as the official legal artifact and the
+  // Markdown snapshot as the working representation. This strip is the
+  // small affordance in the workspace that makes the original artifact
+  // visible without redesigning the page.
+  return (
+    <div
+      className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
+      data-testid="original-artifact-strip"
+    >
+      <span className="font-medium text-ink">Original artifact</span>
+      {artifact.is_official && (
+        <span className="rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-canvas">
+          Official
+        </span>
+      )}
+      {artifact.filename && (
+        <span className="truncate" title={artifact.filename}>
+          {artifact.filename}
+        </span>
+      )}
+      {artifact.mime_type && <span>{mimeLabel(artifact.mime_type)}</span>}
     </div>
   );
 }

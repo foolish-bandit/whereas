@@ -65,6 +65,31 @@ export interface UploadContractResponse extends ContractListItem {
 }
 
 /**
+ * A stored file-like artifact tied to a contract. The original upload
+ * is recorded as `artifact_type === "original_upload"` with
+ * `is_official === true`. Future PRs surface generated DOCX, signed
+ * PDFs, redlines, and exhibits as additional artifact rows.
+ *
+ * The listing endpoint is metadata-only — `storage_key` is intentionally
+ * omitted from this type. Use the existing download endpoint to fetch
+ * the original artifact's bytes.
+ */
+export interface ContractArtifact {
+  id: string;
+  contract_id: string;
+  artifact_type: string;
+  storage_backend: string;
+  filename: string | null;
+  mime_type: string | null;
+  file_hash_sha256: string | null;
+  size_bytes: number | null;
+  source: string | null;
+  is_official: boolean;
+  created_at: string;
+  metadata_json: Record<string, unknown> | null;
+}
+
+/**
  * A persisted Markdown working snapshot for a contract. The DOCX or
  * PDF remains the original legal artifact; this is a lightweight
  * representation used for fast preview and search.
