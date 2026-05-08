@@ -685,3 +685,229 @@ class DeviationFinding(Base):
         Index("ix_deviation_findings_review_run_id", "review_run_id"),
         Index("ix_deviation_findings_severity", "severity"),
     )
+
+
+# ------------------------------------------------------------------
+# Agreement templates
+#
+# Whereas treats agreement templates (NDA / MSA / SOW / DPA / etc.) as
+# first-class CLM objects with the same dual-representation model as
+# contracts: an official original artifact (DOCX/PDF) plus a
+# lightweight Markdown working snapshot for fast preview and future
+# local-first sync. Templates also carry their own variable definitions
+# so a later PR can render filled DOCX agreements without touching this
+# foundation.
+#
+# Templates intentionally do NOT reuse ContractArtifact /
+# ContractMarkdownSnapshot — those are scoped to a contract via FK and
+# the semantics ("original_upload" vs "generated_docx", "preview" vs
+# "executed") diverge enough that overloading would be lossy. Keeping
+# the tables parallel is cheaper than carving out an artifact model
+# generic enough to hold both, and it leaves the contract path
+# untouched.
+# ------------------------------------------------------------------
+
+
+class AgreementTemplateStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class AgreementTemplate(Base):
+    """An uploaded agreement template (NDA / MSA / SOW / etc.)."""
+
+    __tablename__ = "agreement_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    # e.g. "NDA", "MSA", "SOW", "DPA", "Employment Agreement", "Lease",
+    # "Other". Free-form so customers can model their own taxonomy without
+    # a migration.
+    template_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=AgreementTemplateStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    artifacts: Mapped[list[AgreementTemplateArtifact]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+    markdown_snapshots: Mapped[list[AgreementTemplateMarkdownSnapshot]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+    variables: Mapped[list[AgreementTemplateVariable]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+
+
+class AgreementTemplateArtifact(Base):
+    """A stored file-like artifact tied to an agreement template.
+
+    The original upload is recorded as ``artifact_type='original_upload'``
+    with ``is_official=True``. Future PRs add ``generated_docx``,
+    ``preview_pdf``, and ``attachment`` rows.
+    """
+
+    __tablename__ = "agreement_template_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(1024))
+    filename: Mapped[str | None] = mapped_column(String(512))
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    file_hash_sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str | None] = mapped_column(String(64))
+    is_official: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    template: Mapped[AgreementTemplate] = relationship(back_populates="artifacts")
+
+    __table_args__ = (
+        Index(
+            "ix_agreement_template_artifacts_org_tmpl_type_created",
+            "organization_id",
+            "template_id",
+            "artifact_type",
+            "created_at",
+        ),
+    )
+
+
+class AgreementTemplateMarkdownSnapshot(Base):
+    """Lightweight Markdown working snapshot of a template upload."""
+
+    __tablename__ = "agreement_template_markdown_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    markdown_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # e.g. "original_upload"
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    converter_name: Mapped[str | None] = mapped_column(String(64))
+    converter_version: Mapped[str | None] = mapped_column(String(64))
+    # "ready", "failed"
+    conversion_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    conversion_warnings: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
+    template: Mapped[AgreementTemplate] = relationship(
+        back_populates="markdown_snapshots"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_agreement_template_markdown_org_tmpl_status_created",
+            "organization_id",
+            "template_id",
+            "conversion_status",
+            "created_at",
+        ),
+    )
+
+
+class AgreementTemplateVariable(Base):
+    """A user-defined fillable field on a template.
+
+    Variables are metadata only in this PR; a later PR uses them to
+    render filled DOCX agreements. Uniqueness is enforced per-template
+    on ``(template_id, key)`` so callers can address variables by key.
+    """
+
+    __tablename__ = "agreement_template_variables"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Stable machine identifier, e.g. "counterparty_name", "effective_date".
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    # e.g. "text", "date", "number", "money", "select", "boolean", "party",
+    # "address". Free-form to avoid pinning the variable taxonomy in v1.
+    variable_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    required: Mapped[bool] = mapped_column(default=False, nullable=False)
+    default_value: Mapped[str | None] = mapped_column(Text)
+    help_text: Mapped[str | None] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    template: Mapped[AgreementTemplate] = relationship(back_populates="variables")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id", "key", name="uq_agreement_template_variables_tmpl_key"
+        ),
+        Index(
+            "ix_agreement_template_variables_org_tmpl_key",
+            "organization_id",
+            "template_id",
+            "key",
+        ),
+    )
