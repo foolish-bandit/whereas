@@ -78,7 +78,7 @@ export default function UploadPage() {
           </p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Link
-              to={`/contracts/${state.result.id}`}
+              to={`/demo/contracts/${state.result.id}`}
               className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
             >
               Open contract workspace

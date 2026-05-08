@@ -6,7 +6,7 @@ export default function DevUserBanner() {
       <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="min-w-0">Set a development user ID to call the local API.</p>
         <Link
-          to="/settings"
+          to="/demo/settings"
           className="shrink-0 rounded border border-warning-ring bg-canvas px-2.5 py-1 text-xs font-medium text-warning hover:border-warning"
         >
           Open settings

@@ -1,13 +1,15 @@
 import { useEffect } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
+
+import { demoPath } from "../lib/routes";
 
 const NAV = [
-  { to: "/contracts", label: "Contracts" },
-  { to: "/playbooks", label: "Playbooks" },
-  { to: "/upload", label: "Upload" },
-  { to: "/clause-library", label: "Clause Library" },
-  { to: "/agreement-templates", label: "Agreement Templates" },
-  { to: "/settings", label: "Settings" },
+  { to: demoPath("/contracts"), label: "Contracts" },
+  { to: demoPath("/playbooks"), label: "Playbooks" },
+  { to: demoPath("/upload"), label: "Upload" },
+  { to: demoPath("/clause-library"), label: "Clause Library" },
+  { to: demoPath("/agreement-templates"), label: "Agreement Templates" },
+  { to: demoPath("/settings"), label: "Settings" },
 ];
 
 interface SidebarProps {
@@ -49,9 +51,13 @@ function DesktopSidebar() {
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-rule bg-canvas md:flex">
       <div className="flex h-14 items-center border-b border-rule px-5">
-        <span className="font-serif text-lg tracking-tight text-ink">
+        <Link
+          to="/"
+          className="font-serif text-lg tracking-tight text-ink hover:text-ink-muted"
+          aria-label="Whereas home"
+        >
           Whereas
-        </span>
+        </Link>
       </div>
       <NavList />
       <div className="border-t border-rule px-5 py-4 text-xs text-ink-subtle">
@@ -97,9 +103,14 @@ function MobileDrawer({
         ].join(" ")}
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-5">
-          <span className="font-serif text-lg tracking-tight text-ink">
+          <Link
+            to="/"
+            onClick={onClose}
+            className="font-serif text-lg tracking-tight text-ink hover:text-ink-muted"
+            aria-label="Whereas home"
+          >
             Whereas
-          </span>
+          </Link>
           <button
             type="button"
             onClick={onClose}

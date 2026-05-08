@@ -227,7 +227,7 @@ export default function ContractWorkspacePage() {
     return (
       <div>
         <Link
-          to="/contracts"
+          to="/demo/contracts"
           className="text-sm text-ink-muted hover:text-ink"
         >
           ← Back to contracts
@@ -243,7 +243,7 @@ export default function ContractWorkspacePage() {
     return (
       <div>
         <Link
-          to="/contracts"
+          to="/demo/contracts"
           className="text-sm text-ink-muted hover:text-ink"
         >
           ← Back to contracts
@@ -261,7 +261,7 @@ export default function ContractWorkspacePage() {
   return (
     <div>
       <Link
-        to="/contracts"
+        to="/demo/contracts"
         className="text-sm text-ink-muted hover:text-ink"
       >
         ← Back to contracts

@@ -77,7 +77,7 @@ export default function PlaybookDetailPage() {
   if (state.kind === "loading") {
     return (
       <div>
-        <Link to="/playbooks" className="text-sm text-ink-muted hover:text-ink">
+        <Link to="/demo/playbooks" className="text-sm text-ink-muted hover:text-ink">
           ← Back to playbooks
         </Link>
         <div className="mt-4">
@@ -90,7 +90,7 @@ export default function PlaybookDetailPage() {
   if (state.kind === "error") {
     return (
       <div>
-        <Link to="/playbooks" className="text-sm text-ink-muted hover:text-ink">
+        <Link to="/demo/playbooks" className="text-sm text-ink-muted hover:text-ink">
           ← Back to playbooks
         </Link>
         <div className="mt-4">
@@ -136,7 +136,7 @@ export default function PlaybookDetailPage() {
 
   return (
     <div>
-      <Link to="/playbooks" className="text-sm text-ink-muted hover:text-ink">
+      <Link to="/demo/playbooks" className="text-sm text-ink-muted hover:text-ink">
         ← Back to playbooks
       </Link>
 

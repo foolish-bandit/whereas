@@ -53,7 +53,7 @@ export default function Header({
           </span>
         ) : devUserId ? (
           <Link
-            to="/settings"
+            to="/demo/settings"
             className="group flex items-center gap-2 rounded border border-rule bg-canvas-subtle px-2 py-1 text-ink-muted hover:border-rule-strong hover:text-ink sm:px-2.5"
             title="Change development user ID"
           >
@@ -65,7 +65,7 @@ export default function Header({
           </Link>
         ) : (
           <Link
-            to="/settings"
+            to="/demo/settings"
             className="flex items-center gap-2 rounded border border-warning-ring bg-warning-soft px-2 py-1 text-warning hover:border-warning sm:px-2.5"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
