@@ -217,6 +217,13 @@ class ContractMarkdownSnapshot(Base):
 
     contract: Mapped[Contract] = relationship(back_populates="markdown_snapshots")
 
+    # Follow-up: once snapshots see heavy read traffic, consider a
+    # composite index on
+    # (organization_id, contract_id, conversion_status, created_at DESC)
+    # to make the "latest ready snapshot for this contract in this org"
+    # query a single index seek. Holding off in this PR — the per-column
+    # indexes below cover the v1 endpoint cheaply and an unjustified
+    # composite would just add write overhead.
     __table_args__ = (
         Index("ix_contract_markdown_snapshots_created_at", "created_at"),
     )
