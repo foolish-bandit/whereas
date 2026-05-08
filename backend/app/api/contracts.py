@@ -61,6 +61,9 @@ from app.security.encryption import (
     load_org_master_key,
 )
 from app.services.clause_segmentation import segment_and_persist_clauses
+from app.services.contract_artifacts import (
+    get_latest_official_original_artifact,
+)
 from app.services.deviation_findings import (
     InvalidFindingStatusError,
     get_finding_for_org,
@@ -758,6 +761,20 @@ async def download_contract(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
 ) -> Response:
+    """Download the original legal artifact for a contract.
+
+    Resolution order:
+      1. Latest official ``original_upload`` ContractArtifact, if any
+         (the v1 upload flow writes one of these per upload).
+      2. Legacy ``Contract.s3_key`` / ``Contract.mime_type``, for
+         contracts uploaded before the artifact model landed and not
+         yet backfilled.
+
+    The wrapped DEK still lives on the Contract row in v1 — artifacts
+    don't carry their own wrapping yet, so the encryption seam is
+    unchanged. ``storage_key`` is read off the resolved source and
+    never echoed back to the client.
+    """
     user = await _current_dev_user(session, x_whereas_dev_user)
     contract = await _get_contract_for_org(
         session,
@@ -767,12 +784,28 @@ async def download_contract(
     if contract.wrapped_dek is None:
         raise HTTPException(status_code=409, detail="Contract encryption metadata is missing.")
 
+    artifact = await get_latest_official_original_artifact(
+        session,
+        contract_id=contract.id,
+        organization_id=user.organization_id,
+    )
+    storage_key = (
+        artifact.storage_key
+        if artifact is not None and artifact.storage_key
+        else contract.s3_key
+    )
+    mime_type = (
+        artifact.mime_type
+        if artifact is not None and artifact.mime_type
+        else contract.mime_type
+    )
+
     org = await _load_organization(session, user.organization_id)
     org_master_key = _load_org_key_or_http(org)
     storage = DocumentStorage(get_settings())
     try:
         plaintext = await storage.retrieve_decrypted(
-            s3_key=contract.s3_key,
+            s3_key=storage_key,
             document_id=str(contract.id),
             wrapped_dek_bytes=contract.wrapped_dek,
             org_master_key=org_master_key,
@@ -789,14 +822,20 @@ async def download_contract(
         actor_user_id=user.id,
         target_type="contract",
         target_id=str(contract.id),
-        details=_audit_contract_details(contract, filename=None),
+        details=_audit_contract_details(
+            contract,
+            filename=artifact.filename if artifact is not None else None,
+            artifact_id=artifact.id if artifact is not None else None,
+        ),
     )
 
     return Response(
         content=plaintext,
-        media_type=contract.mime_type,
+        media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{_download_filename(contract)}"',
+            "Content-Disposition": (
+                f'attachment; filename="{_download_filename(contract, artifact=artifact)}"'
+            ),
         },
     )
 
@@ -980,15 +1019,39 @@ def _safe_input_filename(filename: str | None) -> str:
     return basename or "contract"
 
 
-def _download_filename(contract: Contract) -> str:
-    ext = ".pdf" if contract.mime_type == _PDF_MIME else ".docx"
-    base = _SAFE_FILENAME_CHARS.sub("_", contract.title).strip("._") or "contract"
+def _download_filename(
+    contract: Contract,
+    *,
+    artifact: ContractArtifact | None = None,
+) -> str:
+    """Pick a safe download filename, preferring the artifact's filename.
+
+    The artifact records the user's original filename at upload time,
+    which is the most useful name for an export. Falls back to the
+    contract title when the artifact has no filename or when no
+    artifact row exists (legacy contracts).
+    """
+    mime_type = (
+        artifact.mime_type if artifact is not None and artifact.mime_type
+        else contract.mime_type
+    )
+    ext = ".pdf" if mime_type == _PDF_MIME else ".docx"
+    raw_base = (
+        artifact.filename if artifact is not None and artifact.filename
+        else contract.title
+    )
+    base = _SAFE_FILENAME_CHARS.sub("_", raw_base).strip("._") or "contract"
     if not base.lower().endswith(ext):
         base = f"{base}{ext}"
     return base[:180]
 
 
-def _audit_contract_details(contract: Contract, *, filename: str | None) -> dict[str, object]:
+def _audit_contract_details(
+    contract: Contract,
+    *,
+    filename: str | None,
+    artifact_id: uuid.UUID | None = None,
+) -> dict[str, object]:
     details: dict[str, object] = {
         "contract_id": str(contract.id),
         "title": contract.title,
@@ -998,6 +1061,8 @@ def _audit_contract_details(contract: Contract, *, filename: str | None) -> dict
     }
     if filename is not None:
         details["filename"] = filename
+    if artifact_id is not None:
+        details["artifact_id"] = str(artifact_id)
     return details
 
 

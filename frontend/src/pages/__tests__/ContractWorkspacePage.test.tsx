@@ -167,9 +167,39 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(strip).toHaveTextContent(/pdf/i);
   });
 
-  it("does not render the artifact strip when the artifacts list is empty", async () => {
+  it("renders a legacy fallback strip when the artifacts list is empty", async () => {
     setupFetch(fetchMock, { artifacts: [] });
     renderPage();
+    const legacy = await screen.findByTestId(
+      "original-artifact-strip-legacy",
+    );
+    expect(legacy).toHaveTextContent(/legacy original/i);
+    // The official strip must not render when no artifact exists.
+    expect(
+      screen.queryByTestId("original-artifact-strip"),
+    ).not.toBeInTheDocument();
+    // Download original action stays available either way.
+    expect(
+      screen.getByRole("button", { name: /download original/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders neither artifact strip when the artifacts API fails", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse({ detail: "boom" }, 500);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    // Workspace still renders the Markdown preview; the artifact
+    // failure is silent.
     await screen.findByRole("heading", {
       level: 1,
       name: "Workspace markdown",
@@ -177,6 +207,12 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(
       screen.queryByTestId("original-artifact-strip"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("original-artifact-strip-legacy"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /download original/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows the empty state when the contract has no markdown snapshot", async () => {
