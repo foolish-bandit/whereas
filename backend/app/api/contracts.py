@@ -169,30 +169,27 @@ async def upload_contract(
     # Record the original upload as a ContractArtifact. The Contract row
     # still owns the canonical storage pointer for back-compat with
     # existing download/extract paths; this row is the new artifact-model
-    # foundation. Failure here is non-fatal — the upload is already
-    # durable on storage and on the Contract row.
-    try:
-        original_artifact = ContractArtifact(
-            organization_id=user.organization_id,
-            contract_id=contract.id,
-            artifact_type="original_upload",
-            storage_backend="s3",
-            storage_key=stored.s3_key,
-            filename=filename,
-            mime_type=mime_type,
-            file_hash_sha256=file_hash,
-            size_bytes=len(file_bytes),
-            source="user_upload",
-            is_official=True,
-            created_by=user.id,
-        )
-        session.add(original_artifact)
-        await session.flush()
-    except Exception:
-        log.exception(
-            "Failed to record original_upload ContractArtifact; upload continues",
-            extra={"contract_id": str(contract.id)},
-        )
+    # foundation. The whole upload runs in a single request-scoped
+    # transaction (see ``get_db``), so we deliberately do NOT swallow
+    # failures here — a failure would mean the Contract row also rolls
+    # back, leaving only an orphaned S3 blob, which is preferable to a
+    # half-written contract row that is missing its official artifact.
+    original_artifact = ContractArtifact(
+        organization_id=user.organization_id,
+        contract_id=contract.id,
+        artifact_type="original_upload",
+        storage_backend="s3",
+        storage_key=stored.s3_key,
+        filename=filename,
+        mime_type=mime_type,
+        file_hash_sha256=file_hash,
+        size_bytes=len(file_bytes),
+        source="user_upload",
+        is_official=True,
+        created_by=user.id,
+    )
+    session.add(original_artifact)
+    await session.flush()
 
     message: str | None = None
     try:
