@@ -253,7 +253,7 @@ export async function getContractMarkdown(
   id: string,
   options: ApiOptions = {},
 ): Promise<ContractMarkdownSnapshot | null> {
-  if (isDemoMode()) return null;
+  if (isDemoMode()) return mockApi.getContractMarkdown(id, options);
   try {
     const data = await call<ContractMarkdownSnapshot>(
       `/api/contracts/${encodeURIComponent(id)}/markdown`,
