@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.models import (
     Clause,
     Contract,
+    ContractMarkdownSnapshot,
     ContractStatus,
     DeviationFinding,
     ExtractedField,
@@ -44,6 +45,7 @@ from app.schemas.findings import (
     ReviewRunSummary,
     UpdateFindingStatusRequest,
 )
+from app.schemas.markdown import ContractMarkdownSnapshotResponse
 from app.schemas.playbook_review import (
     PlaybookReviewRequest,
     PlaybookReviewResult,
@@ -67,6 +69,7 @@ from app.services.deviation_findings import (
     run_and_persist_review,
     update_finding_status,
 )
+from app.services.document_markdown import create_markdown_snapshot_for_contract
 from app.services.document_parser import (
     DocumentParseError,
     DocumentParseTimeoutError,
@@ -192,6 +195,24 @@ async def upload_contract(
             extra={"contract_id": str(contract.id)},
         )
 
+    # Markdown working snapshot. Non-fatal: if conversion fails or no
+    # converter is installed, the upload still succeeds. The original
+    # DOCX/PDF remains the legal artifact; this is a working copy used
+    # for fast preview/search and future local-first sync.
+    try:
+        await create_markdown_snapshot_for_contract(
+            session,
+            contract=contract,
+            file_bytes=file_bytes,
+            fallback_plain_text=parsed.full_text,
+            actor_user_id=user.id,
+        )
+    except Exception:
+        log.exception(
+            "Markdown snapshot creation failed; contract remains usable",
+            extra={"contract_id": str(contract.id)},
+        )
+
     await session.flush()
     await record_event(
         session,
@@ -260,6 +281,47 @@ async def list_contract_clauses(
         load_clauses=True,
     )
     return [ClauseResponse.model_validate(c) for c in _ordered_clauses(contract)]
+
+
+@router.get(
+    "/{contract_id}/markdown",
+    response_model=ContractMarkdownSnapshotResponse,
+)
+async def get_contract_markdown(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ContractMarkdownSnapshotResponse:
+    """Return the latest markdown working snapshot for a contract.
+
+    Org scoped: a 404 is returned for cross-org contracts and for
+    contracts that do not have any persisted snapshot yet. The
+    markdown snapshot is a lightweight working copy; the DOCX/PDF
+    remains the original legal artifact.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    stmt = (
+        select(ContractMarkdownSnapshot)
+        .where(
+            ContractMarkdownSnapshot.contract_id == contract_id,
+            ContractMarkdownSnapshot.organization_id == user.organization_id,
+            ContractMarkdownSnapshot.conversion_status == "ready",
+        )
+        .order_by(ContractMarkdownSnapshot.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    snapshot = result.scalar_one_or_none()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404, detail="Markdown snapshot not found."
+        )
+    return ContractMarkdownSnapshotResponse.model_validate(snapshot)
 
 
 @router.post(

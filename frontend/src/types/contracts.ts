@@ -63,3 +63,20 @@ export interface UploadContractResponse extends ContractListItem {
   clauses: Clause[];
   message?: string | null;
 }
+
+/**
+ * A persisted Markdown working snapshot for a contract. The DOCX or
+ * PDF remains the original legal artifact; this is a lightweight
+ * representation used for fast preview and search.
+ */
+export interface ContractMarkdownSnapshot {
+  id: string;
+  contract_id: string;
+  markdown_text: string;
+  source_kind: string;
+  converter_name: string;
+  converter_version: string | null;
+  conversion_status: string;
+  conversion_warnings: unknown[] | null;
+  created_at: string;
+}
