@@ -11,6 +11,7 @@ import { ApiError, type DownloadResult, type UploadInput } from "./api";
 import {
   MOCK_DETAIL_BY_ID,
   MOCK_LIST,
+  MOCK_MARKDOWN_BY_CONTRACT_ID,
   MOCK_PLAYBOOK_DETAIL_BY_ID,
   MOCK_PLAYBOOK_LIST,
   MOCK_REVIEW_BY_KEY,
@@ -19,6 +20,7 @@ import type {
   Clause,
   ContractDetail,
   ContractListItem,
+  ContractMarkdownSnapshot,
   UploadContractResponse,
 } from "../types/contracts";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
@@ -92,6 +94,23 @@ export async function getContractClauses(
     throw new ApiError(404, "Contract not found.");
   }
   return [...detail.clauses].sort((a, b) => a.ordinal - b.ordinal);
+}
+
+export async function getContractMarkdown(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractMarkdownSnapshot | null> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  // Session uploads in demo mode never get a snapshot — there's no
+  // converter to run client-side. Hard-coded demo contracts may have
+  // one in MOCK_MARKDOWN_BY_CONTRACT_ID.
+  if (id in sessionDetailById) {
+    return null;
+  }
+  if (!(id in MOCK_DETAIL_BY_ID)) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  return MOCK_MARKDOWN_BY_CONTRACT_ID[id] ?? null;
 }
 
 export async function uploadContract(

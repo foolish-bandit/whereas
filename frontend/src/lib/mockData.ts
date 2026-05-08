@@ -9,6 +9,7 @@ import type {
   Clause,
   ContractDetail,
   ContractListItem,
+  ContractMarkdownSnapshot,
   ExtractedField,
 } from "../types/contracts";
 import type {
@@ -275,6 +276,87 @@ export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
 
 export const MOCK_NDA_FULL_TEXT = MUTUAL_NDA_TEXT;
 export const MOCK_NDA_CLAUSES = NDA_CLAUSES;
+
+// --------------------------------------------------------------------------
+// Markdown working snapshots (demo mode)
+//
+// PR #32 added the snapshot pipeline server-side. PR #33 surfaces them
+// in the contract workspace as the default fast preview. The NDA gets
+// a hand-authored Markdown rendering; the MSA shows the warning path
+// where conversion fell back to plain text; the failed-upload demo
+// case has no snapshot at all so the empty state is exercised.
+// --------------------------------------------------------------------------
+
+const MOCK_NDA_MARKDOWN = `# Mutual Non-Disclosure Agreement
+
+**Parties:** Acme Corporation ("Acme") and Globex Industries, Inc. ("Globex").
+**Effective Date:** January 15, 2026.
+
+## 1. Purpose
+
+The Parties wish to explore a potential business relationship and, in
+connection with such discussions, may exchange certain non-public
+information ("Confidential Information") that each Party desires to
+protect from unauthorized use or disclosure.
+
+## 2. Term
+
+This Agreement shall remain in effect for a period of **twenty-four
+(24) months** from the Effective Date, unless earlier terminated as
+provided herein. The obligations of confidentiality survive for an
+additional **three (3) years**.
+
+## 3. Confidentiality Obligations
+
+Each Party agrees to:
+
+- hold the other Party's Confidential Information in strict confidence;
+- use such Confidential Information solely for the Purpose;
+- not disclose such Confidential Information to any third party
+  without the prior written consent of the disclosing Party.
+
+## 4. Governing Law
+
+This Agreement shall be governed by and construed in accordance with
+the laws of the **State of Delaware**.
+
+---
+
+*This is a demo Markdown working snapshot. The original PDF remains
+the official legal artifact.*
+`;
+
+export const MOCK_MARKDOWN_BY_CONTRACT_ID: Record<
+  string,
+  ContractMarkdownSnapshot | null
+> = {
+  [MOCK_NDA_ID]: {
+    id: "00000000-0000-4000-8000-0000000020a1",
+    contract_id: MOCK_NDA_ID,
+    markdown_text: MOCK_NDA_MARKDOWN,
+    source_kind: "original_upload",
+    converter_name: "markitdown",
+    converter_version: "0.0.1-demo",
+    conversion_status: "ready",
+    conversion_warnings: null,
+    created_at: "2026-01-15T10:31:42Z",
+  },
+  [MOCK_MSA_ID]: {
+    id: "00000000-0000-4000-8000-0000000020a2",
+    contract_id: MOCK_MSA_ID,
+    markdown_text:
+      "Master Services Agreement (sample). Extraction is still in progress in this demo; metadata fields will appear here once it completes.\n",
+    source_kind: "original_upload",
+    converter_name: "fallback_plain_text",
+    converter_version: null,
+    conversion_status: "ready",
+    conversion_warnings: ["markitdown_empty_output"],
+    created_at: "2026-02-03T08:14:55Z",
+  },
+  // Failed-upload demo intentionally has no snapshot so the empty
+  // state is exercised when the user opens it.
+  [MOCK_FAILED_ID]: null,
+};
 
 // --------------------------------------------------------------------------
 // Playbooks (demo mode)

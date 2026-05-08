@@ -5,6 +5,7 @@ import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import MarkdownPreview from "../components/MarkdownPreview";
 import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";
 import RightPanelTabs from "../components/RightPanelTabs";
@@ -43,11 +44,22 @@ type DownloadState =
 
 type SidebarTab = "metadata" | "clauses" | "review";
 
+/**
+ * The contract workspace defaults to the lightweight Markdown
+ * preview because that's what users want for skimming. The
+ * "original" view is the existing plain-text DocumentViewer, which
+ * supports clause/field/finding span highlighting. Selecting
+ * anything from the sidebar that has a span auto-switches to the
+ * original view so the highlight is visible.
+ */
+type ViewerMode = "markdown" | "original";
+
 export default function ContractWorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<SidebarTab>("metadata");
+  const [viewerMode, setViewerMode] = useState<ViewerMode>("markdown");
   const [downloadState, setDownloadState] = useState<DownloadState>({
     kind: "idle",
   });
@@ -59,6 +71,7 @@ export default function ContractWorkspacePage() {
     setState({ kind: "loading" });
     setSelectedKey(null);
     setActiveTab("metadata");
+    setViewerMode("markdown");
     getContract(id, { signal: controller.signal })
       .then((contract) => setState({ kind: "loaded", contract }))
       .catch((err) => {
@@ -222,11 +235,29 @@ export default function ContractWorkspacePage() {
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
-          <DocumentViewer
-            fullText={state.contract.full_text}
-            selectedSpan={selectedSpan}
-            selectionToken={selectedKey}
-          />
+          {viewerMode === "markdown" ? (
+            <MarkdownPreview
+              contractId={state.contract.id}
+              rightSlot={
+                <ViewerModeToggle
+                  mode={viewerMode}
+                  onChange={setViewerMode}
+                />
+              }
+            />
+          ) : (
+            <DocumentViewer
+              fullText={state.contract.full_text}
+              selectedSpan={selectedSpan}
+              selectionToken={selectedKey}
+              rightSlot={
+                <ViewerModeToggle
+                  mode={viewerMode}
+                  onChange={setViewerMode}
+                />
+              }
+            />
+          )}
         </div>
         <Sidebar
           contract={state.contract}
@@ -236,7 +267,13 @@ export default function ContractWorkspacePage() {
             setSelectedKey(null);
           }}
           selectedKey={selectedKey}
-          onSelect={setSelectedKey}
+          onSelect={(key) => {
+            setSelectedKey(key);
+            // The Markdown preview doesn't render span highlights;
+            // auto-switch to the original text viewer when the user
+            // picks a clause/field/finding so the citation is visible.
+            if (key !== null) setViewerMode("original");
+          }}
           onReviewRunChange={setActiveRun}
         />
       </div>
@@ -353,6 +390,49 @@ function ContractHeader({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function ViewerModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: ViewerMode;
+  onChange: (mode: ViewerMode) => void;
+}) {
+  // Tiny segmented-button toggle. We deliberately keep the labels
+  // explicit ("Markdown preview" / "View original") so users always
+  // know which representation they're looking at.
+  const buttonClass = (active: boolean): string =>
+    [
+      "px-2.5 py-1 text-xs font-medium transition-colors",
+      active
+        ? "bg-ink text-canvas"
+        : "bg-canvas text-ink-muted hover:text-ink",
+    ].join(" ");
+  return (
+    <div
+      role="group"
+      aria-label="Document view"
+      className="inline-flex overflow-hidden rounded border border-rule"
+    >
+      <button
+        type="button"
+        className={buttonClass(mode === "markdown")}
+        aria-pressed={mode === "markdown"}
+        onClick={() => onChange("markdown")}
+      >
+        Markdown preview
+      </button>
+      <button
+        type="button"
+        className={`border-l border-rule ${buttonClass(mode === "original")}`}
+        aria-pressed={mode === "original"}
+        onClick={() => onChange("original")}
+      >
+        View original
+      </button>
     </div>
   );
 }
