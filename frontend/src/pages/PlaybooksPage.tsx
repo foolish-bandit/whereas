@@ -161,7 +161,7 @@ export default function PlaybooksPage() {
           description={state.description}
           action={
             <Link
-              to="/settings"
+              to="/demo/settings"
               className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
             >
               Open settings
@@ -212,7 +212,7 @@ function PlaybookTable({ playbooks }: { playbooks: PlaybookSummary[] }) {
           <li key={p.id} className="px-4 py-3 text-sm">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <Link
-                to={`/playbooks/${p.id}`}
+                to={`/demo/playbooks/${p.id}`}
                 className="font-medium text-ink hover:text-accent-ring"
               >
                 {p.name}
@@ -275,7 +275,7 @@ function PlaybookTable({ playbooks }: { playbooks: PlaybookSummary[] }) {
               <tr key={p.id} className="hover:bg-canvas-subtle">
                 <td className="px-4 py-3">
                   <Link
-                    to={`/playbooks/${p.id}`}
+                    to={`/demo/playbooks/${p.id}`}
                     className="font-medium text-ink hover:text-accent-ring"
                   >
                     {p.name}

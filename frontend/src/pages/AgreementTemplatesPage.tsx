@@ -150,7 +150,7 @@ export default function AgreementTemplatesPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <Link
-                    to={`/agreement-templates/${row.id}`}
+                    to={`/demo/agreement-templates/${row.id}`}
                     className="font-medium text-ink underline"
                   >
                     {row.name}

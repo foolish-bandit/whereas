@@ -92,7 +92,7 @@ export default function ContractsPage() {
           </p>
         </div>
         <Link
-          to="/upload"
+          to="/demo/upload"
           className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
         >
           Upload contract
@@ -144,7 +144,7 @@ export default function ContractsPage() {
           description={state.description}
           action={
             <Link
-              to="/settings"
+              to="/demo/settings"
               className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
             >
               Open settings
@@ -159,7 +159,7 @@ export default function ContractsPage() {
           description="Upload your first PDF or DOCX to populate the repository."
           action={
             <Link
-              to="/upload"
+              to="/demo/upload"
               className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
             >
               Upload contract

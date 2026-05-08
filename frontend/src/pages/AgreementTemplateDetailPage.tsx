@@ -132,7 +132,7 @@ export default function AgreementTemplateDetailPage() {
   return (
     <div className="space-y-5" data-testid="agreement-template-detail">
       <div>
-        <Link to="/agreement-templates" className="text-xs underline">
+        <Link to="/demo/agreement-templates" className="text-xs underline">
           ← All templates
         </Link>
         <h1 className="mt-2 text-lg font-semibold text-ink">{t.name}</h1>
