@@ -3,6 +3,7 @@ import { isDemoMode } from "./env";
 import * as mockApi from "./mockApi";
 import type {
   Clause,
+  ContractArtifact,
   ContractDetail,
   ContractListItem,
   ContractMarkdownSnapshot,
@@ -191,6 +192,7 @@ const SECRET_KEYS = new Set([
   "wrapped_dek",
   "wrapped_master_key",
   "s3_key",
+  "storage_key",
   "presigned_url",
   "presigned_uri",
 ]);
@@ -267,6 +269,24 @@ export async function getContractMarkdown(
     }
     throw err;
   }
+}
+
+/**
+ * Fetch the artifact list for a contract. Metadata only — no file
+ * contents and no signed URLs. Returns an empty array when the
+ * contract has no artifacts yet.
+ */
+export async function getContractArtifacts(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractArtifact[]> {
+  if (isDemoMode()) return mockApi.getContractArtifacts(id, options);
+  const data = await call<ContractArtifact[]>(
+    `/api/contracts/${encodeURIComponent(id)}/artifacts`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
 }
 
 export async function getContractClauses(

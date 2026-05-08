@@ -14,6 +14,7 @@ import {
   createDevSetup,
   downloadContract,
   getContract,
+  getContractArtifacts,
   getContracts,
   getSetupStatus,
   uploadContract,
@@ -177,6 +178,67 @@ describe("api client", () => {
     const result = await downloadContract("abc");
     expect(result.filename).toBe("MSA.pdf");
     expect(result.mimeType).toBe("application/pdf");
+  });
+
+  describe("getContractArtifacts", () => {
+    it("calls the artifacts endpoint and returns the parsed list", async () => {
+      setDevUserId(VALID_UUID);
+      const payload = [
+        {
+          id: "art-1",
+          contract_id: "c-1",
+          artifact_type: "original_upload",
+          storage_backend: "s3",
+          filename: "vendor.pdf",
+          mime_type: "application/pdf",
+          file_hash_sha256: "a".repeat(64),
+          size_bytes: 1234,
+          source: "user_upload",
+          is_official: true,
+          created_at: "2026-05-01T00:00:00Z",
+          metadata_json: null,
+        },
+      ];
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const rows = await getContractArtifacts("c-1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].artifact_type).toBe("original_upload");
+      const [url] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain("/api/contracts/c-1/artifacts");
+    });
+
+    it("scrubs storage_key if a future regression leaks one", async () => {
+      setDevUserId(VALID_UUID);
+      const payload = [
+        {
+          id: "art-1",
+          contract_id: "c-1",
+          artifact_type: "original_upload",
+          storage_backend: "s3",
+          filename: "vendor.pdf",
+          mime_type: "application/pdf",
+          is_official: true,
+          created_at: "2026-05-01T00:00:00Z",
+          // simulated regression — must not survive the client scrub
+          storage_key: "documents/secret.enc",
+        },
+      ];
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const rows = await getContractArtifacts("c-1");
+      expect(rows[0]).not.toHaveProperty("storage_key");
+    });
   });
 
   describe("demo-mode dispatch", () => {

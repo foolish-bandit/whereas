@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.models import (
     Clause,
     Contract,
+    ContractArtifact,
     ContractMarkdownSnapshot,
     ContractStatus,
     DeviationFinding,
@@ -31,6 +32,7 @@ from app.models import (
     PlaybookReviewRun,
     User,
 )
+from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import (
     ClauseResponse,
     ContractDetailResponse,
@@ -162,6 +164,31 @@ async def upload_contract(
     contract.s3_key = stored.s3_key
     contract.wrapped_dek = stored.wrapped_dek_bytes
     contract.status = ContractStatus.EXTRACTING.value
+    await session.flush()
+
+    # Record the original upload as a ContractArtifact. The Contract row
+    # still owns the canonical storage pointer for back-compat with
+    # existing download/extract paths; this row is the new artifact-model
+    # foundation. The whole upload runs in a single request-scoped
+    # transaction (see ``get_db``), so we deliberately do NOT swallow
+    # failures here — a failure would mean the Contract row also rolls
+    # back, leaving only an orphaned S3 blob, which is preferable to a
+    # half-written contract row that is missing its official artifact.
+    original_artifact = ContractArtifact(
+        organization_id=user.organization_id,
+        contract_id=contract.id,
+        artifact_type="original_upload",
+        storage_backend="s3",
+        storage_key=stored.s3_key,
+        filename=filename,
+        mime_type=mime_type,
+        file_hash_sha256=file_hash,
+        size_bytes=len(file_bytes),
+        source="user_upload",
+        is_official=True,
+        created_by=user.id,
+    )
+    session.add(original_artifact)
     await session.flush()
 
     message: str | None = None
@@ -322,6 +349,45 @@ async def get_contract_markdown(
             status_code=404, detail="Markdown snapshot not found."
         )
     return ContractMarkdownSnapshotResponse.model_validate(snapshot)
+
+
+@router.get(
+    "/{contract_id}/artifacts",
+    response_model=list[ContractArtifactResponse],
+)
+async def list_contract_artifacts(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> list[ContractArtifactResponse]:
+    """List artifacts for a contract, newest first.
+
+    Metadata only — this endpoint does not retrieve file contents and
+    does not surface signed URLs. Use the existing download endpoint
+    for the original artifact's bytes. Org scoped: a 404 is returned
+    when the contract does not belong to the caller's organization.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    stmt = (
+        select(ContractArtifact)
+        .where(
+            ContractArtifact.contract_id == contract_id,
+            ContractArtifact.organization_id == user.organization_id,
+        )
+        .order_by(
+            ContractArtifact.created_at.desc(), ContractArtifact.id.desc()
+        )
+    )
+    result = await session.execute(stmt)
+    return [
+        ContractArtifactResponse.model_validate(row)
+        for row in result.scalars()
+    ]
 
 
 @router.post(

@@ -155,6 +155,78 @@ class Contract(Base):
     markdown_snapshots: Mapped[list[ContractMarkdownSnapshot]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
+    artifacts: Mapped[list[ContractArtifact]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+
+
+# ------------------------------------------------------------------
+# Contract artifacts
+#
+# A ContractArtifact is any file-like object associated with a contract:
+# the original uploaded DOCX/PDF, a generated DOCX, a signed PDF coming
+# back from DocuSeal, a redline, an exhibit, etc. The Markdown snapshot
+# is the lightweight working representation; artifacts are the official
+# legal records. Existing Contract.s3_key/mime_type/file_hash columns
+# are preserved for back-compat — this PR only introduces the model.
+# ------------------------------------------------------------------
+
+
+class ContractArtifact(Base):
+    """A stored file-like artifact tied to a contract.
+
+    The original upload is recorded as ``artifact_type='original_upload'``
+    with ``is_official=True``. Future PRs will add generated DOCX,
+    signed PDFs, redlines, and exhibits as additional rows. Listing is
+    metadata-only; download flows continue to use existing endpoints
+    until a future migration moves them onto artifacts.
+    """
+
+    __tablename__ = "contract_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(1024))
+    filename: Mapped[str | None] = mapped_column(String(512))
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    file_hash_sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str | None] = mapped_column(String(64))
+    is_official: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    contract: Mapped[Contract] = relationship(back_populates="artifacts")
+
+    __table_args__ = (
+        Index(
+            "ix_contract_artifacts_org_contract_type_created",
+            "organization_id",
+            "contract_id",
+            "artifact_type",
+            "created_at",
+        ),
+    )
 
 
 # ------------------------------------------------------------------
