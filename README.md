@@ -45,6 +45,8 @@ Whereas is moving toward a **PWA-first, Markdown-as-working-copy** architecture:
   ```
 
   The script is idempotent: it skips contracts that already have an `original_upload` artifact and contracts with no legacy storage key. The legacy `Contract` columns are retained as a fallback and are not removed by the backfill.
+- **Agreement templates are first-class CLM objects.** Operators upload an NDA/MSA/SOW/DPA/etc. as an `AgreementTemplate`; the original DOCX or PDF is stored as an official `AgreementTemplateArtifact` (`is_official=true`, `artifact_type='original_upload'`) and the same Markdown converter that runs on contracts produces a working `AgreementTemplateMarkdownSnapshot` for fast preview and future local-first sync. Conversion failure is non-fatal: the upload still succeeds and the original remains the authoritative file.
+- **Template variables are metadata only in this release.** Templates can declare `AgreementTemplateVariable` rows (`counterparty_name`, `effective_date`, ...) so a later PR can render filled DOCX agreements; this PR does not generate DOCX, send to DocuSeal, or substitute placeholders. Variable keys are unique per template and are listed sorted by `sort_order`.
 
 ## Stack
 

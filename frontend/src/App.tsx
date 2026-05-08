@@ -8,6 +8,8 @@ import PlaybooksPage from "./pages/PlaybooksPage";
 import UploadPage from "./pages/UploadPage";
 import SettingsPage from "./pages/SettingsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
+import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
+import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
 
 export default function App() {
   return (
@@ -21,6 +23,11 @@ export default function App() {
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/clause-library" element={<ClauseLibraryPage />} />
+        <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        <Route
+          path="/agreement-templates/:id"
+          element={<AgreementTemplateDetailPage />}
+        />
         <Route path="*" element={<Navigate to="/contracts" replace />} />
       </Routes>
     </AppShell>
