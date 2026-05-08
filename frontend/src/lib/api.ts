@@ -25,6 +25,16 @@ import type {
 import type { PlaybookReviewResult } from "../types/review";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
+  AgreementTemplate,
+  AgreementTemplateArtifact,
+  AgreementTemplateCreateRequest,
+  AgreementTemplateMarkdownSnapshot,
+  AgreementTemplateUpdateRequest,
+  AgreementTemplateVariable,
+  AgreementTemplateVariableCreateRequest,
+  AgreementTemplateVariableUpdateRequest,
+} from "../types/agreementTemplates";
+import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
   SetupStatus,
@@ -800,5 +810,213 @@ export async function deleteClauseTemplate(id: string, options: ApiOptions = {})
   const headers = new Headers();
   for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
   const res = await fetch(`${baseUrl()}/api/clause-templates/${encodeURIComponent(id)}`, { method: "DELETE", headers, signal: options.signal });
+  if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+// ---------------------------------------------------------------------------
+// Agreement templates
+// ---------------------------------------------------------------------------
+
+export interface ListAgreementTemplatesFilters {
+  include_archived?: boolean;
+  template_type?: string;
+}
+
+function agreementTemplateQuery(filters: ListAgreementTemplatesFilters = {}): string {
+  const params = new URLSearchParams();
+  if (filters.include_archived) params.set("include_archived", "true");
+  if (filters.template_type) params.set("template_type", filters.template_type);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listAgreementTemplates(
+  filters: ListAgreementTemplatesFilters = {},
+  options: ApiOptions = {},
+): Promise<AgreementTemplate[]> {
+  if (isDemoMode()) return mockApi.listAgreementTemplates(filters, options);
+  const data = await call<AgreementTemplate[]>(
+    `/api/agreement-templates${agreementTemplateQuery(filters)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getAgreementTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  if (isDemoMode()) return mockApi.getAgreementTemplate(id, options);
+  const data = await call<AgreementTemplate>(
+    `/api/agreement-templates/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createAgreementTemplate(
+  payload: AgreementTemplateCreateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  if (isDemoMode()) return mockApi.createAgreementTemplate(payload, options);
+  const data = await call<AgreementTemplate>(
+    `/api/agreement-templates`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateAgreementTemplate(
+  id: string,
+  payload: AgreementTemplateUpdateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  if (isDemoMode()) return mockApi.updateAgreementTemplate(id, payload, options);
+  const data = await call<AgreementTemplate>(
+    `/api/agreement-templates/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function archiveAgreementTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  if (isDemoMode()) return mockApi.archiveAgreementTemplate(id, options);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const res = await fetch(
+    `${baseUrl()}/api/agreement-templates/${encodeURIComponent(id)}`,
+    { method: "DELETE", headers, signal: options.signal },
+  );
+  if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+export async function uploadAgreementTemplateArtifact(
+  id: string,
+  file: File,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact> {
+  if (isDemoMode()) return mockApi.uploadAgreementTemplateArtifact(id, file, options);
+  const formData = new FormData();
+  formData.append("file", file);
+  const data = await call<AgreementTemplateArtifact>(
+    `/api/agreement-templates/${encodeURIComponent(id)}/upload`,
+    { method: "POST", body: formData },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getAgreementTemplateArtifacts(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact[]> {
+  if (isDemoMode()) return mockApi.getAgreementTemplateArtifacts(id, options);
+  const data = await call<AgreementTemplateArtifact[]>(
+    `/api/agreement-templates/${encodeURIComponent(id)}/artifacts`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getAgreementTemplateMarkdown(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateMarkdownSnapshot | null> {
+  if (isDemoMode()) return mockApi.getAgreementTemplateMarkdown(id, options);
+  try {
+    const data = await call<AgreementTemplateMarkdownSnapshot>(
+      `/api/agreement-templates/${encodeURIComponent(id)}/markdown`,
+      { method: "GET" },
+      options,
+    );
+    return scrubSecrets(data);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function listAgreementTemplateVariables(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable[]> {
+  if (isDemoMode()) return mockApi.listAgreementTemplateVariables(id, options);
+  const data = await call<AgreementTemplateVariable[]>(
+    `/api/agreement-templates/${encodeURIComponent(id)}/variables`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createAgreementTemplateVariable(
+  id: string,
+  payload: AgreementTemplateVariableCreateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable> {
+  if (isDemoMode()) return mockApi.createAgreementTemplateVariable(id, payload, options);
+  const data = await call<AgreementTemplateVariable>(
+    `/api/agreement-templates/${encodeURIComponent(id)}/variables`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateAgreementTemplateVariable(
+  templateId: string,
+  variableId: string,
+  payload: AgreementTemplateVariableUpdateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable> {
+  if (isDemoMode())
+    return mockApi.updateAgreementTemplateVariable(templateId, variableId, payload, options);
+  const data = await call<AgreementTemplateVariable>(
+    `/api/agreement-templates/${encodeURIComponent(templateId)}/variables/${encodeURIComponent(
+      variableId,
+    )}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function deleteAgreementTemplateVariable(
+  templateId: string,
+  variableId: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  if (isDemoMode())
+    return mockApi.deleteAgreementTemplateVariable(templateId, variableId, options);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const res = await fetch(
+    `${baseUrl()}/api/agreement-templates/${encodeURIComponent(templateId)}/variables/${encodeURIComponent(variableId)}`,
+    { method: "DELETE", headers, signal: options.signal },
+  );
   if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
 }

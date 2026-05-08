@@ -26,6 +26,16 @@ import type {
 } from "../types/contracts";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
+  AgreementTemplate,
+  AgreementTemplateArtifact,
+  AgreementTemplateCreateRequest,
+  AgreementTemplateMarkdownSnapshot,
+  AgreementTemplateUpdateRequest,
+  AgreementTemplateVariable,
+  AgreementTemplateVariableCreateRequest,
+  AgreementTemplateVariableUpdateRequest,
+} from "../types/agreementTemplates";
+import type {
   DeviationFinding,
   ListFindingsFilters,
   ReviewRunDetail,
@@ -609,4 +619,312 @@ export async function deleteClauseTemplate(id: string, options: ApiOptions = {})
   if (sessionClauseTemplates.find((r) => r.id === id)) {
     await updateClauseTemplate(id, { is_active: false }, options);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Agreement templates (demo mode)
+// ---------------------------------------------------------------------------
+
+const DEMO_ORG_AT = "00000000-0000-4000-8000-0000000000aa";
+const NDA_ID = "11111111-1111-4111-8111-111111111111";
+const MSA_ID = "22222222-2222-4222-8222-222222222222";
+
+const demoAgreementTemplates: AgreementTemplate[] = [
+  {
+    id: NDA_ID,
+    organization_id: DEMO_ORG_AT,
+    name: "Mutual NDA",
+    description: "Standard mutual non-disclosure agreement.",
+    template_type: "NDA",
+    status: "active",
+    created_at: "2026-04-01T10:00:00Z",
+    updated_at: "2026-04-15T10:00:00Z",
+    metadata_json: null,
+  },
+  {
+    id: MSA_ID,
+    organization_id: DEMO_ORG_AT,
+    name: "Master Services Agreement",
+    description: "Default MSA template; warnings on import.",
+    template_type: "MSA",
+    status: "active",
+    created_at: "2026-04-02T10:00:00Z",
+    updated_at: "2026-04-20T10:00:00Z",
+    metadata_json: null,
+  },
+];
+
+const demoAgreementTemplateMarkdown: Record<
+  string,
+  AgreementTemplateMarkdownSnapshot | null
+> = {
+  [NDA_ID]: {
+    id: "33333333-3333-4333-8333-333333333333",
+    template_id: NDA_ID,
+    markdown_text:
+      "# Mutual NDA\n\nThis Mutual Non-Disclosure Agreement is entered into by **{{counterparty_name}}** and the Company as of {{effective_date}}.\n\n## Confidential Information\n\nEach party agrees to protect the other's Confidential Information.",
+    source_kind: "original_upload",
+    converter_name: "markitdown",
+    converter_version: "0.0.1",
+    conversion_status: "ready",
+    conversion_warnings: null,
+    created_at: "2026-04-01T10:05:00Z",
+  },
+  // MSA conversion produced warnings and no snapshot — exercises the empty
+  // state in the UI.
+  [MSA_ID]: null,
+};
+
+const demoAgreementTemplateArtifacts: Record<string, AgreementTemplateArtifact[]> = {
+  [NDA_ID]: [
+    {
+      id: "44444444-4444-4444-8444-444444444444",
+      template_id: NDA_ID,
+      artifact_type: "original_upload",
+      storage_backend: "s3",
+      filename: "mutual-nda.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 24576,
+      source: "user_upload",
+      is_official: true,
+      created_at: "2026-04-01T10:05:00Z",
+      metadata_json: null,
+    },
+  ],
+  [MSA_ID]: [],
+};
+
+const demoAgreementTemplateVariables: Record<string, AgreementTemplateVariable[]> = {
+  [NDA_ID]: [
+    {
+      id: "55555555-5555-4555-8555-555555555551",
+      template_id: NDA_ID,
+      key: "counterparty_name",
+      label: "Counterparty Name",
+      variable_type: "text",
+      required: true,
+      default_value: null,
+      help_text: "Legal name of the other party.",
+      sort_order: 1,
+      metadata_json: null,
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-01T10:00:00Z",
+    },
+    {
+      id: "55555555-5555-4555-8555-555555555552",
+      template_id: NDA_ID,
+      key: "effective_date",
+      label: "Effective Date",
+      variable_type: "date",
+      required: true,
+      default_value: null,
+      help_text: null,
+      sort_order: 2,
+      metadata_json: null,
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-01T10:00:00Z",
+    },
+  ],
+  [MSA_ID]: [],
+};
+
+function _findTemplate(id: string): AgreementTemplate | undefined {
+  return demoAgreementTemplates.find((t) => t.id === id);
+}
+
+export async function listAgreementTemplates(
+  filters: { include_archived?: boolean; template_type?: string } = {},
+  options: ApiOptions = {},
+): Promise<AgreementTemplate[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  let rows = demoAgreementTemplates.slice();
+  if (!filters.include_archived) {
+    rows = rows.filter((t) => t.status === "active");
+  }
+  if (filters.template_type) {
+    rows = rows.filter((t) => t.template_type === filters.template_type);
+  }
+  return rows;
+}
+
+export async function getAgreementTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = _findTemplate(id);
+  if (!row) throw new ApiError(404, "Agreement template not found.");
+  return row;
+}
+
+export async function createAgreementTemplate(
+  payload: AgreementTemplateCreateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const now = new Date().toISOString();
+  const row: AgreementTemplate = {
+    id: `demo-${Math.random().toString(36).slice(2)}`,
+    organization_id: DEMO_ORG_AT,
+    name: payload.name,
+    description: payload.description ?? null,
+    template_type: payload.template_type ?? null,
+    status: "active",
+    created_at: now,
+    updated_at: now,
+    metadata_json: payload.metadata_json ?? null,
+  };
+  demoAgreementTemplates.unshift(row);
+  demoAgreementTemplateMarkdown[row.id] = null;
+  demoAgreementTemplateArtifacts[row.id] = [];
+  demoAgreementTemplateVariables[row.id] = [];
+  return row;
+}
+
+export async function updateAgreementTemplate(
+  id: string,
+  payload: AgreementTemplateUpdateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = _findTemplate(id);
+  if (!row) throw new ApiError(404, "Agreement template not found.");
+  if (payload.name !== undefined) row.name = payload.name;
+  if (payload.description !== undefined) row.description = payload.description;
+  if (payload.template_type !== undefined)
+    row.template_type = payload.template_type;
+  if (payload.status !== undefined) row.status = payload.status;
+  if (payload.metadata_json !== undefined)
+    row.metadata_json = payload.metadata_json;
+  row.updated_at = new Date().toISOString();
+  return row;
+}
+
+export async function archiveAgreementTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  await updateAgreementTemplate(id, { status: "archived" }, options);
+}
+
+export async function uploadAgreementTemplateArtifact(
+  id: string,
+  file: File,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = _findTemplate(id);
+  if (!row) throw new ApiError(404, "Agreement template not found.");
+  const artifact: AgreementTemplateArtifact = {
+    id: `demo-art-${Math.random().toString(36).slice(2)}`,
+    template_id: id,
+    artifact_type: "original_upload",
+    storage_backend: "s3",
+    filename: file.name,
+    mime_type: file.type || null,
+    file_hash_sha256: null,
+    size_bytes: file.size,
+    source: "user_upload",
+    is_official: true,
+    created_at: new Date().toISOString(),
+    metadata_json: null,
+  };
+  const existing = demoAgreementTemplateArtifacts[id] ?? [];
+  demoAgreementTemplateArtifacts[id] = [artifact, ...existing];
+  return artifact;
+}
+
+export async function getAgreementTemplateArtifacts(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return demoAgreementTemplateArtifacts[id] ?? [];
+}
+
+export async function getAgreementTemplateMarkdown(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateMarkdownSnapshot | null> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return demoAgreementTemplateMarkdown[id] ?? null;
+}
+
+export async function listAgreementTemplateVariables(
+  id: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const rows = (demoAgreementTemplateVariables[id] ?? []).slice();
+  rows.sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
+  return rows;
+}
+
+export async function createAgreementTemplateVariable(
+  id: string,
+  payload: AgreementTemplateVariableCreateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const existing = demoAgreementTemplateVariables[id] ?? [];
+  if (existing.some((v) => v.key === payload.key)) {
+    throw new ApiError(
+      409,
+      "A variable with this key already exists on the template.",
+    );
+  }
+  const now = new Date().toISOString();
+  const variable: AgreementTemplateVariable = {
+    id: `demo-var-${Math.random().toString(36).slice(2)}`,
+    template_id: id,
+    key: payload.key,
+    label: payload.label,
+    variable_type: payload.variable_type,
+    required: payload.required ?? false,
+    default_value: payload.default_value ?? null,
+    help_text: payload.help_text ?? null,
+    sort_order: payload.sort_order ?? 0,
+    metadata_json: payload.metadata_json ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+  demoAgreementTemplateVariables[id] = [...existing, variable];
+  return variable;
+}
+
+export async function updateAgreementTemplateVariable(
+  templateId: string,
+  variableId: string,
+  payload: AgreementTemplateVariableUpdateRequest,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateVariable> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const list = demoAgreementTemplateVariables[templateId] ?? [];
+  const idx = list.findIndex((v) => v.id === variableId);
+  if (idx < 0) throw new ApiError(404, "Variable not found.");
+  const current = list[idx];
+  const updated: AgreementTemplateVariable = {
+    ...current,
+    ...payload,
+    metadata_json:
+      payload.metadata_json !== undefined ? payload.metadata_json : current.metadata_json,
+    updated_at: new Date().toISOString(),
+  };
+  list[idx] = updated;
+  demoAgreementTemplateVariables[templateId] = list;
+  return updated;
+}
+
+export async function deleteAgreementTemplateVariable(
+  templateId: string,
+  variableId: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const list = demoAgreementTemplateVariables[templateId] ?? [];
+  demoAgreementTemplateVariables[templateId] = list.filter(
+    (v) => v.id !== variableId,
+  );
 }

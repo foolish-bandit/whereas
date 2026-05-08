@@ -5,6 +5,7 @@ const NAV = [
   { to: "/playbooks", label: "Playbooks" },
   { to: "/upload", label: "Upload" },
   { to: "/clause-library", label: "Clause Library" },
+  { to: "/agreement-templates", label: "Agreement Templates" },
   { to: "/settings", label: "Settings" },
 ];
 

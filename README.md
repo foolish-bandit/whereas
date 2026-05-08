@@ -31,7 +31,22 @@ Whereas is moving toward a **PWA-first, Markdown-as-working-copy** architecture:
 - Markdown conversion uses Microsoft MarkItDown when installed and falls back to the existing extracted plain text otherwise. Conversion failure is non-fatal: the upload still succeeds and the original remains downloadable.
 - **The contract workspace defaults to the Markdown preview** when one is available. It's optimized for skimming, search, and the future local-first sync layer. Use **"View original"** in the document header to switch to the plain-text view used for clause / metadata / finding span citations, or **"Download original"** to retrieve the underlying DOCX/PDF as the official artifact.
 - Original legal artifacts are tracked explicitly in a `ContractArtifact` model alongside the Markdown working snapshot. The original upload is recorded with `artifact_type='original_upload'` and `is_official=true`; future PRs add generated DOCX, signed PDFs from DocuSeal, redlines, and exhibits as additional artifact rows. The metadata list is exposed via `GET /api/contracts/{id}/artifacts`. Markdown snapshots remain the lightweight working representation; artifacts remain the official legal record.
-- The `GET /api/contracts/{id}/download` endpoint resolves the original through the latest official `original_upload` `ContractArtifact` first and falls back to the legacy `Contract.s3_key` / `Contract.mime_type` / contract title when no artifact row exists (i.e., contracts uploaded before the artifact model landed and not yet backfilled). Backfilling pre-existing contracts into artifacts is a follow-up.
+- **Backfilling existing contracts:** contracts created before artifact tracking landed only have the legacy `Contract.s3_key` / `mime_type` / `file_hash_sha256` columns. Download falls back to those columns when no `original_upload` artifact exists, but operators should run the backfill once after deploying so the artifact row is the source of truth:
+
+  ```sh
+  # Dry run — report what would be created without writing anything.
+  python -m backend.scripts.backfill_contract_artifacts --dry-run
+
+  # Real run.
+  python -m backend.scripts.backfill_contract_artifacts
+
+  # Optionally scope to a single organization.
+  python -m backend.scripts.backfill_contract_artifacts --organization-id <uuid>
+  ```
+
+  The script is idempotent: it skips contracts that already have an `original_upload` artifact and contracts with no legacy storage key. The legacy `Contract` columns are retained as a fallback and are not removed by the backfill.
+- **Agreement templates are first-class CLM objects.** Operators upload an NDA/MSA/SOW/DPA/etc. as an `AgreementTemplate`; the original DOCX or PDF is stored as an official `AgreementTemplateArtifact` (`is_official=true`, `artifact_type='original_upload'`) and the same Markdown converter that runs on contracts produces a working `AgreementTemplateMarkdownSnapshot` for fast preview and future local-first sync. Conversion failure is non-fatal: the upload still succeeds and the original remains the authoritative file.
+- **Template variables are metadata only in this release.** Templates can declare `AgreementTemplateVariable` rows (`counterparty_name`, `effective_date`, ...) so a later PR can render filled DOCX agreements; this PR does not generate DOCX, send to DocuSeal, or substitute placeholders. Variable keys are unique per template and are listed sorted by `sort_order`.
 
 ## Stack
 
