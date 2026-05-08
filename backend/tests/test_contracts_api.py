@@ -30,6 +30,7 @@ from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     Clause,
     Contract,
+    ContractMarkdownSnapshot,
     ContractStatus,
     ExtractedField,
     Organization,
@@ -98,6 +99,7 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             Contract.__table__,
             ExtractedField.__table__,
             Clause.__table__,
+            ContractMarkdownSnapshot.__table__,
         ]
     else:
         engine = create_async_engine(_container_async_url(postgres_container), echo=False)
@@ -795,3 +797,281 @@ async def test_clause_segmentation_failure_does_not_destroy_upload(
     listing = await client.get("/api/contracts", headers=_headers(user_org.user))
     assert listing.status_code == 200
     assert any(c["id"] == contract_id for c in listing.json())
+
+
+# --------------------------------------------------------------------------
+# Markdown working snapshot
+# --------------------------------------------------------------------------
+
+
+def _install_fake_markitdown(
+    monkeypatch: pytest.MonkeyPatch, text_content: str
+) -> None:
+    """Install a fake ``markitdown`` module so the service imports it."""
+    import sys
+    import types
+
+    class FakeConversionResult:
+        def __init__(self, text: str) -> None:
+            self.text_content = text
+
+    class FakeMarkItDown:
+        def convert(self, _path: str) -> Any:
+            return FakeConversionResult(text_content)
+
+    fake_module = types.ModuleType("markitdown")
+    fake_module.MarkItDown = FakeMarkItDown  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "markitdown", fake_module)
+
+
+def _disable_markitdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the service down the fallback path by killing the import."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "markitdown", None)
+
+
+async def test_upload_persists_markdown_snapshot_via_markitdown(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_markitdown(monkeypatch, "# MSA\n\nEffective Date: 2026-05-08.")
+    user_org = await _create_user_org(db_session)
+
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+        data={"title": "Vendor MSA"},
+    )
+    assert response.status_code == 201
+    contract_id = uuid.UUID(response.json()["id"])
+
+    snaps = (
+        await db_session.execute(
+            select(ContractMarkdownSnapshot).where(
+                ContractMarkdownSnapshot.contract_id == contract_id
+            )
+        )
+    ).scalars().all()
+    assert len(snaps) == 1
+    snap = snaps[0]
+    assert snap.converter_name == "markitdown"
+    assert snap.conversion_status == "ready"
+    assert snap.markdown_text.startswith("# MSA")
+    assert snap.organization_id == user_org.org.id
+    assert snap.source_kind == "original_upload"
+    assert snap.created_by == user_org.user.id
+
+
+async def test_upload_uses_fallback_plain_text_when_markitdown_missing(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_markitdown(monkeypatch)
+    user_org = await _create_user_org(db_session)
+
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    assert response.status_code == 201
+    contract_id = uuid.UUID(response.json()["id"])
+
+    snap = (
+        await db_session.execute(
+            select(ContractMarkdownSnapshot).where(
+                ContractMarkdownSnapshot.contract_id == contract_id
+            )
+        )
+    ).scalar_one_or_none()
+    assert snap is not None
+    assert snap.converter_name == "fallback_plain_text"
+    assert snap.conversion_status == "ready"
+    assert "Effective Date" in snap.markdown_text
+
+
+async def test_markdown_conversion_failure_does_not_destroy_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A markdown conversion crash MUST NOT take the upload down with it."""
+    from app.services import document_markdown as md_service
+
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("markdown service exploded")
+
+    monkeypatch.setattr(
+        contracts_api, "create_markdown_snapshot_for_contract", boom
+    )
+    _ = md_service  # silence "imported but unused" if linter inspects
+
+    user_org = await _create_user_org(db_session)
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == ContractStatus.READY.value
+
+
+async def test_get_markdown_returns_latest_snapshot(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_markitdown(monkeypatch, "# v1")
+    user_org = await _create_user_org(db_session)
+
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    assert upload.status_code == 201
+    contract_id = upload.json()["id"]
+
+    # Append a newer snapshot directly to verify "latest by created_at desc".
+    # SQLite's now() resolves to seconds, so set an explicit later timestamp
+    # to make the ordering deterministic on fast machines.
+    from datetime import UTC, datetime, timedelta
+
+    newer = ContractMarkdownSnapshot(
+        contract_id=uuid.UUID(contract_id),
+        organization_id=user_org.org.id,
+        markdown_text="# v2 newer",
+        source_kind="manual_edit",
+        converter_name="markitdown",
+        conversion_status="ready",
+        created_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+    db_session.add(newer)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/markdown",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["contract_id"] == contract_id
+    assert body["markdown_text"] == "# v2 newer"
+    assert body["source_kind"] == "manual_edit"
+    assert body["conversion_status"] == "ready"
+    _assert_no_secrets(body)
+
+
+async def test_get_markdown_returns_404_when_no_snapshot(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_markitdown(monkeypatch)
+    # Strip the parser's full_text so the fallback also has nothing to wrap.
+    monkeypatch.setattr(
+        contracts_api,
+        "parse_document",
+        lambda file_bytes, filename: ParsedDocument(
+            full_text="",
+            pages=(
+                ParsedPage(
+                    page_number=1,
+                    text="",
+                    char_start=0,
+                    char_end=0,
+                    blocks=(),
+                ),
+            ),
+            page_count=1,
+            content_hash="0" * 64,
+        ),
+    )
+
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    assert upload.status_code == 201
+    contract_id = upload.json()["id"]
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/markdown",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_get_markdown_is_org_scoped(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_markitdown(monkeypatch, "# Sensitive")
+    owner = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(owner.user),
+        files=_file_tuple(),
+    )
+    assert upload.status_code == 201
+    contract_id = upload.json()["id"]
+
+    other_org_user = await _create_user_org(db_session)
+    cross = await client.get(
+        f"/api/contracts/{contract_id}/markdown",
+        headers=_headers(other_org_user.user),
+    )
+    # Cross-org access must look like "not found" — never leak existence.
+    assert cross.status_code == 404
+
+
+async def test_get_markdown_requires_dev_user_header(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(f"/api/contracts/{uuid.uuid4()}/markdown")
+    assert response.status_code == 401
+
+
+async def test_get_markdown_skips_failed_snapshots(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    contract = Contract(
+        organization_id=user_org.org.id,
+        uploaded_by=user_org.user.id,
+        title="Manual",
+        status=ContractStatus.READY.value,
+        s3_key="documents/manual.enc",
+        mime_type="application/pdf",
+        file_hash_sha256="b" * 64,
+        page_count=1,
+        full_text="manual",
+    )
+    db_session.add(contract)
+    await db_session.flush()
+
+    failed = ContractMarkdownSnapshot(
+        contract_id=contract.id,
+        organization_id=user_org.org.id,
+        markdown_text="",
+        source_kind="original_upload",
+        converter_name="none",
+        conversion_status="failed",
+    )
+    db_session.add(failed)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract.id}/markdown",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404

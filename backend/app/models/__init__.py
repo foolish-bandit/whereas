@@ -152,6 +152,74 @@ class Contract(Base):
     playbook_review_runs: Mapped[list[PlaybookReviewRun]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
+    markdown_snapshots: Mapped[list[ContractMarkdownSnapshot]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+
+
+# ------------------------------------------------------------------
+# Markdown working representation
+# ------------------------------------------------------------------
+
+
+class ContractMarkdownSnapshot(Base):
+    """A lightweight Markdown working snapshot of a contract.
+
+    The DOCX/PDF is the original legal artifact. This row is a fast,
+    structured representation used for preview, search, and future
+    local-first sync. Snapshots are append-only: the latest snapshot
+    for a contract is fetched by ``created_at`` desc. Conversion
+    failures are persisted with ``conversion_status='failed'`` only
+    when there is something useful to record; an upload that produces
+    no markdown simply skips writing a row.
+    """
+
+    __tablename__ = "contract_markdown_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+    )
+    # Reserved for a future contract-version model; nullable for now so a
+    # later migration can backfill without rewriting these rows.
+    contract_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+
+    markdown_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # e.g. "original_upload", "generated", "manual_edit"
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # e.g. "markitdown", "fallback_plain_text"
+    converter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    converter_version: Mapped[str | None] = mapped_column(String(64))
+    # "ready", "failed"
+    conversion_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    conversion_warnings: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
+    contract: Mapped[Contract] = relationship(back_populates="markdown_snapshots")
+
+    __table_args__ = (
+        Index("ix_contract_markdown_snapshots_created_at", "created_at"),
+    )
 
 
 # ------------------------------------------------------------------

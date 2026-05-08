@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import BrowserCapabilitiesCard from "../components/BrowserCapabilitiesCard";
 import FirstRunSetupCard from "../components/FirstRunSetupCard";
 import {
   clearDevUserId,
@@ -133,6 +134,8 @@ export default function SettingsPage() {
           </p>
         </div>
       </div>
+
+      <BrowserCapabilitiesCard />
 
       <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas-subtle p-5 text-xs text-ink-muted">
         <h2 className="text-sm font-medium text-ink">A reminder</h2>

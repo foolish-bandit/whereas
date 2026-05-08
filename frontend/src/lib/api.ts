@@ -5,6 +5,7 @@ import type {
   Clause,
   ContractDetail,
   ContractListItem,
+  ContractMarkdownSnapshot,
   UploadContractResponse,
 } from "../types/contracts";
 import type {
@@ -237,6 +238,35 @@ export async function getContract(
     options,
   );
   return scrubSecrets(data);
+}
+
+/**
+ * Fetch the latest Markdown working snapshot for a contract.
+ *
+ * Returns ``null`` when the backend reports no snapshot (HTTP 404).
+ * Other errors propagate as ``ApiError`` so callers can show the same
+ * banners they show for other contract API failures. Demo mode is not
+ * supported yet — callers should hide or stub the call there until
+ * mock data exists.
+ */
+export async function getContractMarkdown(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractMarkdownSnapshot | null> {
+  if (isDemoMode()) return null;
+  try {
+    const data = await call<ContractMarkdownSnapshot>(
+      `/api/contracts/${encodeURIComponent(id)}/markdown`,
+      { method: "GET" },
+      options,
+    );
+    return scrubSecrets(data);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function getContractClauses(
