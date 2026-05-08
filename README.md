@@ -201,7 +201,7 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#37 and the recommended next steps, see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
 
 ## Acknowledgments
 
