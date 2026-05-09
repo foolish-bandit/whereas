@@ -25,6 +25,8 @@ import type {
 import type { PlaybookReviewResult } from "../types/review";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
+  AgreementGenerationRequest,
+  AgreementGenerationResponse,
   AgreementTemplate,
   AgreementTemplateArtifact,
   AgreementTemplateCreateRequest,
@@ -994,4 +996,28 @@ export async function deleteAgreementTemplateVariable(
     { method: "DELETE", headers, signal: options.signal },
   );
   if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+/**
+ * Render a DOCX from a template + variable values. Creates a new
+ * draft Contract row plus a `generated_docx` ContractArtifact and
+ * returns both. Does NOT send anything to DocuSeal.
+ */
+export async function generateAgreementFromTemplate(
+  templateId: string,
+  payload: AgreementGenerationRequest,
+  options: ApiOptions = {},
+): Promise<AgreementGenerationResponse> {
+  if (isDemoMode())
+    return mockApi.generateAgreementFromTemplate(templateId, payload, options);
+  const data = await call<AgreementGenerationResponse>(
+    `/api/agreement-templates/${encodeURIComponent(templateId)}/generate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
 }

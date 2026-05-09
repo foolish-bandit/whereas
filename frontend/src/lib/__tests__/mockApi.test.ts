@@ -13,12 +13,16 @@ import { fieldHasValidSpan } from "../fields";
 import {
   __resetMockState,
   downloadContract,
+  generateAgreementFromTemplate,
   getContract,
   getContractClauses,
   getContracts,
   uploadContract,
 } from "../mockApi";
 import { MOCK_FAILED_ID, MOCK_LIST, MOCK_NDA_ID } from "../mockData";
+
+const NDA_TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
+const MSA_TEMPLATE_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("mockApi", () => {
   let fetchMock: Mock;
@@ -135,5 +139,57 @@ describe("mockApi", () => {
     await expect(
       getContracts({ signal: controller.signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  describe("generateAgreementFromTemplate (demo)", () => {
+    it("returns a generated contract + artifact for the canned NDA", async () => {
+      const result = await generateAgreementFromTemplate(NDA_TEMPLATE_ID, {
+        title: "Acme NDA",
+        variable_values: {
+          counterparty_name: "Acme Inc.",
+          effective_date: "2026-05-08",
+        },
+      });
+      expect(result.contract.title).toBe("Acme NDA");
+      expect(result.artifact.artifact_type).toBe("generated_docx");
+      expect(result.artifact.source).toBe("template_generation");
+      expect(result.variables_used.sort()).toEqual([
+        "counterparty_name",
+        "effective_date",
+      ]);
+      // Storage internals must never appear in the demo response.
+      const json = JSON.stringify(result);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+    });
+
+    it("rejects unknown variables", async () => {
+      await expect(
+        generateAgreementFromTemplate(NDA_TEMPLATE_ID, {
+          variable_values: {
+            counterparty_name: "Acme",
+            effective_date: "2026-05-08",
+            mystery: "x",
+          },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("rejects when a required variable is missing", async () => {
+      await expect(
+        generateAgreementFromTemplate(NDA_TEMPLATE_ID, {
+          variable_values: { counterparty_name: "Acme" },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("returns 409 when the template has no original upload", async () => {
+      // The MSA fixture has no original_upload artifact in the demo data.
+      await expect(
+        generateAgreementFromTemplate(MSA_TEMPLATE_ID, {
+          variable_values: {},
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
   });
 });
