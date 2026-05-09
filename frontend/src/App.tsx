@@ -10,6 +10,8 @@ import SettingsPage from "./pages/SettingsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
+import RequestsPage from "./pages/RequestsPage";
+import InboxPage from "./pages/InboxPage";
 import LandingPage from "./pages/marketing/LandingPage";
 
 export default function App() {
@@ -43,6 +45,8 @@ function DemoApp() {
           path="agreement-templates/:id"
           element={<AgreementTemplateDetailPage />}
         />
+        <Route path="requests" element={<RequestsPage />} />
+        <Route path="inbox" element={<InboxPage />} />
         <Route path="*" element={<Navigate to="contracts" replace />} />
       </Routes>
     </AppShell>

@@ -12,9 +12,13 @@ from app.api import (
     clause_templates,
     contracts,
     docuseal_bridge,
+    inbox_items,
     playbooks,
     qa,
     setup,
+)
+from app.api import (
+    requests as request_routes,
 )
 from app.core.config import get_settings
 from app.core.database import engine
@@ -58,6 +62,12 @@ app.include_router(
     agreement_templates.router,
     prefix="/api/agreement-templates",
     tags=["agreement-templates"],
+)
+app.include_router(
+    request_routes.router, prefix="/api/requests", tags=["requests"]
+)
+app.include_router(
+    inbox_items.router, prefix="/api/inbox-items", tags=["inbox-items"]
 )
 app.include_router(qa.router, prefix="/api/qa", tags=["qa"])
 app.include_router(docuseal_bridge.router, prefix="/api/docuseal", tags=["docuseal"])

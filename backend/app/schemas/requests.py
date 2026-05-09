@@ -1,0 +1,90 @@
+"""Request/response schemas for ``/api/requests``.
+
+``ContractRequest`` is the intake/business workflow object — the place a
+non-lawyer says "I need an NDA with X" so the legal team can triage,
+assign, and convert later. The schema deliberately keeps the taxonomy
+(``request_type``, ``contract_type``, ``priority``) free-form so users
+can model their own categories without a migration; suggested values are
+documented inline.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ContractRequestCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+
+    # Suggested: new_contract, review_existing, amendment, renewal, other.
+    request_type: str | None = Field(default=None, max_length=64)
+    # Suggested: NDA, MSA, SOW, DPA, Employment Agreement, Lease, Other.
+    contract_type: str | None = Field(default=None, max_length=64)
+    # Suggested: low, normal, high, urgent.
+    priority: str | None = Field(default=None, max_length=16)
+
+    requester_name: str | None = Field(default=None, max_length=255)
+    requester_email: str | None = Field(default=None, max_length=255)
+    counterparty_name: str | None = Field(default=None, max_length=255)
+
+    due_date: date | None = None
+    assigned_to: uuid.UUID | None = None
+    linked_contract_id: uuid.UUID | None = None
+    linked_template_id: uuid.UUID | None = None
+
+    metadata_json: dict[str, Any] | None = None
+
+
+class ContractRequestUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+
+    request_type: str | None = Field(default=None, max_length=64)
+    contract_type: str | None = Field(default=None, max_length=64)
+
+    # Constrained to the ContractRequestStatus enum in the route handler.
+    status: str | None = Field(default=None, max_length=16)
+    priority: str | None = Field(default=None, max_length=16)
+
+    requester_name: str | None = Field(default=None, max_length=255)
+    requester_email: str | None = Field(default=None, max_length=255)
+    counterparty_name: str | None = Field(default=None, max_length=255)
+
+    due_date: date | None = None
+    assigned_to: uuid.UUID | None = None
+    linked_contract_id: uuid.UUID | None = None
+    linked_template_id: uuid.UUID | None = None
+
+    metadata_json: dict[str, Any] | None = None
+
+
+class ContractRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    title: str
+    description: str | None = None
+    request_type: str | None = None
+    contract_type: str | None = None
+    status: str
+    priority: str | None = None
+    requester_name: str | None = None
+    requester_email: str | None = None
+    counterparty_name: str | None = None
+    due_date: date | None = None
+    assigned_to: uuid.UUID | None = None
+    linked_contract_id: uuid.UUID | None = None
+    linked_template_id: uuid.UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    created_by: uuid.UUID | None = None
+    metadata_json: dict[str, Any] | None = None

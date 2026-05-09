@@ -9,12 +9,13 @@ Design notes:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -921,5 +922,202 @@ class AgreementTemplateVariable(Base):
             "organization_id",
             "template_id",
             "key",
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Requests + Inbox (PR #47 — CLM intake / work queue foundation)
+#
+# ContractRequest is the intake/business workflow object: someone in the
+# org asks for a contract (new NDA, MSA, amendment, renewal, ...) and the
+# request is tracked through to completion or cancellation.
+#
+# InboxItem is the work-queue/task object: the per-user surface that says
+# "this needs your attention." Creating a request automatically creates
+# one open ``request_review`` inbox item so the request is discoverable
+# without polling the requests list.
+#
+# Approval workflows, calendar reminders, and request-to-contract
+# generation are deliberately out of scope; this layer just gives us the
+# domain objects to build them on top of later.
+# ---------------------------------------------------------------------------
+
+
+class ContractRequestStatus(StrEnum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class InboxItemStatus(StrEnum):
+    OPEN = "open"
+    COMPLETED = "completed"
+    DISMISSED = "dismissed"
+
+
+class ContractRequest(Base):
+    """An intake record for contract work.
+
+    Free-form ``request_type`` and ``contract_type`` strings so customers
+    can model their own taxonomy without a migration; the suggested
+    values are documented in the API schema.
+    """
+
+    __tablename__ = "contract_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    # Suggested values: new_contract, review_existing, amendment, renewal, other.
+    request_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Suggested values: NDA, MSA, SOW, DPA, Employment Agreement, Lease, Other.
+    contract_type: Mapped[str | None] = mapped_column(String(64), index=True)
+
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=ContractRequestStatus.OPEN.value,
+        nullable=False,
+        index=True,
+    )
+    # Suggested values: low, normal, high, urgent.
+    priority: Mapped[str | None] = mapped_column(String(16), index=True)
+
+    requester_name: Mapped[str | None] = mapped_column(String(255))
+    requester_email: Mapped[str | None] = mapped_column(String(255))
+    counterparty_name: Mapped[str | None] = mapped_column(String(255))
+
+    due_date: Mapped[date | None] = mapped_column(Date, index=True)
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
+
+    linked_contract_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contracts.id"), nullable=True, index=True
+    )
+    linked_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id"),
+        nullable=True,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    inbox_items: Mapped[list[InboxItem]] = relationship(
+        back_populates="request", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_contract_requests_org_status_due",
+            "organization_id",
+            "status",
+            "due_date",
+        ),
+        Index(
+            "ix_contract_requests_org_assigned_status",
+            "organization_id",
+            "assigned_to",
+            "status",
+        ),
+    )
+
+
+class InboxItem(Base):
+    """A per-user work-queue item.
+
+    An inbox item points at a request, contract, or template (or none of
+    the above for a free-floating "general" task). Creating a
+    ``ContractRequest`` automatically creates an open ``request_review``
+    inbox item; future PRs may emit items for contract execution
+    follow-ups, missing metadata cleanup, etc.
+    """
+
+    __tablename__ = "inbox_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    # Suggested values: request_review, contract_review, signature_followup,
+    # metadata_cleanup, general.
+    item_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=InboxItemStatus.OPEN.value,
+        nullable=False,
+        index=True,
+    )
+    priority: Mapped[str | None] = mapped_column(String(16), index=True)
+
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
+    due_date: Mapped[date | None] = mapped_column(Date, index=True)
+
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contract_requests.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    contract_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contracts.id"), nullable=True, index=True
+    )
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id"),
+        nullable=True,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    request: Mapped[ContractRequest | None] = relationship(back_populates="inbox_items")
+
+    __table_args__ = (
+        Index(
+            "ix_inbox_items_org_status_due",
+            "organization_id",
+            "status",
+            "due_date",
+        ),
+        Index(
+            "ix_inbox_items_org_assigned_status",
+            "organization_id",
+            "assigned_to",
+            "status",
         ),
     )

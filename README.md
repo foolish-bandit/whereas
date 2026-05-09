@@ -205,7 +205,14 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#45 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract) and the recommended next step — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#47 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract) and the new Requests + Inbox intake/work-queue layer added in PR #47 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+
+Whereas tracks two layers of work:
+
+- **Requests** are intake records: someone asks for a contract (new NDA, MSA, amendment, renewal). Status moves from open → in_progress → completed (or cancelled).
+- **Inbox items** are the per-user work queue. Creating a request automatically creates a `request_review` inbox item; future PRs will emit signature follow-up and metadata cleanup items as well.
+
+Approval workflows and calendar reminders are deliberately not part of this foundation — they belong on top.
 
 ## Acknowledgments
 
