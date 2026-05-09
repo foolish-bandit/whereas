@@ -21,6 +21,8 @@ Limitations to know about:
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -35,7 +37,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 settings = get_settings()
@@ -174,14 +176,238 @@ async def send_document_to_docuseal(
             ) from exc
 
 
-async def verify_docuseal_webhook(*, signature: str, body: bytes) -> bool:
+DOCUSEAL_SIGNATURE_HEADER = "X-Docuseal-Signature"
+DOCUSEAL_SHARED_SECRET_HEADER = "X-Whereas-Docuseal-Webhook-Secret"
+# Tolerance for the timestamp embedded in ``X-Docuseal-Signature``.
+# Mirrors the standard webhook-signing window (Stripe, Slack, etc.) and
+# is wide enough to absorb clock skew + DocuSeal's local queueing
+# delays without becoming a replay-window worth attacking.
+WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60
+
+
+class WebhookVerificationError(Exception):
+    """Raised when a DocuSeal webhook payload cannot be authenticated.
+
+    Carries an HTTP status hint so the route layer can map it onto a
+    response without leaking implementation details.
+    """
+
+    status_code: int = 401
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        if status_code is not None:
+            self.status_code = status_code
+
+
+def verify_docuseal_webhook(
+    *,
+    headers: dict[str, str] | Any,
+    body: bytes,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> None:
     """Verify a webhook callback from DocuSeal.
 
-    DocuSeal POSTs back when submissions change state. We verify the signature
-    using the shared secret before trusting the payload.
+    Two acceptable proofs of origin, in order of preference:
 
-    Implementation depends on DocuSeal's specific webhook signing scheme.
-    Stub for now; fill in once the webhook contract is finalized for v0.1.
+      1. ``X-Docuseal-Signature`` (DocuSeal's documented header): the
+         literal string ``"{timestamp}.{signature}"`` where
+         ``signature`` is the HMAC-SHA256 hex digest of
+         ``"{timestamp}.{raw_body}"`` keyed on
+         ``DOCUSEAL_WEBHOOK_SECRET``. The timestamp is a UTC UNIX
+         epoch (seconds). We reject anything older than
+         ``WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS`` to close the replay
+         window. Header lookup is case-insensitive (``X-Docuseal-Signature``
+         and ``X-DocuSeal-Signature`` both work; DocuSeal docs use the
+         former and Whereas matches that spelling).
+      2. ``X-Whereas-Docuseal-Webhook-Secret``: the literal value of
+         ``DOCUSEAL_WEBHOOK_SECRET``. Provided as an interim path for
+         operators on DocuSeal versions that cannot emit signed
+         webhooks. Documented as interim in the README. This path is
+         only consulted when no ``X-Docuseal-Signature`` header is
+         present — a request with the documented signature header
+         must pass the documented check or fail; the shared-secret
+         header cannot be used as a fallback to override an invalid
+         HMAC.
+
+    Production deployments must set ``DOCUSEAL_WEBHOOK_SECRET``. When
+    it is unset, this function raises in any environment other than
+    ``development`` so a misconfigured production instance cannot
+    silently accept unsigned webhooks. Development still rejects
+    invalid signatures when the secret IS set; the dev escape hatch
+    only applies when no secret is configured at all.
+
+    Raises ``WebhookVerificationError`` on any failure mode (missing
+    secret in non-dev, missing/malformed/stale signature, mismatched
+    signature). Returns ``None`` on success — the body remains the
+    caller's responsibility to parse.
+
+    The body is treated as opaque bytes; this function does not log
+    it, because DocuSeal payloads carry signer/document data we do
+    not want flowing into log aggregation.
     """
-    # TODO(v0.1): implement HMAC verification against settings.DOCUSEAL_AUTH_BRIDGE_SECRET
-    raise NotImplementedError("Webhook verification not yet implemented")
+    if settings is None:
+        settings = get_settings()
+
+    secret = (settings.DOCUSEAL_WEBHOOK_SECRET or "").strip()
+    header_lookup = _CaseInsensitiveHeaders(headers)
+
+    if not secret:
+        if settings.ENVIRONMENT == "development":
+            log.warning(
+                "Accepting DocuSeal webhook without verification "
+                "(DOCUSEAL_WEBHOOK_SECRET unset; development only).",
+            )
+            return
+        raise WebhookVerificationError(
+            "Webhook secret is not configured.",
+            status_code=503,
+        )
+
+    sent_signature = header_lookup.get(DOCUSEAL_SIGNATURE_HEADER)
+    if sent_signature is not None:
+        _verify_timestamped_hmac(
+            header_value=sent_signature,
+            body=body,
+            secret=secret,
+            now=now or datetime.now(UTC),
+        )
+        return
+
+    sent_shared = header_lookup.get(DOCUSEAL_SHARED_SECRET_HEADER)
+    if sent_shared and hmac.compare_digest(sent_shared.strip(), secret):
+        return
+
+    raise WebhookVerificationError("Webhook signature missing.")
+
+
+def _verify_timestamped_hmac(
+    *,
+    header_value: str,
+    body: bytes,
+    secret: str,
+    now: datetime,
+) -> None:
+    """Verify a ``"{timestamp}.{signature}"`` header value.
+
+    Splits on the first ``.`` only; this is a deliberate choice — the
+    HMAC hex digest never contains a ``.`` so a single-split is
+    unambiguous, and being strict about the format keeps a future
+    DocuSeal version that adds extra fields from accidentally
+    succeeding under partial parsing.
+    """
+    raw = header_value.strip()
+    if not raw or "." not in raw:
+        raise WebhookVerificationError("Webhook signature is malformed.")
+    timestamp_str, _, signature = raw.partition(".")
+    if not timestamp_str or not signature:
+        raise WebhookVerificationError("Webhook signature is malformed.")
+
+    try:
+        sent_ts = int(timestamp_str)
+    except ValueError as exc:
+        raise WebhookVerificationError(
+            "Webhook signature timestamp is malformed."
+        ) from exc
+
+    skew = abs(int(now.timestamp()) - sent_ts)
+    if skew > WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:
+        # Both "in the past" (replay) and "too far in the future"
+        # (clock skew on either side) resolve to the same rejection;
+        # don't echo the exact direction back.
+        raise WebhookVerificationError("Webhook signature is stale.")
+
+    signed_payload = timestamp_str.encode("ascii") + b"." + body
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature.strip().lower()):
+        raise WebhookVerificationError("Webhook signature mismatch.")
+
+
+class _CaseInsensitiveHeaders:
+    """Tiny lookup helper.
+
+    FastAPI gives us ``Request.headers`` (Starlette ``Headers``, which
+    is already case-insensitive), but the verifier is also called from
+    tests that pass plain dicts. Normalize once at the boundary.
+    """
+
+    def __init__(self, headers: Any) -> None:
+        self._normalized = {
+            (k.lower() if isinstance(k, str) else k): v
+            for k, v in (
+                headers.items() if hasattr(headers, "items") else headers
+            )
+        }
+
+    def get(self, name: str) -> str | None:
+        value = self._normalized.get(name.lower())
+        return value if isinstance(value, str) else None
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((httpx.HTTPError, RetryableDocuSealError)),
+    reraise=True,
+)
+async def get_signed_document_from_docuseal(
+    *,
+    submission_id: str,
+    user_id: uuid.UUID | str,
+    user_email: str,
+    organization_id: uuid.UUID | str,
+) -> bytes:
+    """Pull the completed (signed) document for a submission.
+
+    DocuSeal exposes the executed document as a ``combined`` artifact
+    on a completed submission. The endpoint shape is
+    ``GET /api/submissions/{id}/documents/combined`` returning the raw
+    PDF bytes. Operators may run an older DocuSeal where the same
+    endpoint is ``/api/submissions/{id}.pdf`` — the v1 shape is the
+    one Whereas requires; older versions are not supported here and
+    surface as a clean 502 rather than silently falling back.
+
+    Whereas re-encrypts the response under the org master key before
+    storage; the bytes are not written to disk anywhere in this code
+    path. The retry decorator covers transient network failures and
+    5xx upstream responses; 4xx is terminal.
+    """
+    token = mint_docuseal_token(
+        user_id=str(user_id),
+        email=user_email,
+        organization_id=str(organization_id),
+    )
+    url = (
+        f"{settings.DOCUSEAL_BASE_URL}/api/submissions/"
+        f"{submission_id}/documents/combined"
+    )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise RetryableDocuSealError(
+                f"Could not reach DocuSeal: {type(exc).__name__}.",
+            ) from exc
+    if response.status_code >= 500:
+        raise RetryableDocuSealError(
+            f"DocuSeal returned {response.status_code} for signed document.",
+        )
+    if response.status_code >= 400:
+        raise DocuSealError(
+            f"DocuSeal rejected the signed-document fetch ({response.status_code}).",
+            status_code=502,
+        )
+    if not response.content:
+        raise DocuSealError(
+            "DocuSeal returned an empty signed document.",
+            status_code=502,
+        )
+    return response.content

@@ -773,18 +773,24 @@ async def download_contract(
     """Download the official legal artifact for a contract.
 
     Resolution order:
-      1. Latest official ``original_upload`` ContractArtifact (the v1
-         upload flow writes one of these per upload).
+      1. Latest official ``signed_pdf`` ContractArtifact, if present
+         (DocuSeal completion writes this — once a contract has been
+         executed, the signed PDF is the official record).
       2. Latest official ``generated_docx`` ContractArtifact (template
          generation flow; the contract has no ``original_upload``).
-      3. Legacy ``Contract.s3_key`` / ``Contract.mime_type``, for
+      3. Latest official ``original_upload`` ContractArtifact (the v1
+         upload flow writes one of these per upload).
+      4. Legacy ``Contract.s3_key`` / ``Contract.mime_type``, for
          contracts uploaded before the artifact model landed and not
          yet backfilled.
 
-    The wrapped DEK still lives on the Contract row in v1 — artifacts
-    don't carry their own wrapping yet, so the encryption seam is
-    unchanged. ``storage_key`` is read off the resolved source and
-    never echoed back to the client.
+    The wrapped DEK is read from the artifact row when present
+    (``signed_pdf`` always carries its own DEK; older artifacts may
+    not). When the artifact has no wrapped DEK we fall back to
+    ``Contract.wrapped_dek`` — the pre-#45 invariant where every
+    artifact for a contract was encrypted under the same DEK.
+    ``storage_key`` is read off the resolved source and never echoed
+    back to the client.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
     contract = await _get_contract_for_org(
@@ -792,8 +798,6 @@ async def download_contract(
         contract_id=contract_id,
         organization_id=user.organization_id,
     )
-    if contract.wrapped_dek is None:
-        raise HTTPException(status_code=409, detail="Contract encryption metadata is missing.")
 
     artifact = await get_latest_official_downloadable_artifact(
         session,
@@ -810,6 +814,27 @@ async def download_contract(
         if artifact is not None and artifact.mime_type
         else contract.mime_type
     )
+    wrapped_dek_bytes = (
+        artifact.wrapped_dek
+        if artifact is not None and artifact.wrapped_dek is not None
+        else contract.wrapped_dek
+    )
+    if wrapped_dek_bytes is None:
+        raise HTTPException(
+            status_code=409, detail="Contract encryption metadata is missing."
+        )
+
+    # AAD must match what was used at ``store_encrypted`` time. Older
+    # artifacts (and the legacy ``Contract.s3_key`` blob) were encrypted
+    # under ``document_id=str(contract.id)``. Per-artifact-DEK rows
+    # (``signed_pdf`` from PR #45) use a unique document id derived
+    # from the storage key. We can recover that id deterministically
+    # because ``DocumentStorage._s3_key_for`` uses
+    # ``documents/{document_id}.enc`` for every blob.
+    if artifact is not None and artifact.wrapped_dek is not None and artifact.storage_key:
+        decrypt_document_id = _document_id_from_storage_key(artifact.storage_key) or str(contract.id)
+    else:
+        decrypt_document_id = str(contract.id)
 
     org = await _load_organization(session, user.organization_id)
     org_master_key = _load_org_key_or_http(org)
@@ -817,8 +842,8 @@ async def download_contract(
     try:
         plaintext = await storage.retrieve_decrypted(
             s3_key=storage_key,
-            document_id=str(contract.id),
-            wrapped_dek_bytes=contract.wrapped_dek,
+            document_id=decrypt_document_id,
+            wrapped_dek_bytes=wrapped_dek_bytes,
             org_master_key=org_master_key,
         )
     except Exception as e:
@@ -1208,6 +1233,22 @@ def _download_filename(
     if not base.lower().endswith(ext):
         base = f"{base}{ext}"
     return base[:180]
+
+
+_STORAGE_KEY_RE = re.compile(r"^documents/(?P<document_id>.+)\.enc$")
+
+
+def _document_id_from_storage_key(storage_key: str) -> str | None:
+    """Recover the document_id originally bound into AAD from a storage key.
+
+    ``DocumentStorage._s3_key_for`` is the only writer of storage keys
+    and uses ``documents/{document_id}.enc`` exclusively, so this
+    inversion is exact and stable. Returns ``None`` for any key that
+    doesn't match the convention so the caller can fall back to the
+    legacy AAD.
+    """
+    m = _STORAGE_KEY_RE.match(storage_key)
+    return m.group("document_id") if m is not None else None
 
 
 def _send_filename(

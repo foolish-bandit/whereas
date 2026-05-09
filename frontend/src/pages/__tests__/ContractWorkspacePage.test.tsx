@@ -184,6 +184,27 @@ describe("ContractWorkspacePage markdown integration", () => {
     ).toBeInTheDocument();
   });
 
+  it("prefers signed_pdf over original_upload in the artifact strip", async () => {
+    const SIGNED = {
+      ...ARTIFACT,
+      id: "55555555-5555-4555-8555-555555555555",
+      artifact_type: "signed_pdf",
+      filename: "executed-msa.signed.pdf",
+      mime_type: "application/pdf",
+      source: "docuseal",
+    };
+    setupFetch(fetchMock, { artifacts: [SIGNED, ARTIFACT] });
+    renderPage();
+    const strip = await screen.findByTestId("signed-artifact-strip");
+    expect(strip).toHaveTextContent(/signed artifact/i);
+    expect(strip).toHaveTextContent("executed-msa.signed.pdf");
+    expect(strip).toHaveTextContent(/signed/i);
+    // The "original" strip must NOT also render — only one strip.
+    expect(
+      screen.queryByTestId("original-artifact-strip"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders neither artifact strip when the artifacts API fails", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
