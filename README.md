@@ -205,7 +205,7 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#48 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer added in PR #47, and the request → contract conversion route added in PR #48 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#49 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer added in PR #47, the request → contract conversion route added in PR #48, and the dashboard analytics foundation added in PR #49 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
 
 Whereas tracks two layers of work:
 
@@ -214,7 +214,9 @@ Whereas tracks two layers of work:
 
 A request that carries a `linked_template_id` can be **converted to a draft Contract** in one click via `POST /api/requests/{id}/convert-to-contract`. The conversion reuses the existing `AgreementTemplate` generation path, links the new contract back to the request, marks the request `completed`, and resolves the linked open `request_review` inbox item — all in the same transaction. The endpoint stops at "draft Contract": sending out for signature is still a separate explicit step from the Contract workspace.
 
-Approval workflows, upload-file request conversion (uploading a counterparty paper directly through the request), one-click convert-and-send to DocuSeal, calendar reminders, and dashboard analytics are deliberately not part of this layer — they belong on top.
+A **dashboard summary** at `GET /api/dashboard/summary` (and the corresponding Dashboard page) gives a read-only view of CLM activity in the workspace: open / in-progress request counts, urgent + high-priority counts, open and overdue inbox counts, contract totals broken down by sent-for-signature and executed, active template count, plus small lists of requests / inbox items due in the next 14 days and the most recent contracts, requests, and signed contracts. It is a lightweight aggregate of existing state, **not** a reporting / BI engine — there are no charts, cycle-time metrics, or workload-by-assignee breakdowns yet.
+
+Approval workflows, upload-file request conversion (uploading a counterparty paper directly through the request), one-click convert-and-send to DocuSeal, calendar reminders, richer dashboard analytics (charts, cycle time, workload by assignee), and PowerSync sync rules are deliberately not part of this layer — they belong on top.
 
 ## Acknowledgments
 

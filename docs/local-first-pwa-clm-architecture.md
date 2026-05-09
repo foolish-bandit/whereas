@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, and section 11 for the next PR.
 
 ---
 
@@ -123,6 +123,7 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - DocuSeal bridge router (`app/api/docuseal_bridge.py`) exposes a verified `POST /webhook` endpoint that materializes `signed_pdf` artifacts and flips contract status to `EXECUTED`.
 - PR #47 added the CLM intake / work-queue layer: `ContractRequest` and `InboxItem` tables with full CRUD endpoints, plus an automatic `request_review` inbox item created in the same transaction as every new request. See section 7.
 - PR #48 closed the loop between intake and template generation: a request carrying a `linked_template_id` can now be converted to a draft `Contract` via `POST /api/requests/{request_id}/convert-to-contract`. The endpoint reuses the same `generate_docx_from_template()` service the agreement-templates surface uses, links the new contract back onto the request, marks the request `completed`, and resolves the open `request_review` inbox item — all in one transaction. Approval workflows, upload-file conversion, and a one-click convert-and-send remain future work.
+- PR #49 added a **dashboard analytics foundation**: a single read-only endpoint `GET /api/dashboard/summary` plus a Dashboard page. It returns counts (open / in-progress / urgent-or-high-priority requests; open / overdue inbox items; total / sent-for-signature / executed contracts; active templates), small lists of requests and inbox items due in the next 14 days, and the most recent contracts / requests / signed contracts. Org-scoped. No new tables, no caching layer, no charts — every query is a `COUNT(*)` or `ORDER BY ... LIMIT 5` over existing indexes. Compact projections (`Dashboard*Summary`) are explicit allowlists so storage internals can't accidentally end up on the surface.
 - Existing background concerns: extraction, clause segmentation, deviation findings, playbook review runs, audit log.
 
 ### Frontend
@@ -589,6 +590,15 @@ All routes are org-scoped through the same dev-user header pattern (`X-Whereas-D
 - `PATCH  /api/inbox-items/{item_id}`.
 - `DELETE /api/inbox-items/{item_id}` — soft dismiss: `status = "dismissed"`.
 
+### Dashboard summary (PR #49)
+
+- `GET /api/dashboard/summary?limit=N` — read-only aggregate of CLM activity for the caller's org. ``limit`` defaults to 5 and is hard-capped at 20 by FastAPI's ``Query(le=20)``.
+- Counts: `open_requests`, `in_progress_requests`, `urgent_or_high_priority_requests` (open or in-progress, priority urgent or high), `open_inbox_items`, `overdue_inbox_items` (open + due_date < today), `contracts_total`, `contracts_sent_for_signature`, `contracts_executed`, `templates_active`.
+- Upcoming lists: requests and inbox items with ``due_date`` in `[today, today + 14 days]` (inclusive). Requests filter to open/in_progress; inbox items filter to open. Cancelled requests and dismissed/completed inbox items never appear.
+- Recent activity: top-N contracts (by `created_at`), top-N requests (by `created_at`, cancelled excluded), top-N executed contracts (by `updated_at`).
+- Compact projections (`DashboardRequestSummary`, `DashboardInboxSummary`, `DashboardContractSummary`) — *not* the full detail responses. Contract summaries carry `has_generated_docx` / `has_signed_pdf` booleans assembled from a single `contract_artifacts` metadata-only lookup; storage / encryption columns and `full_text` are deliberately excluded.
+- All queries filter on `organization_id`. There is no cross-org query parameter.
+
 ---
 
 ## 8. Security / Privacy / Data Handling Rules
@@ -633,15 +643,17 @@ Tracked, intentionally not implemented:
 
 ---
 
-## 10. PR #48 closed the request → contract conversion loop
+## 10. PRs #48 and #49 — request → contract conversion + dashboard foundation
 
-(See section 5.3 for the live domain rules and section 7 for the API surface.) The conversion route reuses the same template generation service as the agreement-templates surface — there is exactly one code path that turns a template + variable values into a draft `Contract` + `generated_docx` `ContractArtifact`. A request with `linked_template_id` is now a one-click draft, and the request is closed out and the matching `request_review` inbox item is resolved in the same transaction. The route is stricter than necessary on idempotency (already-converted requests 409 rather than silently returning the existing draft) so accidental re-clicks can't quietly produce duplicate contracts.
+PR #48 closed the loop between intake and template generation: the conversion route reuses the same `generate_docx_from_template()` service as the agreement-templates surface, so there is exactly one code path that turns a template + variable values into a draft `Contract` + `generated_docx` `ContractArtifact`. A request with `linked_template_id` is now a one-click draft, and the request is closed out and the matching `request_review` inbox item is resolved in the same transaction. The route is stricter than necessary on idempotency (already-converted requests 409 rather than silently returning the existing draft) so accidental re-clicks can't quietly produce duplicate contracts.
 
-The recommended next PR (#49) builds on top of it.
+PR #49 added the **dashboard analytics foundation**: a single read-only `GET /api/dashboard/summary` endpoint plus a Dashboard page that lands on `/demo/dashboard`. It is intentionally narrow — counts, two due-soon lists, three recent-activity lists — and reuses no infrastructure. No materialized views, no caching layer, no charts, no cycle-time math. Compact `Dashboard*Summary` schemas (separate from the existing detail responses) keep storage internals off the surface by construction. The contract summary's `has_generated_docx` / `has_signed_pdf` booleans come from a single bulk artifact-existence query, so the dashboard doesn't fan out into N artifact lookups.
+
+The recommended next PR (#50) builds on top of these.
 
 ---
 
-## 11. Recommended Next PR: PR #49 — Approval workflow scaffold (or: Upload-file request conversion)
+## 11. Recommended Next PR: PR #50 — Approval workflow scaffold (or: Upload-file request conversion)
 
 Two complementary directions, both blocked on the same domain question: does an "approval" mean "another inbox item" or does it warrant its own table and lifecycle?
 
@@ -654,7 +666,7 @@ Suggested minimum scope:
 - A `RequestApproval` row per gated request, with `status: pending | approved | rejected` and `approver_user_id`.
 - Convert-to-contract returns 403 (or 409) until at least one matching approval is `approved`.
 - A new `request_approval` `InboxItem` type so approvers see the queue.
-- Frontend: an "Approvals" tab on the request detail surface.
+- Frontend: an "Approvals" tab on the request detail surface, plus a new `pending_approvals` count on the dashboard.
 
 ### 11b. Upload-file request conversion
 
@@ -665,13 +677,14 @@ Suggested minimum scope:
 - Reuse the existing `/api/contracts/upload` validation + storage path; do not duplicate it.
 - Same request/inbox transition semantics as the template path.
 
-### Out of scope for PR #49 (either direction)
+### Out of scope for PR #50 (either direction)
 
 - **Do not implement PowerSync yet.** The conversion semantics are now stable, but the approval shape isn't. Sync rules can lock in once approvals settle.
 - Calendar / Nango / reminders.
 - Clerk integration.
 - Local vault mode.
 - Rich DocuSeal status dashboard.
+- Charts, cycle-time metrics, workload-by-assignee on the dashboard — those are their own PR once the model decisions for approvals and assignments stabilize.
 
 ### Architecture asks (raise these before coding)
 
