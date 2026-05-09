@@ -53,6 +53,7 @@ import type {
   ConvertRequestToContractResponse,
   ListContractRequestFilters,
 } from "../types/requests";
+import type { DashboardSummary } from "../types/dashboard";
 import type {
   InboxItem,
   InboxItemCreateRequest,
@@ -1274,4 +1275,28 @@ export async function dismissInboxItem(
     { method: "DELETE", headers, signal: options.signal },
   );
   if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+
+// ---------------------------------------------------------------------------
+// Dashboard summary (PR #49 — read-only aggregate of CLM state)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the dashboard summary: counts, upcoming due-soon lists, and
+ * recent-activity feeds. Org-scoped on the server. The mock-mode
+ * variant returns a coherent snapshot derived from the same demo
+ * fixtures the rest of the app uses.
+ */
+export async function getDashboardSummary(
+  options: ApiOptions & { limit?: number } = {},
+): Promise<DashboardSummary> {
+  if (isDemoMode()) return mockApi.getDashboardSummary(options);
+  const qs = options.limit ? `?limit=${options.limit}` : "";
+  const data = await call<DashboardSummary>(
+    `/api/dashboard/summary${qs}`,
+    { method: "GET" },
+    { signal: options.signal },
+  );
+  return scrubSecrets(data);
 }

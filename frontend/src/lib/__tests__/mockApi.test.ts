@@ -19,6 +19,7 @@ import {
   getContract,
   getContractClauses,
   getContracts,
+  getDashboardSummary,
   listInboxItems,
   listRequests,
   uploadContract,
@@ -278,6 +279,44 @@ describe("mockApi", () => {
         },
         }),
       ).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
+  describe("getDashboardSummary (demo)", () => {
+    it("returns counts and lists derived from the mock fixtures", async () => {
+      const summary = await getDashboardSummary();
+
+      // Smoke: every count exists and is a non-negative integer.
+      for (const value of Object.values(summary.counts)) {
+        expect(typeof value).toBe("number");
+        expect(value).toBeGreaterThanOrEqual(0);
+      }
+
+      // The seeded MOCK_REQUESTS includes one open NDA, one in_progress
+      // MSA renewal, and one completed DPA.
+      expect(summary.counts.open_requests).toBeGreaterThanOrEqual(1);
+      expect(summary.counts.in_progress_requests).toBeGreaterThanOrEqual(1);
+
+      // No storage internals must end up in the response.
+      const json = JSON.stringify(summary);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+
+      // Lists are bounded.
+      expect(summary.upcoming.requests_due_soon.length).toBeLessThanOrEqual(5);
+      expect(summary.upcoming.inbox_items_due_soon.length).toBeLessThanOrEqual(
+        5,
+      );
+      expect(
+        summary.recent_activity.recent_contracts.length,
+      ).toBeLessThanOrEqual(5);
+    });
+
+    it("excludes cancelled requests from the recent feed", async () => {
+      const summary = await getDashboardSummary();
+      for (const r of summary.recent_activity.recent_requests) {
+        expect(r.status).not.toBe("cancelled");
+      }
     });
   });
 });

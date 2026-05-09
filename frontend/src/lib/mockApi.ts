@@ -69,6 +69,13 @@ import type {
   ListContractRequestFilters,
 } from "../types/requests";
 import type {
+  DashboardContractSummary,
+  DashboardCounts,
+  DashboardInboxSummary,
+  DashboardRequestSummary,
+  DashboardSummary,
+} from "../types/dashboard";
+import type {
   InboxItem,
   InboxItemCreateRequest,
   InboxItemUpdateRequest,
@@ -1690,4 +1697,192 @@ export async function dismissInboxItem(
   if (!row) throw new ApiError(404, "Inbox item not found.");
   row.status = "dismissed";
   row.updated_at = isoNow();
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard summary (demo mode)
+//
+// Derives counts and lists from the in-process mock state — same demo
+// requests, inbox items, contracts, and templates the rest of the app
+// already shows. Kept simple on purpose: this is a preview surface, not
+// a reporting layer, and the demo is allowed to undercount/overcount
+// quietly when the underlying mock fixtures change. The fixed "today"
+// is set to the demo workspace's frozen date so the upcoming/overdue
+// windows behave deterministically across vitest runs.
+// ---------------------------------------------------------------------------
+
+const DEMO_TODAY = "2026-05-09";
+
+function _isoToDate(iso: string): Date {
+  return new Date(`${iso}T00:00:00Z`);
+}
+
+function _addDays(iso: string, days: number): Date {
+  const d = _isoToDate(iso);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+function _toDashboardRequest(row: ContractRequest): DashboardRequestSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    request_type: row.request_type,
+    contract_type: row.contract_type,
+    counterparty_name: row.counterparty_name,
+    due_date: row.due_date,
+    linked_contract_id: row.linked_contract_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function _toDashboardInbox(row: InboxItem): DashboardInboxSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    item_type: row.item_type,
+    due_date: row.due_date,
+    request_id: row.request_id,
+    contract_id: row.contract_id,
+    template_id: row.template_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function _toDashboardContract(
+  row: ContractListItem,
+): DashboardContractSummary {
+  // Demo mock contracts don't carry artifact lists or DocuSeal ids;
+  // show the truthful answer rather than faking it.
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    docuseal_submission_id: null,
+    has_generated_docx: false,
+    has_signed_pdf: false,
+  };
+}
+
+function _buildDashboardCounts(): DashboardCounts {
+  const reqs = combinedRequests();
+  const inbox = combinedInboxItems();
+  const contracts = combinedList();
+  const todayDate = _isoToDate(DEMO_TODAY);
+
+  const open_requests = reqs.filter((r) => r.status === "open").length;
+  const in_progress_requests = reqs.filter(
+    (r) => r.status === "in_progress",
+  ).length;
+  const urgent_or_high_priority_requests = reqs.filter(
+    (r) =>
+      (r.status === "open" || r.status === "in_progress") &&
+      (r.priority === "urgent" || r.priority === "high"),
+  ).length;
+
+  const open_inbox_items = inbox.filter((i) => i.status === "open").length;
+  const overdue_inbox_items = inbox.filter(
+    (i) =>
+      i.status === "open" &&
+      i.due_date !== null &&
+      _isoToDate(i.due_date) < todayDate,
+  ).length;
+
+  const contracts_total = contracts.length;
+  const contracts_sent_for_signature = contracts.filter(
+    (c) => c.status === "sent_for_signature",
+  ).length;
+  const contracts_executed = contracts.filter(
+    (c) => c.status === "executed",
+  ).length;
+
+  // Demo agreement templates live in `demoAgreementTemplates`; treat
+  // active ones as "active" here.
+  const templates_active = demoAgreementTemplates.filter(
+    (t) => t.status === "active",
+  ).length;
+
+  return {
+    open_requests,
+    in_progress_requests,
+    urgent_or_high_priority_requests,
+    open_inbox_items,
+    overdue_inbox_items,
+    contracts_total,
+    contracts_sent_for_signature,
+    contracts_executed,
+    templates_active,
+  };
+}
+
+export async function getDashboardSummary(
+  options: ApiOptions & { limit?: number } = {},
+): Promise<DashboardSummary> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const limit = Math.max(1, Math.min(20, options.limit ?? 5));
+
+  const reqs = combinedRequests();
+  const inbox = combinedInboxItems();
+  const contracts = combinedList();
+  const todayDate = _isoToDate(DEMO_TODAY);
+  const windowEnd = _addDays(DEMO_TODAY, 14);
+
+  const requests_due_soon = reqs
+    .filter(
+      (r) =>
+        (r.status === "open" || r.status === "in_progress") &&
+        r.due_date !== null &&
+        _isoToDate(r.due_date) >= todayDate &&
+        _isoToDate(r.due_date) <= windowEnd,
+    )
+    .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""))
+    .slice(0, limit)
+    .map(_toDashboardRequest);
+
+  const inbox_items_due_soon = inbox
+    .filter(
+      (i) =>
+        i.status === "open" &&
+        i.due_date !== null &&
+        _isoToDate(i.due_date) >= todayDate &&
+        _isoToDate(i.due_date) <= windowEnd,
+    )
+    .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""))
+    .slice(0, limit)
+    .map(_toDashboardInbox);
+
+  const recent_contracts = [...contracts]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit)
+    .map(_toDashboardContract);
+
+  const recent_requests = reqs
+    .filter((r) => r.status !== "cancelled")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit)
+    .map(_toDashboardRequest);
+
+  const recent_signed_contracts = contracts
+    .filter((c) => c.status === "executed")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .slice(0, limit)
+    .map(_toDashboardContract);
+
+  return {
+    counts: _buildDashboardCounts(),
+    upcoming: { requests_due_soon, inbox_items_due_soon },
+    recent_activity: {
+      recent_contracts,
+      recent_requests,
+      recent_signed_contracts,
+    },
+  };
 }

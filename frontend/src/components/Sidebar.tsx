@@ -4,13 +4,14 @@ import { Link, NavLink } from "react-router-dom";
 import { demoPath } from "../lib/routes";
 
 const NAV = [
+  { to: demoPath("/dashboard"), label: "Dashboard" },
   { to: demoPath("/inbox"), label: "Inbox" },
   { to: demoPath("/requests"), label: "Requests" },
   { to: demoPath("/contracts"), label: "Contracts" },
-  { to: demoPath("/playbooks"), label: "Playbooks" },
-  { to: demoPath("/upload"), label: "Upload" },
-  { to: demoPath("/clause-library"), label: "Clause Library" },
   { to: demoPath("/agreement-templates"), label: "Agreement Templates" },
+  { to: demoPath("/playbooks"), label: "Playbooks" },
+  { to: demoPath("/clause-library"), label: "Clause Library" },
+  { to: demoPath("/upload"), label: "Upload" },
   { to: demoPath("/settings"), label: "Settings" },
 ];
 

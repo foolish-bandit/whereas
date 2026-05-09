@@ -11,6 +11,7 @@ from app.api import (
     auth,
     clause_templates,
     contracts,
+    dashboard,
     docuseal_bridge,
     inbox_items,
     playbooks,
@@ -72,6 +73,7 @@ app.include_router(
 app.include_router(qa.router, prefix="/api/qa", tags=["qa"])
 app.include_router(docuseal_bridge.router, prefix="/api/docuseal", tags=["docuseal"])
 app.include_router(setup.router, prefix="/api/setup", tags=["setup"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 
 
 @app.get("/api/health")

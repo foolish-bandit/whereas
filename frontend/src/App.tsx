@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import ContractsPage from "./pages/ContractsPage";
 import ContractWorkspacePage from "./pages/ContractWorkspacePage";
+import DashboardPage from "./pages/DashboardPage";
 import PlaybookDetailPage from "./pages/PlaybookDetailPage";
 import PlaybooksPage from "./pages/PlaybooksPage";
 import UploadPage from "./pages/UploadPage";
@@ -32,7 +33,8 @@ function DemoApp() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Navigate to="contracts" replace />} />
+        <Route path="/" element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<DashboardPage />} />
         <Route path="contracts" element={<ContractsPage />} />
         <Route path="contracts/:id" element={<ContractWorkspacePage />} />
         <Route path="playbooks" element={<PlaybooksPage />} />
@@ -47,7 +49,7 @@ function DemoApp() {
         />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="inbox" element={<InboxPage />} />
-        <Route path="*" element={<Navigate to="contracts" replace />} />
+        <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </AppShell>
   );
