@@ -285,6 +285,11 @@ async def convert_request_to_contract(
       * The request must have a linked template (409); that template
         must belong to the same org (404 otherwise — guarded by the
         same-org invariant on creation, but defended again here).
+        Archived templates ARE still convertible — once a request
+        links to a template the link survives template archive. This
+        matches the link semantics on creation/update (see
+        ``_validate_links``) and avoids stranding requests when a
+        template is retired between intake and conversion.
       * Variable validation errors propagate from the generation
         service as 400 (unknown / missing required / malformed value).
 
