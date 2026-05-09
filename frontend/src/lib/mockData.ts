@@ -18,6 +18,8 @@ import type {
   PlaybookSummary,
 } from "../types/playbooks";
 import type { PlaybookReviewResult } from "../types/review";
+import type { InboxItem } from "../types/inboxItems";
+import type { ContractRequest } from "../types/requests";
 
 const PDF_MIME = "application/pdf";
 const DOCX_MIME =
@@ -646,3 +648,160 @@ const NDA_VS_NDA_PLAYBOOK_REVIEW: PlaybookReviewResult = {
 export const MOCK_REVIEW_BY_KEY: Record<string, PlaybookReviewResult> = {
   [`${MOCK_NDA_ID}|${MOCK_NDA_PLAYBOOK_ID}`]: NDA_VS_NDA_PLAYBOOK_REVIEW,
 };
+
+// ---------------------------------------------------------------------------
+// Requests + Inbox (PR #47 — demo seed)
+//
+// Hand-rolled sample data so empty / filter / dismissed-state behavior can
+// be exercised in demo mode without making the user create their own.
+// All counterparties are fictional.
+// ---------------------------------------------------------------------------
+
+export const MOCK_DEMO_ORG_ID = "00000000-0000-4000-8000-000000000010";
+
+const MOCK_REQUEST_OPEN_ID = "00000000-0000-4000-8000-0000000000a1";
+const MOCK_REQUEST_IN_PROGRESS_ID = "00000000-0000-4000-8000-0000000000a2";
+const MOCK_REQUEST_COMPLETED_ID = "00000000-0000-4000-8000-0000000000a3";
+
+export const MOCK_REQUESTS: ContractRequest[] = [
+  {
+    id: MOCK_REQUEST_OPEN_ID,
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "NDA with Acme Corp",
+    description: "Initial conversation, pre-MSA. Need NDA before sharing roadmap.",
+    request_type: "new_contract",
+    contract_type: "NDA",
+    status: "open",
+    priority: "normal",
+    requester_name: "Devon Reyes",
+    requester_email: "devon@example.com",
+    counterparty_name: "Acme Corp",
+    due_date: "2026-05-20",
+    assigned_to: null,
+    linked_contract_id: null,
+    linked_template_id: null,
+    created_at: "2026-05-08T16:00:00Z",
+    updated_at: "2026-05-08T16:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: MOCK_REQUEST_IN_PROGRESS_ID,
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Vendor MSA renewal",
+    description: "Renewal terms under negotiation; pricing TBD.",
+    request_type: "renewal",
+    contract_type: "MSA",
+    status: "in_progress",
+    priority: "high",
+    requester_name: "Procurement",
+    requester_email: null,
+    counterparty_name: "WidgetWorks",
+    due_date: "2026-06-30",
+    assigned_to: null,
+    linked_contract_id: null,
+    linked_template_id: null,
+    created_at: "2026-05-01T10:00:00Z",
+    updated_at: "2026-05-07T11:30:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: MOCK_REQUEST_COMPLETED_ID,
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "DPA with HostingCo (executed)",
+    description: "Closed; executed PDF on file.",
+    request_type: "new_contract",
+    contract_type: "DPA",
+    status: "completed",
+    priority: "normal",
+    requester_name: "Privacy team",
+    requester_email: null,
+    counterparty_name: "HostingCo",
+    due_date: null,
+    assigned_to: null,
+    linked_contract_id: null,
+    linked_template_id: null,
+    created_at: "2026-04-12T09:00:00Z",
+    updated_at: "2026-04-30T14:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+];
+
+export const MOCK_INBOX_ITEMS: InboxItem[] = [
+  {
+    id: "00000000-0000-4000-8000-0000000000b1",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Review request: NDA with Acme Corp",
+    description: null,
+    item_type: "request_review",
+    status: "open",
+    priority: "normal",
+    assigned_to: null,
+    due_date: "2026-05-20",
+    request_id: MOCK_REQUEST_OPEN_ID,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-05-08T16:00:00Z",
+    updated_at: "2026-05-08T16:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: "00000000-0000-4000-8000-0000000000b2",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Follow up on WidgetWorks signature",
+    description:
+      "Submission sent two weeks ago; ping counterparty if no movement by EOW.",
+    item_type: "signature_followup",
+    status: "open",
+    priority: "high",
+    assigned_to: null,
+    due_date: "2026-05-15",
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-05-05T12:00:00Z",
+    updated_at: "2026-05-05T12:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: "00000000-0000-4000-8000-0000000000b3",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Triage Q2 NDA backlog",
+    description: null,
+    item_type: "general",
+    status: "completed",
+    priority: "low",
+    assigned_to: null,
+    due_date: null,
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-04-20T09:00:00Z",
+    updated_at: "2026-04-25T16:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: "00000000-0000-4000-8000-0000000000b4",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Confirm counterparty entity name",
+    description:
+      "Dismissed: counterparty resolved by paralegal in offline thread.",
+    item_type: "metadata_cleanup",
+    status: "dismissed",
+    priority: null,
+    assigned_to: null,
+    due_date: null,
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-04-15T09:00:00Z",
+    updated_at: "2026-04-16T09:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+];

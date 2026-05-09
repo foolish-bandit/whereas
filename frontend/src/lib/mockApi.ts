@@ -60,6 +60,23 @@ import type {
   SendContractToDocuSealRequest,
   SendContractToDocuSealResponse,
 } from "../types/docuseal";
+import type {
+  ContractRequest,
+  ContractRequestCreateRequest,
+  ContractRequestUpdateRequest,
+  ListContractRequestFilters,
+} from "../types/requests";
+import type {
+  InboxItem,
+  InboxItemCreateRequest,
+  InboxItemUpdateRequest,
+  ListInboxItemFilters,
+} from "../types/inboxItems";
+import {
+  MOCK_DEMO_ORG_ID,
+  MOCK_INBOX_ITEMS,
+  MOCK_REQUESTS,
+} from "./mockData";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -1347,4 +1364,267 @@ export async function deactivatePlaybook(
     is_active: false,
     updated_at: new Date().toISOString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Contract requests + inbox items (PR #47)
+//
+// Session-scoped mock state. Refresh wipes it. The seeded MOCK_REQUESTS
+// and MOCK_INBOX_ITEMS provide a few items so empty/filter behavior can
+// be exercised; user-created rows are pushed onto the front of the
+// session arrays.
+// ---------------------------------------------------------------------------
+
+const sessionRequests: ContractRequest[] = [];
+const sessionInboxItems: InboxItem[] = [];
+
+function combinedRequests(): ContractRequest[] {
+  return [...sessionRequests, ...MOCK_REQUESTS];
+}
+
+function combinedInboxItems(): InboxItem[] {
+  return [...sessionInboxItems, ...MOCK_INBOX_ITEMS];
+}
+
+function nextId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function isoNow(): string {
+  return new Date().toISOString();
+}
+
+function applyRequestFilters(
+  rows: ContractRequest[],
+  filters: ListContractRequestFilters,
+): ContractRequest[] {
+  return rows.filter((row) => {
+    if (!filters.include_cancelled && row.status === "cancelled") return false;
+    if (filters.status && row.status !== filters.status) return false;
+    if (filters.request_type && row.request_type !== filters.request_type)
+      return false;
+    if (filters.contract_type && row.contract_type !== filters.contract_type)
+      return false;
+    if (filters.priority && row.priority !== filters.priority) return false;
+    if (filters.assigned_to && row.assigned_to !== filters.assigned_to)
+      return false;
+    if (filters.due_before && (!row.due_date || row.due_date > filters.due_before))
+      return false;
+    if (filters.due_after && (!row.due_date || row.due_date < filters.due_after))
+      return false;
+    return true;
+  });
+}
+
+function applyInboxFilters(
+  rows: InboxItem[],
+  filters: ListInboxItemFilters,
+): InboxItem[] {
+  return rows.filter((row) => {
+    if (!filters.include_dismissed && row.status === "dismissed") return false;
+    if (filters.status && row.status !== filters.status) return false;
+    if (filters.item_type && row.item_type !== filters.item_type) return false;
+    if (filters.priority && row.priority !== filters.priority) return false;
+    if (filters.assigned_to && row.assigned_to !== filters.assigned_to)
+      return false;
+    if (filters.due_before && (!row.due_date || row.due_date > filters.due_before))
+      return false;
+    if (filters.due_after && (!row.due_date || row.due_date < filters.due_after))
+      return false;
+    return true;
+  });
+}
+
+export async function listRequests(
+  filters: ListContractRequestFilters = {},
+  options: ApiOptions = {},
+): Promise<ContractRequest[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return applyRequestFilters(combinedRequests(), filters);
+}
+
+export async function getRequest(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = combinedRequests().find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Contract request not found.");
+  return row;
+}
+
+export async function createRequest(
+  payload: ContractRequestCreateRequest,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const now = isoNow();
+  const row: ContractRequest = {
+    id: nextId("req"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: payload.title,
+    description: payload.description ?? null,
+    request_type: payload.request_type ?? null,
+    contract_type: payload.contract_type ?? null,
+    status: "open",
+    priority: payload.priority ?? null,
+    requester_name: payload.requester_name ?? null,
+    requester_email: payload.requester_email ?? null,
+    counterparty_name: payload.counterparty_name ?? null,
+    due_date: payload.due_date ?? null,
+    assigned_to: payload.assigned_to ?? null,
+    linked_contract_id: payload.linked_contract_id ?? null,
+    linked_template_id: payload.linked_template_id ?? null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: payload.metadata_json ?? null,
+  };
+  sessionRequests.unshift(row);
+
+  // Mirror the backend transactional behavior: every new request gets
+  // a request_review inbox item.
+  const inbox: InboxItem = {
+    id: nextId("inbox"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: `Review request: ${row.title}`,
+    description: null,
+    item_type: "request_review",
+    status: "open",
+    priority: row.priority,
+    assigned_to: row.assigned_to,
+    due_date: row.due_date,
+    request_id: row.id,
+    contract_id: null,
+    template_id: null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: null,
+  };
+  sessionInboxItems.unshift(inbox);
+
+  return row;
+}
+
+function findSessionRequest(id: string): ContractRequest | undefined {
+  return sessionRequests.find((r) => r.id === id);
+}
+
+function resolveSessionInboxItemsForRequest(
+  requestId: string,
+  newStatus: "completed" | "dismissed",
+): void {
+  for (const item of sessionInboxItems) {
+    if (
+      item.request_id === requestId &&
+      item.item_type === "request_review" &&
+      item.status === "open"
+    ) {
+      item.status = newStatus;
+      item.updated_at = isoNow();
+    }
+  }
+}
+
+export async function updateRequest(
+  id: string,
+  payload: ContractRequestUpdateRequest,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = findSessionRequest(id);
+  if (!row) throw new ApiError(404, "Contract request not found.");
+  Object.assign(row, payload, { updated_at: isoNow() });
+  if (payload.status === "completed") {
+    resolveSessionInboxItemsForRequest(id, "completed");
+  } else if (payload.status === "cancelled") {
+    resolveSessionInboxItemsForRequest(id, "dismissed");
+  }
+  return row;
+}
+
+export async function cancelRequest(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = findSessionRequest(id);
+  if (!row) throw new ApiError(404, "Contract request not found.");
+  row.status = "cancelled";
+  row.updated_at = isoNow();
+  resolveSessionInboxItemsForRequest(id, "dismissed");
+}
+
+export async function listInboxItems(
+  filters: ListInboxItemFilters = {},
+  options: ApiOptions = {},
+): Promise<InboxItem[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return applyInboxFilters(combinedInboxItems(), filters);
+}
+
+export async function getInboxItem(
+  id: string,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = combinedInboxItems().find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Inbox item not found.");
+  return row;
+}
+
+export async function createInboxItem(
+  payload: InboxItemCreateRequest,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const now = isoNow();
+  const row: InboxItem = {
+    id: nextId("inbox"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: payload.title,
+    description: payload.description ?? null,
+    item_type: payload.item_type,
+    status: "open",
+    priority: payload.priority ?? null,
+    assigned_to: payload.assigned_to ?? null,
+    due_date: payload.due_date ?? null,
+    request_id: payload.request_id ?? null,
+    contract_id: payload.contract_id ?? null,
+    template_id: payload.template_id ?? null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: payload.metadata_json ?? null,
+  };
+  sessionInboxItems.unshift(row);
+  return row;
+}
+
+function findSessionInbox(id: string): InboxItem | undefined {
+  return sessionInboxItems.find((r) => r.id === id);
+}
+
+export async function updateInboxItem(
+  id: string,
+  payload: InboxItemUpdateRequest,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = findSessionInbox(id);
+  if (!row) throw new ApiError(404, "Inbox item not found.");
+  Object.assign(row, payload, { updated_at: isoNow() });
+  return row;
+}
+
+export async function dismissInboxItem(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = findSessionInbox(id);
+  if (!row) throw new ApiError(404, "Inbox item not found.");
+  row.status = "dismissed";
+  row.updated_at = isoNow();
 }

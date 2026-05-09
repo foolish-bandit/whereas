@@ -45,6 +45,18 @@ import type {
   CreateDevSetupResponse,
   SetupStatus,
 } from "../types/setup";
+import type {
+  ContractRequest,
+  ContractRequestCreateRequest,
+  ContractRequestUpdateRequest,
+  ListContractRequestFilters,
+} from "../types/requests";
+import type {
+  InboxItem,
+  InboxItemCreateRequest,
+  InboxItemUpdateRequest,
+  ListInboxItemFilters,
+} from "../types/inboxItems";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -1050,4 +1062,189 @@ export async function generateAgreementFromTemplate(
     options,
   );
   return scrubSecrets(data);
+}
+
+// ---------------------------------------------------------------------------
+// Contract requests (PR #47 — CLM intake foundation)
+// ---------------------------------------------------------------------------
+
+function contractRequestQuery(filters: ListContractRequestFilters = {}): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.request_type) params.set("request_type", filters.request_type);
+  if (filters.contract_type) params.set("contract_type", filters.contract_type);
+  if (filters.priority) params.set("priority", filters.priority);
+  if (filters.assigned_to) params.set("assigned_to", filters.assigned_to);
+  if (filters.due_before) params.set("due_before", filters.due_before);
+  if (filters.due_after) params.set("due_after", filters.due_after);
+  if (filters.include_cancelled) params.set("include_cancelled", "true");
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listRequests(
+  filters: ListContractRequestFilters = {},
+  options: ApiOptions = {},
+): Promise<ContractRequest[]> {
+  if (isDemoMode()) return mockApi.listRequests(filters, options);
+  const data = await call<ContractRequest[]>(
+    `/api/requests${contractRequestQuery(filters)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getRequest(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  if (isDemoMode()) return mockApi.getRequest(id, options);
+  const data = await call<ContractRequest>(
+    `/api/requests/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createRequest(
+  payload: ContractRequestCreateRequest,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  if (isDemoMode()) return mockApi.createRequest(payload, options);
+  const data = await call<ContractRequest>(
+    `/api/requests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateRequest(
+  id: string,
+  payload: ContractRequestUpdateRequest,
+  options: ApiOptions = {},
+): Promise<ContractRequest> {
+  if (isDemoMode()) return mockApi.updateRequest(id, payload, options);
+  const data = await call<ContractRequest>(
+    `/api/requests/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function cancelRequest(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  if (isDemoMode()) return mockApi.cancelRequest(id, options);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const res = await fetch(
+    `${baseUrl()}/api/requests/${encodeURIComponent(id)}`,
+    { method: "DELETE", headers, signal: options.signal },
+  );
+  if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+// ---------------------------------------------------------------------------
+// Inbox items (PR #47 — CLM work queue foundation)
+// ---------------------------------------------------------------------------
+
+function inboxItemQuery(filters: ListInboxItemFilters = {}): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.item_type) params.set("item_type", filters.item_type);
+  if (filters.priority) params.set("priority", filters.priority);
+  if (filters.assigned_to) params.set("assigned_to", filters.assigned_to);
+  if (filters.due_before) params.set("due_before", filters.due_before);
+  if (filters.due_after) params.set("due_after", filters.due_after);
+  if (filters.include_dismissed) params.set("include_dismissed", "true");
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listInboxItems(
+  filters: ListInboxItemFilters = {},
+  options: ApiOptions = {},
+): Promise<InboxItem[]> {
+  if (isDemoMode()) return mockApi.listInboxItems(filters, options);
+  const data = await call<InboxItem[]>(
+    `/api/inbox-items${inboxItemQuery(filters)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getInboxItem(
+  id: string,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  if (isDemoMode()) return mockApi.getInboxItem(id, options);
+  const data = await call<InboxItem>(
+    `/api/inbox-items/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createInboxItem(
+  payload: InboxItemCreateRequest,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  if (isDemoMode()) return mockApi.createInboxItem(payload, options);
+  const data = await call<InboxItem>(
+    `/api/inbox-items`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateInboxItem(
+  id: string,
+  payload: InboxItemUpdateRequest,
+  options: ApiOptions = {},
+): Promise<InboxItem> {
+  if (isDemoMode()) return mockApi.updateInboxItem(id, payload, options);
+  const data = await call<InboxItem>(
+    `/api/inbox-items/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function dismissInboxItem(
+  id: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  if (isDemoMode()) return mockApi.dismissInboxItem(id, options);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(devHeaders())) headers.set(k, v);
+  const res = await fetch(
+    `${baseUrl()}/api/inbox-items/${encodeURIComponent(id)}`,
+    { method: "DELETE", headers, signal: options.signal },
+  );
+  if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
 }

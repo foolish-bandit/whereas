@@ -4,6 +4,8 @@ import { Link, NavLink } from "react-router-dom";
 import { demoPath } from "../lib/routes";
 
 const NAV = [
+  { to: demoPath("/inbox"), label: "Inbox" },
+  { to: demoPath("/requests"), label: "Requests" },
   { to: demoPath("/contracts"), label: "Contracts" },
   { to: demoPath("/playbooks"), label: "Playbooks" },
   { to: demoPath("/upload"), label: "Upload" },

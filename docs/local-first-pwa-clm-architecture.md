@@ -1,8 +1,8 @@
 # Whereas Local-First PWA CLM Architecture Handoff
 
-This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#45. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
+This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, and section 10 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, and section 11 for the next PR.
 
 ---
 
@@ -110,7 +110,7 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 
 ---
 
-## 3. Current Architecture After PR #45
+## 3. Current Architecture After PR #47
 
 ### Backend
 
@@ -119,8 +119,9 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - Postgres 16 with pgvector.
 - MinIO / S3-compatible object storage via `app.services.storage.DocumentStorage`.
 - Per-org wrapped DEK encryption for documents (`app.security.encryption`); per-artifact DEKs for `signed_pdf` rows from PR #45 onward.
-- Existing routers: contracts, playbooks, clause templates, QA, DocuSeal bridge, setup, agreement templates.
-- DocuSeal bridge router (`app/api/docuseal_bridge.py`) now exposes a verified `POST /webhook` endpoint that materializes `signed_pdf` artifacts and flips contract status to `EXECUTED`.
+- Existing routers: contracts, playbooks, clause templates, QA, DocuSeal bridge, setup, agreement templates, **requests, inbox-items**.
+- DocuSeal bridge router (`app/api/docuseal_bridge.py`) exposes a verified `POST /webhook` endpoint that materializes `signed_pdf` artifacts and flips contract status to `EXECUTED`.
+- PR #47 added the CLM intake / work-queue layer: `ContractRequest` and `InboxItem` tables with full CRUD endpoints, plus an automatic `request_review` inbox item created in the same transaction as every new request. See section 7.
 - Existing background concerns: extraction, clause segmentation, deviation findings, playbook review runs, audit log.
 
 ### Frontend
@@ -129,12 +130,13 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - PWA app shell with service worker / manifest. **No** API or sensitive-route runtime caching.
 - Markdown preview UI for contracts and templates.
 - Agreement Templates list + detail page with **Generate Agreement** and **Send to DocuSeal** controls.
-- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, and signed-state surfaces.
+- **Requests** and **Inbox** pages added in PR #47, with sidebar entries for both.
+- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, signed-state surfaces, and seed Requests + Inbox items.
 - Defensive scrub of `storage_key`/`s3_key`/`wrapped_dek`/etc. on every API response.
 
 ---
 
-## 4. PR-by-PR Implementation Summary (PRs #32 – #45)
+## 4. PR-by-PR Implementation Summary (PRs #32 – #47)
 
 ### PR #32 — PWA + Contract Markdown Snapshot Foundation
 
@@ -307,11 +309,48 @@ Frontend:
 
 Out of scope at this stage: rich DocuSeal status dashboard, signer-event mirror table, generated PDF preview.
 
+### PR #46 — Architecture Handoff Refresh
+
+Documentation-only. Captured the post-#45 state of the project, the closed CLM loop, and the security/privacy rules (this document, in its previous revision).
+
+### PR #47 — Requests + Inbox Foundation
+
+Implemented the CLM intake / work-queue layer.
+
+Backend:
+
+- New `ContractRequest` and `InboxItem` SQLAlchemy models (`backend/app/models/__init__.py`).
+- Alembic migration `0012_requests_inbox` adds `contract_requests` and `inbox_items`. Non-destructive: nothing in contracts, agreement templates, or artifacts is modified.
+- New `POST/GET/PATCH/DELETE /api/requests` and `POST/GET/PATCH/DELETE /api/inbox-items` endpoints with org-scoped queries and the existing `X-Whereas-Dev-User` header pattern.
+- DELETE soft-cancels a request (`status = "cancelled"`) and soft-dismisses an inbox item (`status = "dismissed"`); cancelled requests and dismissed items are excluded from list responses by default.
+- Filters: `status`, `request_type`, `contract_type`, `priority`, `assigned_to`, `due_before`, `due_after`, `include_cancelled` for requests; `status`, `item_type`, `priority`, `assigned_to`, `due_before`, `due_after`, `include_dismissed` for inbox items.
+- Creating a request **also creates a `request_review` inbox item in the same transaction** (`title = "Review request: {request.title}"`, status `open`, priority/assigned_to/due_date copied from the request).
+- Updating a request to `completed` resolves the linked open `request_review` item to `completed`; cancelling a request dismisses it. Item-level edits (assignee, due date, priority) are deliberately **not** mirrored — once an inbox item exists it has its own work record.
+- Linked contract / template IDs and `assigned_to` are validated to belong to the same organization; cross-org references return 422.
+- New backend tests: `backend/tests/test_requests_api.py` (11 tests) and `backend/tests/test_inbox_items_api.py` (8 tests). Coverage: CRUD, filters, soft-cancel/dismiss exclusion, cross-org 404, cross-org link rejection, transactional rollback when the inbox insert fails, request -> inbox auto-creation, request status transitions resolving inbox items.
+
+Frontend:
+
+- New types `frontend/src/types/requests.ts` and `frontend/src/types/inboxItems.ts`.
+- New API client functions: `listRequests`, `getRequest`, `createRequest`, `updateRequest`, `cancelRequest`, `listInboxItems`, `getInboxItem`, `createInboxItem`, `updateInboxItem`, `dismissInboxItem`.
+- New pages `RequestsPage.tsx` and `InboxPage.tsx` with the same loading/loaded/error state-machine pattern used elsewhere; sidebar entries added (Inbox + Requests, ahead of Contracts so the work queue is the first surface a user sees).
+- Demo/mock seed data: open + in-progress + completed sample requests, plus open / in-progress / completed / dismissed sample inbox items so empty / filter / dismissed-state behavior can be exercised without touching the backend.
+- 9 new frontend tests covering renders, create flow, status transitions, soft-cancel/dismiss filtering.
+
+Deliberately out of scope for PR #47 (deferred to later PRs):
+
+- Approval workflow engine.
+- Request → contract auto-generation (we link, we do not generate).
+- Calendar / Nango / reminder integrations.
+- PowerSync, Clerk, Nango, Docling, local vault mode, open-in-Word.
+- Dashboard analytics beyond the basic page lists.
+- Signer-event mirror table.
+
 ---
 
 ## 5. Current Domain Model
 
-There are now three object families wired into a single CLM loop.
+There are now four object families: contracts, agreement templates, the CLM loop wiring them together, and (new in PR #47) the requests + inbox intake/work-queue layer that sits in front of them all.
 
 ### 5.1 Contracts
 
@@ -336,7 +375,25 @@ The `Contract` row also still owns the legacy `s3_key`, `mime_type`, `file_hash_
 - `AgreementTemplateMarkdownSnapshot` — template preview/search text.
 - `AgreementTemplateVariable` — variable metadata used to validate and render generation requests. Unique on `(template_id, key)`.
 
-### 5.3 Generated agreements live as Contracts
+### 5.3 Requests + Inbox (PR #47)
+
+`ContractRequest` is the **intake / business workflow** object: someone in the org asks for a contract (new NDA, MSA, amendment, renewal, ...) and the request is tracked through to `completed` or `cancelled`. `ContractRequest` is **not** the legal record — that stays on `Contract`.
+
+`InboxItem` is the **work-queue / task** object: the per-user surface that says "this needs your attention." Items can point at a request, a contract, or a template (or none for a free-floating "general" task).
+
+Key relationships and rules:
+
+- `ContractRequest.status` — `OPEN | IN_PROGRESS | COMPLETED | CANCELLED`. `cancelled` requests are excluded from list responses by default; `include_cancelled=true` reveals them.
+- `ContractRequest` may carry optional `linked_contract_id` and `linked_template_id`. Linking is by FK; **request-to-contract auto-generation is not implemented in this PR** and is deliberately out of scope.
+- `InboxItem.status` — `OPEN | COMPLETED | DISMISSED`. `dismissed` items are excluded from list responses by default; `include_dismissed=true` reveals them.
+- `InboxItem.item_type` is free-form string. Suggested values: `request_review`, `contract_review`, `signature_followup`, `metadata_cleanup`, `general`.
+- **Creating a `ContractRequest` automatically creates an `InboxItem` with `item_type="request_review"` in the same transaction.** If the inbox insert fails, the request insert rolls back too.
+- Updating a request to `completed` resolves the linked open `request_review` items to `completed`. Cancelling a request dismisses them. Item-level edits to the inbox row (assignee, due date, priority) are **not** mirrored back to the request — once an item exists, it owns its own state.
+- All linked IDs (`linked_contract_id`, `linked_template_id`, `request_id`, `contract_id`, `template_id`, `assigned_to`) are validated to belong to the same organization. Cross-org references return 422.
+
+Approval workflows, calendar/reminder integrations, and a dashboard analytics layer are **not** built and are out of scope for the next several PRs.
+
+### 5.4 Generated agreements live as Contracts
 
 A filled template — i.e., a generated DOCX from an `AgreementTemplate` plus variable values — becomes a **`Contract`** row with a `generated_docx` `ContractArtifact`, **not** another `AgreementTemplateArtifact`. This was the open question heading into PR #42 and is now the wired-up reality.
 
@@ -483,7 +540,7 @@ These rules apply across all artifact types and are checked on every PR that tou
 
 ---
 
-## 7. API Surface Added by PRs #32 – #45
+## 7. API Surface Added by PRs #32 – #47
 
 ### Contracts
 
@@ -514,6 +571,22 @@ All routes are org-scoped through the same dev-user header pattern (`X-Whereas-D
 
 - `POST /api/docuseal-bridge/webhook` — section 6.4. Signed; production requires a valid signature.
 
+### Requests (PR #47)
+
+- `POST   /api/requests` — creates the request and a `request_review` `InboxItem` in one transaction.
+- `GET    /api/requests` — filters: `status`, `request_type`, `contract_type`, `priority`, `assigned_to`, `due_before`, `due_after`, `include_cancelled`. Cancelled requests excluded by default.
+- `GET    /api/requests/{request_id}`.
+- `PATCH  /api/requests/{request_id}` — updates fields; transitioning to `completed` or `cancelled` resolves linked open `request_review` items.
+- `DELETE /api/requests/{request_id}` — soft cancel: `status = "cancelled"` and dismisses linked open `request_review` items.
+
+### Inbox items (PR #47)
+
+- `POST   /api/inbox-items`.
+- `GET    /api/inbox-items` — filters: `status`, `item_type`, `priority`, `assigned_to`, `due_before`, `due_after`, `include_dismissed`. Dismissed items excluded by default.
+- `GET    /api/inbox-items/{item_id}`.
+- `PATCH  /api/inbox-items/{item_id}`.
+- `DELETE /api/inbox-items/{item_id}` — soft dismiss: `status = "dismissed"`.
+
 ---
 
 ## 8. Security / Privacy / Data Handling Rules
@@ -538,7 +611,8 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 Tracked, intentionally not implemented:
 
-- Requests / Inbox / workflow module (CLM intake/work queue layer). See section 10.
+- Approval workflow engine on top of `ContractRequest` (multi-stage approvals, gating rules).
+- Request → contract auto-generation (today the request can carry a `linked_template_id`, but generating the agreement is still a separate explicit action).
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
 - PowerSync local-first sync rules.
 - Clerk integration for local-first hosted mode (optional).
@@ -551,40 +625,51 @@ Tracked, intentionally not implemented:
 - GFM table support in the Markdown renderer.
 - Docling fallback for complex PDFs / tables / scans.
 - ContractPlaybookBuilder-inspired Playbook Builder module.
+- Dashboard analytics (open requests by counterparty, urgent inbox counts by assignee, etc.).
 - Backfill/archive cleanup and eventual removal of legacy `Contract` storage fields, only after a safe migration plan.
 
 ---
 
-## 10. Recommended Next PR: PR #46 — Requests + Inbox Foundation
+## 10. PR #47 wired up the Requests + Inbox foundation
 
-**Goal:** create the CLM intake / work queue layer that the rest of the product is missing. This is the layer that lets a non-lawyer at a company say "I need an NDA with X" and have it land somewhere a lawyer can see, triage, assign, and convert into a contract.
-
-### Recommended scope
-
-- New `Request` records: who asked, for what, when, optional template hint, free-text description, status (`OPEN | IN_PROGRESS | BLOCKED | CONVERTED | CANCELLED`), optional due date, assignee.
-- New `InboxItem` records (or a view over `Request` + `Contract` + `signed_pdf` arrivals — TBD; ask before choosing): the per-user work queue surface.
-- Assignment / status / due date editing endpoints.
-- Basic dashboard counts ("3 open requests assigned to you", "1 awaiting countersignature").
-- A path to **convert a request into a contract** later — this can be a stub in PR #46 (e.g., create a contract from a chosen template via the existing generate endpoint, link it back to the request) and grow over time.
-
-### Out of scope for PR #46
-
-- **Do not implement PowerSync yet.** The domain model is still settling; PowerSync sync rules belong to a later PR once Requests/Inbox stabilize.
-- Clerk and Nango.
-- Calendar/integration layer.
-- Rich DocuSeal status dashboard.
-- Local vault mode.
-- Generated PDF preview.
-
-### Architecture asks (raise these before coding)
-
-- Is `InboxItem` its own table, or is it a derived view over `Request` + `Contract` events? Both are defensible; ask before choosing.
-- Should a `Request` carry a foreign key to `AgreementTemplate` (the user's intent at intake) or only to a converted `Contract` (the result)? Likely both, but confirm.
-- How does the existing audit log (`backend/app/security/audit_log.py`) fit? A request transitioning state is auditable.
+(See section 5.3 for the live domain rules and section 7 for the API surface.) The intake / work-queue layer is in place. The recommended next PR (#48) builds on top of it.
 
 ---
 
-## 11. Testing Expectations
+## 11. Recommended Next PR: PR #48 — Request → Contract Conversion
+
+**Goal:** close the loop between intake and the existing template-generation flow so a `ContractRequest` carrying a `linked_template_id` can be converted to a draft contract in one click.
+
+### Recommended scope
+
+- A new endpoint (e.g. `POST /api/requests/{request_id}/convert`) that:
+  - Requires the request to have `linked_template_id` set.
+  - Accepts a `variable_values` map.
+  - Calls the existing `generate_docx_from_template()` service.
+  - Sets `ContractRequest.linked_contract_id` on the new Contract.
+  - Transitions `ContractRequest.status` from `open` → `in_progress` (so the request is still tracked, not auto-closed — execution happens later via DocuSeal).
+  - Resolves the request's open `request_review` `InboxItem` to `completed` and creates a new `contract_review` `InboxItem` pointing at the freshly-generated `Contract`.
+- Frontend: a "Convert to draft" button on a request that has `linked_template_id`, with a variables form.
+- Audit event for the conversion.
+
+### Out of scope for PR #48
+
+- **Do not implement PowerSync yet.** Domain model is now stable through requests + inbox, but the conversion semantics still need a PR to settle before sync rules.
+- Approval workflow engine.
+- Calendar / Nango / reminders.
+- Clerk.
+- Local vault mode.
+- Rich DocuSeal status dashboard.
+
+### Architecture asks (raise these before coding)
+
+- Should the conversion be transactional (request transition + Contract creation + InboxItem updates in one DB transaction)? Yes, almost certainly — but confirm whether Markdown conversion failure on the new Contract should roll back the whole conversion or stay best-effort. The existing `generate_docx_from_template()` already treats Markdown as best-effort; the conversion endpoint should match.
+- Should a request without `linked_template_id` be convertible by passing the template at convert time? Likely yes, as a quality-of-life improvement; confirm before implementing.
+- Should DocuSeal send happen in the same call (one-button convert + send)? **Probably no.** Keep convert and send separate so the legal team can review the draft before signature.
+
+---
+
+## 12. Testing Expectations
 
 ### Backend
 
@@ -611,14 +696,14 @@ npm run build
 After `npm run build`, sanity-check the generated service worker:
 
 ```
-grep -E "/api|api/contracts|api/agreement-templates|api/docuseal-bridge" frontend/dist/sw.js || echo "no API routes precached"
+grep -E "/api|api/contracts|api/agreement-templates|api/docuseal-bridge|api/requests|api/inbox-items" frontend/dist/sw.js || echo "no API routes precached"
 ```
 
 The service worker must not include API routes in its precache or runtime cache rules.
 
 ---
 
-## 12. Developer Notes / Guardrails
+## 13. Developer Notes / Guardrails
 
 Read these before starting any new feature work.
 
