@@ -49,6 +49,8 @@ import type {
   ContractRequest,
   ContractRequestCreateRequest,
   ContractRequestUpdateRequest,
+  ConvertRequestToContractRequest,
+  ConvertRequestToContractResponse,
   ListContractRequestFilters,
 } from "../types/requests";
 import type {
@@ -1155,6 +1157,31 @@ export async function cancelRequest(
     { method: "DELETE", headers, signal: options.signal },
   );
   if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+/**
+ * Convert an open request into a draft Contract via its linked
+ * agreement template. Server-side this reuses the same template
+ * generation path as ``generateAgreementFromTemplate``; on success
+ * the request is marked completed and the linked ``request_review``
+ * inbox item is resolved in the same transaction.
+ */
+export async function convertRequestToContract(
+  id: string,
+  payload: ConvertRequestToContractRequest,
+  options: ApiOptions = {},
+): Promise<ConvertRequestToContractResponse> {
+  if (isDemoMode()) return mockApi.convertRequestToContract(id, payload, options);
+  const data = await call<ConvertRequestToContractResponse>(
+    `/api/requests/${encodeURIComponent(id)}/convert-to-contract`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
 }
 
 // ---------------------------------------------------------------------------

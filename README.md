@@ -205,14 +205,16 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#47 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract) and the new Requests + Inbox intake/work-queue layer added in PR #47 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#48 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer added in PR #47, and the request → contract conversion route added in PR #48 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
 
 Whereas tracks two layers of work:
 
 - **Requests** are intake records: someone asks for a contract (new NDA, MSA, amendment, renewal). Status moves from open → in_progress → completed (or cancelled).
 - **Inbox items** are the per-user work queue. Creating a request automatically creates a `request_review` inbox item; future PRs will emit signature follow-up and metadata cleanup items as well.
 
-Approval workflows and calendar reminders are deliberately not part of this foundation — they belong on top.
+A request that carries a `linked_template_id` can be **converted to a draft Contract** in one click via `POST /api/requests/{id}/convert-to-contract`. The conversion reuses the existing `AgreementTemplate` generation path, links the new contract back to the request, marks the request `completed`, and resolves the linked open `request_review` inbox item — all in the same transaction. The endpoint stops at "draft Contract": sending out for signature is still a separate explicit step from the Contract workspace.
+
+Approval workflows, upload-file request conversion (uploading a counterparty paper directly through the request), one-click convert-and-send to DocuSeal, calendar reminders, and dashboard analytics are deliberately not part of this layer — they belong on top.
 
 ## Acknowledgments
 

@@ -28,7 +28,13 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.contracts import DbSession, _current_dev_user
+from app.api.contracts import (
+    DbSession,
+    _current_dev_user,
+    _load_org_key_or_http,
+    _load_organization,
+)
+from app.core.config import get_settings
 from app.models import (
     AgreementTemplate,
     Contract,
@@ -38,10 +44,20 @@ from app.models import (
     InboxItemStatus,
     User,
 )
+from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contracts import ContractListItemResponse
+from app.schemas.markdown import ContractMarkdownSnapshotResponse
 from app.schemas.requests import (
     ContractRequestCreateRequest,
     ContractRequestResponse,
     ContractRequestUpdateRequest,
+    ConvertRequestToContractRequest,
+    ConvertRequestToContractResponse,
+)
+from app.services.storage import DocumentStorage
+from app.services.template_generation import (
+    TemplateGenerationError,
+    generate_docx_from_template,
 )
 
 log = logging.getLogger(__name__)
@@ -235,6 +251,132 @@ async def cancel_request(
     request.status = ContractRequestStatus.CANCELLED.value
     await session.flush()
     await _resolve_request_review_inbox_items(session, request)
+
+
+# ---------------------------------------------------------------------------
+# Conversion
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{request_id}/convert-to-contract",
+    response_model=ConvertRequestToContractResponse,
+    status_code=201,
+)
+async def convert_request_to_contract(
+    request_id: uuid.UUID,
+    payload: ConvertRequestToContractRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ConvertRequestToContractResponse:
+    """Convert an open request into a draft Contract via its linked template.
+
+    Reuses ``generate_docx_from_template`` from the agreement-templates
+    surface so there is exactly one code path that turns a template +
+    variable values into a draft Contract + ``generated_docx`` artifact.
+    On success we link the new Contract back onto the request, mark the
+    request ``completed``, and resolve any open ``request_review`` inbox
+    item in the same transaction.
+
+    Validation rules:
+      * The request must belong to the caller's org (404 otherwise).
+      * The request must not be cancelled (409).
+      * The request must not already have a linked contract (409).
+      * The request must have a linked template (409); that template
+        must belong to the same org (404 otherwise — guarded by the
+        same-org invariant on creation, but defended again here).
+      * Variable validation errors propagate from the generation
+        service as 400 (unknown / missing required / malformed value).
+
+    Failure semantics:
+      * If template generation raises, no request/inbox state mutates.
+        ``get_db`` rolls the whole request-scoped transaction back.
+      * Markdown conversion failure is non-fatal — the response still
+        succeeds with ``markdown_snapshot=None``.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    request = await _get_request_for_org(
+        session, request_id, user.organization_id
+    )
+
+    if request.status == ContractRequestStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=409,
+            detail="Cancelled requests cannot be converted to a contract.",
+        )
+    if request.linked_contract_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This request is already linked to a contract.",
+        )
+    if request.linked_template_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Link an agreement template to this request before converting.",
+        )
+
+    template_stmt = select(AgreementTemplate).where(
+        AgreementTemplate.id == request.linked_template_id,
+        AgreementTemplate.organization_id == request.organization_id,
+    )
+    template = (await session.execute(template_stmt)).scalar_one_or_none()
+    if template is None:
+        # The link survived (e.g. the template was archived/deleted, or
+        # a stale row predates the same-org invariant). Treat this as a
+        # not-found from the caller's perspective rather than leaking
+        # the orphan state.
+        raise HTTPException(
+            status_code=404,
+            detail="Linked agreement template not found.",
+        )
+
+    settings = get_settings()
+    org = await _load_organization(session, user.organization_id)
+    org_master_key = _load_org_key_or_http(org)
+    storage = DocumentStorage(settings)
+    try:
+        result = await generate_docx_from_template(
+            session,
+            template=template,
+            variable_values=payload.variable_values,
+            generated_title=payload.title,
+            user_id=user.id,
+            org_master_key=org_master_key,
+            storage=storage,
+        )
+    except TemplateGenerationError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
+    finally:
+        del org_master_key
+
+    # Link the new contract back to the request and close out the
+    # workflow. Doing this in the same session/transaction means a
+    # failure here rolls the generation back too: we never end up with
+    # a Contract that has no request pointing at it OR a request that
+    # claims a contract id that doesn't exist.
+    request.linked_contract_id = result.contract.id
+    request.status = ContractRequestStatus.COMPLETED.value
+    await session.flush()
+    await _resolve_request_review_inbox_items(session, request)
+
+    await session.refresh(request)
+    await session.refresh(result.contract)
+    await session.refresh(result.artifact)
+    snapshot_response: ContractMarkdownSnapshotResponse | None = None
+    if result.markdown_snapshot is not None:
+        await session.refresh(result.markdown_snapshot)
+        snapshot_response = ContractMarkdownSnapshotResponse.model_validate(
+            result.markdown_snapshot
+        )
+    return ConvertRequestToContractResponse(
+        request=ContractRequestResponse.model_validate(request),
+        contract=ContractListItemResponse.model_validate(result.contract),
+        artifact=ContractArtifactResponse.model_validate(result.artifact),
+        markdown_snapshot=snapshot_response,
+        variables_used=result.variables_used,
+    )
 
 
 # ---------------------------------------------------------------------------

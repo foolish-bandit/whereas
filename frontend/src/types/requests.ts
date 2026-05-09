@@ -83,3 +83,63 @@ export interface ListContractRequestFilters {
   due_after?: string;
   include_cancelled?: boolean;
 }
+
+/**
+ * Body for ``POST /api/requests/{id}/convert-to-contract``.
+ *
+ * Mirrors ``AgreementGenerationRequest`` — the conversion endpoint
+ * reuses the template generation service. ``variable_values`` is
+ * keyed by the linked template's variable ``key``s.
+ */
+export interface ConvertRequestToContractRequest {
+  title?: string | null;
+  variable_values: Record<string, unknown>;
+}
+
+/**
+ * Response shape for ``POST /api/requests/{id}/convert-to-contract``.
+ *
+ * Reuses the same contract / artifact / markdown_snapshot projections
+ * the templates surface returns, plus the freshly-updated request row
+ * so the UI can swap both pieces of state in one shot. Storage and
+ * encryption fields never appear here.
+ */
+export interface ConvertRequestToContractResponse {
+  request: ContractRequest;
+  contract: {
+    id: string;
+    title: string;
+    status: string;
+    mime_type: string;
+    file_hash_sha256: string;
+    page_count: number | null;
+    created_at: string;
+    updated_at: string;
+  };
+  artifact: {
+    id: string;
+    contract_id: string;
+    artifact_type: "generated_docx" | string;
+    storage_backend: string;
+    filename: string | null;
+    mime_type: string | null;
+    file_hash_sha256: string | null;
+    size_bytes: number | null;
+    source: "template_generation" | string | null;
+    is_official: boolean;
+    created_at: string;
+    metadata_json: Record<string, unknown> | null;
+  };
+  markdown_snapshot: {
+    id: string;
+    contract_id: string;
+    markdown_text: string;
+    source_kind: string;
+    converter_name: string;
+    converter_version: string | null;
+    conversion_status: string;
+    conversion_warnings: unknown[] | null;
+    created_at: string;
+  } | null;
+  variables_used: string[];
+}
