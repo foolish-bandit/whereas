@@ -259,8 +259,11 @@ describe("AgreementTemplateDetailPage", () => {
     expect(
       screen.getByTestId("agreement-template-file-input"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Counterparty Name")).toBeInTheDocument();
-    expect(screen.getByText(/counterparty_name/)).toBeInTheDocument();
+    // The variables list and the generation form both render the label,
+    // so look inside the variables panel specifically.
+    const variablesPanel = screen.getByTestId("agreement-template-variables");
+    expect(variablesPanel.textContent).toContain("Counterparty Name");
+    expect(variablesPanel.textContent).toContain("counterparty_name");
   });
 
   it("does not surface storage_key from artifact responses", async () => {
@@ -274,5 +277,151 @@ describe("AgreementTemplateDetailPage", () => {
     // if the backend ever started returning it.
     expect(document.body.textContent ?? "").not.toContain("storage_key");
     expect(document.body.textContent ?? "").not.toContain("should-not-be-here");
+  });
+
+  it("renders a generation form built from the template variables", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    expect(
+      screen.getByTestId("agreement-template-generate"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("agreement-template-generate-input-counterparty_name"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the generated contract success state with a link", async () => {
+    const GENERATED_CONTRACT_ID = "99999999-9999-4999-8999-999999999999";
+    fetchMock.mockImplementation(
+      async (url: string, init: RequestInit | undefined) => {
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+          return jsonResponse(NDA_MARKDOWN);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+          return jsonResponse([NDA_ARTIFACT]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+          return jsonResponse(NDA_VARIABLES);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+          return jsonResponse(NDA);
+        }
+        if (
+          url.endsWith(`/api/agreement-templates/${NDA_ID}/generate`) &&
+          init?.method === "POST"
+        ) {
+          const body = JSON.parse(init.body as string);
+          expect(body.variable_values.counterparty_name).toBe("Acme Inc.");
+          return jsonResponse(
+            {
+              contract: {
+                id: GENERATED_CONTRACT_ID,
+                title: body.title || "Mutual NDA — generated",
+                status: "ready",
+                mime_type:
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                file_hash_sha256: "f".repeat(64),
+                page_count: null,
+                created_at: "2026-05-09T10:00:00Z",
+                updated_at: "2026-05-09T10:00:00Z",
+              },
+              artifact: {
+                id: "art-generated-1",
+                contract_id: GENERATED_CONTRACT_ID,
+                artifact_type: "generated_docx",
+                storage_backend: "s3",
+                filename: "Acme_NDA.docx",
+                mime_type:
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                file_hash_sha256: null,
+                size_bytes: 32_000,
+                source: "template_generation",
+                is_official: true,
+                created_at: "2026-05-09T10:00:00Z",
+                metadata_json: {
+                  template_id: NDA_ID,
+                  template_name: "Mutual NDA",
+                  variable_values: { counterparty_name: "Acme Inc." },
+                },
+                // Defensive: backend never returns this; the scrub should drop it.
+                storage_key: "documents/should-not-be-here.enc",
+              },
+              markdown_snapshot: null,
+              variables_used: ["counterparty_name"],
+            },
+            201,
+          );
+        }
+        return jsonResponse({ detail: "unexpected " + url }, 500);
+      },
+    );
+
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    fireEvent.change(screen.getByTestId("agreement-template-generate-title"), {
+      target: { value: "Acme NDA" },
+    });
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-input-counterparty_name"),
+      { target: { value: "Acme Inc." } },
+    );
+
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+
+    await screen.findByTestId("agreement-template-generate-success");
+    const link = screen.getByTestId("agreement-template-generate-contract-link");
+    expect(link).toHaveAttribute(
+      "href",
+      `/demo/contracts/${GENERATED_CONTRACT_ID}`,
+    );
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("should-not-be-here");
+  });
+
+  it("disables the generate button when required variables are blank", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    const button = screen.getByTestId("agreement-template-generate-submit");
+    expect(button).toBeDisabled();
+
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-input-counterparty_name"),
+      { target: { value: "Acme" } },
+    );
+    expect(button).not.toBeDisabled();
+  });
+
+  it("warns when generation is attempted without an original upload", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+        return jsonResponse(NDA);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderDetail();
+    await screen.findByTestId("agreement-template-generate");
+
+    expect(
+      screen.getByTestId("agreement-template-generate-needs-upload"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("agreement-template-generate-submit"),
+    ).toBeDisabled();
   });
 });

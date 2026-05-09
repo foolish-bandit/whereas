@@ -6,6 +6,7 @@ import {
   MissingDevUserError,
   createAgreementTemplateVariable,
   deleteAgreementTemplateVariable,
+  generateAgreementFromTemplate,
   getAgreementTemplate,
   getAgreementTemplateArtifacts,
   getAgreementTemplateMarkdown,
@@ -13,7 +14,9 @@ import {
   uploadAgreementTemplateArtifact,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
+import { demoPath } from "../lib/routes";
 import type {
+  AgreementGenerationResponse,
   AgreementTemplate,
   AgreementTemplateArtifact,
   AgreementTemplateMarkdownSnapshot,
@@ -49,6 +52,15 @@ export default function AgreementTemplateDetailPage() {
   const [varType, setVarType] = useState("text");
   const [varRequired, setVarRequired] = useState(false);
   const [varError, setVarError] = useState<string | null>(null);
+
+  // Generation form state
+  const [genTitle, setGenTitle] = useState("");
+  const [genValues, setGenValues] = useState<Record<string, string>>({});
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genResult, setGenResult] = useState<AgreementGenerationResponse | null>(
+    null,
+  );
 
   async function reload() {
     setLoading(true);
@@ -121,6 +133,25 @@ export default function AgreementTemplateDetailPage() {
     }));
   }
 
+  async function onGenerate() {
+    setGenerating(true);
+    setGenError(null);
+    setGenResult(null);
+    try {
+      const result = await generateAgreementFromTemplate(id, {
+        title: genTitle.trim() || undefined,
+        variable_values: genValues,
+      });
+      setGenResult(result);
+    } catch (err) {
+      setGenError(
+        err instanceof Error ? err.message : "Could not generate agreement.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   if (loading && !state.template) {
     return <p className="text-sm text-ink-muted">Loading template…</p>;
   }
@@ -128,6 +159,15 @@ export default function AgreementTemplateDetailPage() {
   if (!state.template) return null;
 
   const t = state.template;
+  const hasOriginalUpload = state.artifacts.some(
+    (a) => a.artifact_type === "original_upload",
+  );
+  const missingRequired = state.variables
+    .filter((v) => v.required)
+    .some((v) => {
+      const raw = genValues[v.key] ?? "";
+      return raw.trim() === "";
+    });
 
   return (
     <div className="space-y-5" data-testid="agreement-template-detail">
@@ -300,6 +340,129 @@ export default function AgreementTemplateDetailPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section
+        className="rounded border border-rule p-4"
+        data-testid="agreement-template-generate"
+      >
+        <h2 className="text-sm font-medium text-ink">Generate agreement</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          Render a draft DOCX from this template and the variable values
+          below. The original template is not modified. Generated DOCX
+          files become draft contracts in the repository — they are not
+          sent to DocuSeal yet.
+        </p>
+
+        {!hasOriginalUpload && (
+          <p
+            className="mt-3 text-xs text-danger"
+            data-testid="agreement-template-generate-needs-upload"
+          >
+            Upload an original DOCX template before generating an agreement.
+          </p>
+        )}
+
+        <div className="mt-3 space-y-3">
+          <label className="block text-xs text-ink-muted">
+            Title (optional)
+            <input
+              type="text"
+              className="mt-1 w-full rounded border border-rule px-2 py-1 text-sm"
+              placeholder={`e.g. ${t.name} — Acme`}
+              value={genTitle}
+              onChange={(e) => setGenTitle(e.target.value)}
+              data-testid="agreement-template-generate-title"
+            />
+          </label>
+
+          {state.variables.length === 0 ? (
+            <p className="text-xs text-ink-subtle">
+              No variables defined. The template will be generated as-is.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {state.variables.map((v) => (
+                <label
+                  key={v.id}
+                  className="block text-xs text-ink-muted"
+                  data-testid="agreement-template-generate-field"
+                >
+                  <span>
+                    {v.label}
+                    {v.required ? <span className="text-danger"> *</span> : null}
+                    <span className="ml-2 text-ink-subtle">({v.variable_type})</span>
+                  </span>
+                  <input
+                    className="mt-1 w-full rounded border border-rule px-2 py-1 text-sm"
+                    placeholder={v.help_text ?? v.key}
+                    value={genValues[v.key] ?? v.default_value ?? ""}
+                    onChange={(e) =>
+                      setGenValues((prev) => ({
+                        ...prev,
+                        [v.key]: e.target.value,
+                      }))
+                    }
+                    data-testid={`agreement-template-generate-input-${v.key}`}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-auto sm:py-1.5"
+              onClick={onGenerate}
+              disabled={generating || !hasOriginalUpload || missingRequired}
+              data-testid="agreement-template-generate-submit"
+            >
+              {generating ? "Generating…" : "Generate DOCX"}
+            </button>
+            {genError && (
+              <span
+                className="text-xs text-danger"
+                data-testid="agreement-template-generate-error"
+              >
+                {genError}
+              </span>
+            )}
+          </div>
+
+          {genResult && (
+            <div
+              className="rounded border border-rule bg-canvas-subtle px-3 py-2 text-sm"
+              data-testid="agreement-template-generate-success"
+            >
+              <p className="text-ink">
+                Generated{" "}
+                <strong className="font-medium">
+                  {genResult.contract.title}
+                </strong>
+                .
+              </p>
+              <p className="mt-1 text-xs text-ink-subtle">
+                Filed as a draft contract. The original template is unchanged.
+                Sending to DocuSeal is not enabled yet.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                <Link
+                  to={demoPath(`/contracts/${genResult.contract.id}`)}
+                  className="underline"
+                  data-testid="agreement-template-generate-contract-link"
+                >
+                  Open generated contract
+                </Link>
+                {genResult.artifact.filename && (
+                  <span className="text-ink-subtle">
+                    {genResult.artifact.filename}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       {state.template.metadata_json && (

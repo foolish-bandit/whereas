@@ -26,6 +26,8 @@ import type {
 } from "../types/contracts";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
+  AgreementGenerationRequest,
+  AgreementGenerationResponse,
   AgreementTemplate,
   AgreementTemplateArtifact,
   AgreementTemplateCreateRequest,
@@ -958,6 +960,114 @@ export async function deleteAgreementTemplateVariable(
   demoAgreementTemplateVariables[templateId] = list.filter(
     (v) => v.id !== variableId,
   );
+}
+
+export async function generateAgreementFromTemplate(
+  templateId: string,
+  payload: AgreementGenerationRequest,
+  options: ApiOptions = {},
+): Promise<AgreementGenerationResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findTemplate(templateId);
+  if (!template) throw new ApiError(404, "Agreement template not found.");
+
+  // Mirror the backend's variable validation so the demo exercises the
+  // same error states the real API surfaces.
+  const variables = demoAgreementTemplateVariables[templateId] ?? [];
+  const known = new Set(variables.map((v) => v.key));
+  const provided = payload.variable_values ?? {};
+  const unknown = Object.keys(provided).filter((k) => !known.has(k));
+  if (unknown.length > 0) {
+    throw new ApiError(400, `Unknown variable(s): ${unknown.join(", ")}.`);
+  }
+  for (const v of variables) {
+    if (!v.required) continue;
+    const raw = provided[v.key];
+    if (
+      raw === undefined ||
+      raw === null ||
+      (typeof raw === "string" && raw.trim() === "")
+    ) {
+      throw new ApiError(400, `Missing required variable: ${v.key}.`);
+    }
+  }
+  // Existing demo artifacts include the original_upload only when an
+  // operator has uploaded one; surface a clean precondition error if
+  // nothing has been uploaded yet, mirroring the backend.
+  const artifacts = demoAgreementTemplateArtifacts[templateId] ?? [];
+  const hasOriginal = artifacts.some((a) => a.artifact_type === "original_upload");
+  if (!hasOriginal) {
+    throw new ApiError(
+      409,
+      "Upload an original DOCX template before generating an agreement.",
+    );
+  }
+
+  const now = new Date().toISOString();
+  const title = (payload.title ?? "").trim() || `${template.name} — generated`;
+  const id = `demo-contract-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  const variableValues: Record<string, unknown> = {};
+  const usedKeys: string[] = [];
+  for (const v of variables) {
+    const raw = provided[v.key];
+    if (raw === undefined || raw === null || raw === "") {
+      variableValues[v.key] = "";
+      continue;
+    }
+    variableValues[v.key] = raw;
+    usedKeys.push(v.key);
+  }
+  return {
+    contract: {
+      id,
+      title,
+      status: "ready",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: id.padEnd(64, "0").slice(0, 64),
+      page_count: null,
+      created_at: now,
+      updated_at: now,
+    },
+    artifact: {
+      id: `demo-art-${Math.random().toString(36).slice(2)}`,
+      contract_id: id,
+      artifact_type: "generated_docx",
+      storage_backend: "s3",
+      filename: `${title.replace(/[^A-Za-z0-9._-]+/g, "_")}.docx`,
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 32_000,
+      source: "template_generation",
+      is_official: true,
+      created_at: now,
+      metadata_json: {
+        template_id: templateId,
+        template_name: template.name,
+        // Mirror the backend's privacy stance: keep keys, drop values.
+        // The values are already in the rendered DOCX.
+        variable_keys: [...usedKeys].sort(),
+        generated_at: now,
+      },
+    },
+    markdown_snapshot: {
+      id: `demo-md-${Math.random().toString(36).slice(2)}`,
+      contract_id: id,
+      markdown_text:
+        `# ${title}\n\nDemo-mode generated agreement. Variables used:\n\n` +
+        usedKeys.map((k) => `- **${k}**: ${variableValues[k]}`).join("\n"),
+      source_kind: "generated",
+      converter_name: "demo",
+      converter_version: "0.0.1",
+      conversion_status: "ready",
+      conversion_warnings: null,
+      created_at: now,
+    },
+    variables_used: usedKeys.sort(),
+  };
 }
 
 // ---------------------------------------------------------------------------

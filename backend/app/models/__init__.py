@@ -784,6 +784,10 @@ class AgreementTemplateArtifact(Base):
     artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
     storage_key: Mapped[str | None] = mapped_column(String(1024))
+    # Serialized WrappedKey for the per-artifact DEK. Templates have no
+    # parent contract row to hold one, so each artifact carries its own
+    # wrapping. Nullable for rows written before 0010_template_artifact_wrapped_dek.
+    wrapped_dek: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     filename: Mapped[str | None] = mapped_column(String(512))
     mime_type: Mapped[str | None] = mapped_column(String(128))
     file_hash_sha256: Mapped[str | None] = mapped_column(String(64))

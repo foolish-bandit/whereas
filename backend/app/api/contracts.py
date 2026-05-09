@@ -62,7 +62,7 @@ from app.security.encryption import (
 )
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.contract_artifacts import (
-    get_latest_official_original_artifact,
+    get_latest_official_downloadable_artifact,
 )
 from app.services.deviation_findings import (
     InvalidFindingStatusError,
@@ -761,12 +761,14 @@ async def download_contract(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
 ) -> Response:
-    """Download the original legal artifact for a contract.
+    """Download the official legal artifact for a contract.
 
     Resolution order:
-      1. Latest official ``original_upload`` ContractArtifact, if any
-         (the v1 upload flow writes one of these per upload).
-      2. Legacy ``Contract.s3_key`` / ``Contract.mime_type``, for
+      1. Latest official ``original_upload`` ContractArtifact (the v1
+         upload flow writes one of these per upload).
+      2. Latest official ``generated_docx`` ContractArtifact (template
+         generation flow; the contract has no ``original_upload``).
+      3. Legacy ``Contract.s3_key`` / ``Contract.mime_type``, for
          contracts uploaded before the artifact model landed and not
          yet backfilled.
 
@@ -784,7 +786,7 @@ async def download_contract(
     if contract.wrapped_dek is None:
         raise HTTPException(status_code=409, detail="Contract encryption metadata is missing.")
 
-    artifact = await get_latest_official_original_artifact(
+    artifact = await get_latest_official_downloadable_artifact(
         session,
         contract_id=contract.id,
         organization_id=user.organization_id,
