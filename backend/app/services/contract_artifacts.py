@@ -1,4 +1,4 @@
-"""Backfill utilities for the ContractArtifact model.
+"""ContractArtifact resolution and backfill utilities.
 
 ContractArtifact is the official record of file-like objects associated
 with a contract. Contracts created before that model existed only have
@@ -26,6 +26,57 @@ from app.models import Contract, ContractArtifact
 LEGACY_BACKFILL_SOURCE = "legacy_backfill"
 ORIGINAL_UPLOAD = "original_upload"
 DEFAULT_STORAGE_BACKEND = "s3"
+
+
+async def get_latest_artifact_by_type(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    artifact_type: str,
+    official_only: bool = False,
+) -> ContractArtifact | None:
+    """Return the most recent artifact of ``artifact_type`` for a contract.
+
+    Org scoped — the caller is expected to have already validated that
+    the contract belongs to the organization, but the extra
+    ``organization_id`` filter here is defense in depth so a stray
+    call cannot leak across tenants.
+    """
+    stmt = select(ContractArtifact).where(
+        ContractArtifact.contract_id == contract_id,
+        ContractArtifact.organization_id == organization_id,
+        ContractArtifact.artifact_type == artifact_type,
+    )
+    if official_only:
+        stmt = stmt.where(ContractArtifact.is_official.is_(True))
+    stmt = stmt.order_by(
+        ContractArtifact.created_at.desc(), ContractArtifact.id.desc()
+    ).limit(1)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_latest_official_original_artifact(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> ContractArtifact | None:
+    """Convenience: latest ``original_upload`` artifact marked official.
+
+    The upload handler always writes the original with
+    ``is_official=True``; the backfill path mirrors that. Returning
+    ``None`` is the expected legacy path for contracts uploaded
+    before the artifact model landed and not yet backfilled.
+    """
+    return await get_latest_artifact_by_type(
+        session,
+        contract_id=contract_id,
+        organization_id=organization_id,
+        artifact_type=ORIGINAL_UPLOAD,
+        official_only=True,
+    )
 
 
 @dataclass

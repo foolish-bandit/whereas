@@ -39,6 +39,8 @@ from app.models import (
     User,
 )
 from app.schemas.agreement_templates import (
+    AgreementGenerationRequest,
+    AgreementGenerationResponse,
     AgreementTemplateArtifactResponse,
     AgreementTemplateCreateRequest,
     AgreementTemplateMarkdownSnapshotResponse,
@@ -48,6 +50,9 @@ from app.schemas.agreement_templates import (
     AgreementTemplateVariableResponse,
     AgreementTemplateVariableUpdateRequest,
 )
+from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contracts import ContractListItemResponse
+from app.schemas.markdown import ContractMarkdownSnapshotResponse
 from app.services.document_markdown import convert_document_to_markdown
 from app.services.document_parser import (
     DocumentParseError,
@@ -55,6 +60,10 @@ from app.services.document_parser import (
     parse_document,
 )
 from app.services.storage import DocumentStorage
+from app.services.template_generation import (
+    TemplateGenerationError,
+    generate_docx_from_template,
+)
 
 log = logging.getLogger(__name__)
 
@@ -209,6 +218,7 @@ async def upload_agreement_template_original(
         artifact_type="original_upload",
         storage_backend="s3",
         storage_key=stored.s3_key,
+        wrapped_dek=stored.wrapped_dek_bytes,
         filename=filename,
         mime_type=mime_type,
         file_hash_sha256=file_hash,
@@ -321,6 +331,63 @@ async def get_agreement_template_markdown(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Markdown snapshot not found.")
     return AgreementTemplateMarkdownSnapshotResponse.model_validate(snapshot)
+
+
+# ---------------------------------------------------------------------------
+# Generation
+#
+# Generates a draft DOCX agreement from the template's official
+# original_upload artifact and a set of variable values. The generated
+# DOCX is stored as a Contract + ContractArtifact, not as another
+# AgreementTemplateArtifact: once filled, an agreement is no longer just
+# a template artifact — it's the first version of a draft contract.
+#
+# This route does NOT send the generated agreement to DocuSeal. That
+# integration lives in a future PR.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{template_id}/generate",
+    response_model=AgreementGenerationResponse,
+    status_code=201,
+)
+async def generate_agreement_from_template(
+    template_id: uuid.UUID,
+    payload: AgreementGenerationRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> AgreementGenerationResponse:
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    template = await _get_template_for_org(session, template_id, user.organization_id)
+    organization = await _load_organization(session, user.organization_id)
+
+    try:
+        result = await generate_docx_from_template(
+            session,
+            template=template,
+            organization=organization,
+            variable_values=payload.variable_values,
+            generated_title=payload.title,
+            user_id=user.id,
+        )
+    except TemplateGenerationError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=str(exc)) from exc
+
+    await session.refresh(result.contract)
+    await session.refresh(result.artifact)
+    if result.markdown_snapshot is not None:
+        await session.refresh(result.markdown_snapshot)
+
+    return AgreementGenerationResponse(
+        contract=ContractListItemResponse.model_validate(result.contract),
+        artifact=ContractArtifactResponse.model_validate(result.artifact),
+        markdown_snapshot=(
+            ContractMarkdownSnapshotResponse.model_validate(result.markdown_snapshot)
+            if result.markdown_snapshot is not None
+            else None
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

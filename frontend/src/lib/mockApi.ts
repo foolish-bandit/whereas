@@ -26,6 +26,8 @@ import type {
 } from "../types/contracts";
 import type { ClauseTemplate, ClauseTemplateCreateRequest, ClauseTemplateUpdateRequest } from "../types/clauseTemplates";
 import type {
+  AgreementGenerationRequest,
+  AgreementGenerationResponse,
   AgreementTemplate,
   AgreementTemplateArtifact,
   AgreementTemplateCreateRequest,
@@ -958,6 +960,86 @@ export async function deleteAgreementTemplateVariable(
   demoAgreementTemplateVariables[templateId] = list.filter(
     (v) => v.id !== variableId,
   );
+}
+
+export async function generateAgreementFromTemplate(
+  templateId: string,
+  payload: AgreementGenerationRequest,
+  options: ApiOptions = {},
+): Promise<AgreementGenerationResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findTemplate(templateId);
+  if (!template) throw new ApiError(404, "Agreement template not found.");
+
+  // Required-variable check, mirroring the backend so the form
+  // surfaces the same failure modes in demo mode.
+  const variables = demoAgreementTemplateVariables[templateId] ?? [];
+  const known = new Set(variables.map((v) => v.key));
+  const provided = payload.variable_values ?? {};
+  const unknown = Object.keys(provided).filter((k) => !known.has(k));
+  if (unknown.length > 0) {
+    throw new ApiError(400, `Unknown variable keys: ${unknown.join(", ")}.`);
+  }
+  for (const v of variables) {
+    if (v.required) {
+      const raw = provided[v.key];
+      if (raw === undefined || raw === null || raw === "") {
+        throw new ApiError(400, `Variable '${v.key}' is required.`);
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const contractId = `demo-contract-${Math.random().toString(36).slice(2)}`;
+  const artifactId = `demo-artifact-${Math.random().toString(36).slice(2)}`;
+  const title =
+    (payload.title?.trim() || `${template.name} — ${now.slice(0, 10)}`) ?? "Draft";
+  const filenameBase = title.replace(/[^A-Za-z0-9._-]+/g, "_");
+  const variableKeys = Object.keys(provided).sort();
+  return {
+    contract: {
+      id: contractId,
+      title,
+      status: "draft",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: "0".repeat(64),
+      page_count: null,
+      created_at: now,
+      updated_at: now,
+    },
+    artifact: {
+      id: artifactId,
+      contract_id: contractId,
+      artifact_type: "generated_docx",
+      storage_backend: "demo",
+      filename: `${filenameBase}.docx`,
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: "0".repeat(64),
+      size_bytes: 4096,
+      source: "template_generation",
+      is_official: true,
+      created_at: now,
+      metadata_json: {
+        template_id: templateId,
+        template_name: template.name,
+        template_type: template.template_type,
+        variable_keys: variableKeys,
+      },
+    },
+    markdown_snapshot: {
+      id: `demo-snap-${Math.random().toString(36).slice(2)}`,
+      contract_id: contractId,
+      markdown_text: `# ${title}\n\nGenerated draft for ${template.name}.`,
+      source_kind: "generated",
+      converter_name: "demo",
+      converter_version: "0.0.1",
+      conversion_status: "ready",
+      conversion_warnings: null,
+      created_at: now,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

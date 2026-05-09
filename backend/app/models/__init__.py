@@ -92,6 +92,10 @@ class User(Base):
 
 class ContractStatus(StrEnum):
     UPLOADED = "uploaded"
+    # Drafts arise from template generation: the bytes are clean DOCX
+    # produced from an AgreementTemplate, not an external upload, and
+    # extraction is intentionally skipped on the first pass.
+    DRAFT = "draft"
     EXTRACTING = "extracting"
     READY = "ready"
     FAILED = "failed"
@@ -784,6 +788,20 @@ class AgreementTemplateArtifact(Base):
     artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
     storage_key: Mapped[str | None] = mapped_column(String(1024))
+    # Wrapped DEK for the encrypted artifact bytes. Templates are stored
+    # encrypted under a per-document DEK (same scheme as contract uploads),
+    # so retrieval needs the wrapped key alongside the storage key. Nullable
+    # so legacy/unencrypted artifacts and rows created before this column
+    # was introduced remain readable through the listing endpoints.
+    wrapped_dek: Mapped[bytes | None] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment=(
+            "Serialized WrappedKey for the per-document DEK: nonce || ciphertext "
+            "from app.security.encryption.WrappedKey.to_bytes(), wrapping the "
+            "artifact DEK under the organization master key."
+        ),
+    )
     filename: Mapped[str | None] = mapped_column(String(512))
     mime_type: Mapped[str | None] = mapped_column(String(128))
     file_hash_sha256: Mapped[str | None] = mapped_column(String(64))

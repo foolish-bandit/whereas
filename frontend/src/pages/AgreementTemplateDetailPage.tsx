@@ -6,6 +6,7 @@ import {
   MissingDevUserError,
   createAgreementTemplateVariable,
   deleteAgreementTemplateVariable,
+  generateAgreementFromTemplate,
   getAgreementTemplate,
   getAgreementTemplateArtifacts,
   getAgreementTemplateMarkdown,
@@ -14,6 +15,7 @@ import {
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import type {
+  AgreementGenerationResponse,
   AgreementTemplate,
   AgreementTemplateArtifact,
   AgreementTemplateMarkdownSnapshot,
@@ -49,6 +51,15 @@ export default function AgreementTemplateDetailPage() {
   const [varType, setVarType] = useState("text");
   const [varRequired, setVarRequired] = useState(false);
   const [varError, setVarError] = useState<string | null>(null);
+
+  // Generate form state
+  const [genTitle, setGenTitle] = useState("");
+  const [genValues, setGenValues] = useState<Record<string, string>>({});
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genResult, setGenResult] = useState<AgreementGenerationResponse | null>(
+    null,
+  );
 
   async function reload() {
     setLoading(true);
@@ -119,6 +130,48 @@ export default function AgreementTemplateDetailPage() {
       ...prev,
       variables: prev.variables.filter((v) => v.id !== variableId),
     }));
+  }
+
+  async function onGenerate() {
+    setGenerating(true);
+    setGenError(null);
+    setGenResult(null);
+
+    // Client-side check on required variables — saves a roundtrip and
+    // gives a clearer per-field message than the backend's batched
+    // 400. The backend re-validates regardless.
+    const missing = state.variables
+      .filter((v) => v.required)
+      .filter((v) => {
+        const raw = (genValues[v.key] ?? "").trim();
+        return raw === "";
+      });
+    if (missing.length > 0) {
+      setGenError(
+        `Required variable${missing.length > 1 ? "s" : ""} missing: ${missing
+          .map((v) => v.label || v.key)
+          .join(", ")}.`,
+      );
+      setGenerating(false);
+      return;
+    }
+
+    const payload = {
+      title: genTitle.trim() || undefined,
+      variable_values: Object.fromEntries(
+        Object.entries(genValues).filter(([, v]) => v !== ""),
+      ),
+    };
+    try {
+      const result = await generateAgreementFromTemplate(id, payload);
+      setGenResult(result);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not generate draft.";
+      setGenError(message);
+    } finally {
+      setGenerating(false);
+    }
   }
 
   if (loading && !state.template) {
@@ -299,6 +352,123 @@ export default function AgreementTemplateDetailPage() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section
+        className="rounded border border-rule p-4"
+        data-testid="agreement-template-generate"
+      >
+        <h2 className="text-sm font-medium text-ink">Generate agreement</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          Fill in the variable values below and download a draft DOCX.
+          The original template stays untouched. Generated drafts are
+          stored as draft contracts; sending them for signature is not
+          part of this flow.
+        </p>
+
+        <label className="mt-3 block text-xs text-ink-muted">
+          Draft title (optional)
+        </label>
+        <input
+          className="mt-1 w-full rounded border border-rule px-2 py-1 text-sm"
+          placeholder={`${t.name} — ${new Date().toISOString().slice(0, 10)}`}
+          value={genTitle}
+          onChange={(e) => setGenTitle(e.target.value)}
+          data-testid="agreement-template-generate-title"
+        />
+
+        {state.variables.length === 0 ? (
+          <p className="mt-3 text-xs text-ink-subtle">
+            This template has no variables. Generation will produce a
+            copy of the original template body.
+          </p>
+        ) : (
+          <ul
+            className="mt-3 space-y-2"
+            data-testid="agreement-template-generate-fields"
+          >
+            {state.variables.map((v) => (
+              <li key={v.id}>
+                <label className="block text-xs text-ink-muted">
+                  {v.label}
+                  {v.required && <span className="ml-1 text-danger">*</span>}{" "}
+                  <code className="text-ink-subtle">{v.key}</code>
+                </label>
+                <input
+                  className="mt-1 w-full rounded border border-rule px-2 py-1 text-sm"
+                  type={
+                    v.variable_type === "date"
+                      ? "date"
+                      : v.variable_type === "number" ||
+                        v.variable_type === "money"
+                      ? "number"
+                      : "text"
+                  }
+                  value={genValues[v.key] ?? ""}
+                  placeholder={v.help_text ?? ""}
+                  required={v.required}
+                  onChange={(e) =>
+                    setGenValues((prev) => ({
+                      ...prev,
+                      [v.key]: e.target.value,
+                    }))
+                  }
+                  data-testid={`agreement-template-generate-field-${v.key}`}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-auto sm:py-1.5"
+            onClick={onGenerate}
+            disabled={generating || state.artifacts.length === 0}
+            data-testid="agreement-template-generate-button"
+          >
+            {generating ? "Generating…" : "Generate DOCX"}
+          </button>
+          {state.artifacts.length === 0 && (
+            <span className="text-xs text-ink-subtle">
+              Upload an original DOCX before generating.
+            </span>
+          )}
+          {genError && (
+            <span
+              className="text-xs text-danger"
+              data-testid="agreement-template-generate-error"
+            >
+              {genError}
+            </span>
+          )}
+        </div>
+
+        {genResult && (
+          <div
+            className="mt-3 rounded border border-rule bg-canvas-subtle px-3 py-2 text-sm"
+            data-testid="agreement-template-generate-success"
+          >
+            <p className="text-ink">
+              Draft created:{" "}
+              <span className="font-medium">
+                {genResult.contract.title}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Saved as a draft contract. Generated artifact:{" "}
+              {genResult.artifact.filename ?? "(no filename)"}.
+            </p>
+            <Link
+              to={`/demo/contracts/${genResult.contract.id}`}
+              className="mt-2 inline-block text-xs underline"
+              data-testid="agreement-template-generate-link"
+            >
+              Open draft →
+            </Link>
+          </div>
         )}
       </section>
 

@@ -1,5 +1,6 @@
 export type ContractStatus =
   | "uploaded"
+  | "draft"
   | "extracting"
   | "ready"
   | "failed"

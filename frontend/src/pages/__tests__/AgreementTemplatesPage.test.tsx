@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   afterEach,
@@ -259,8 +259,15 @@ describe("AgreementTemplateDetailPage", () => {
     expect(
       screen.getByTestId("agreement-template-file-input"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Counterparty Name")).toBeInTheDocument();
-    expect(screen.getByText(/counterparty_name/)).toBeInTheDocument();
+    const variablesSection = screen.getByTestId(
+      "agreement-template-variables",
+    );
+    expect(
+      within(variablesSection).getByText("Counterparty Name"),
+    ).toBeInTheDocument();
+    expect(
+      within(variablesSection).getByText(/counterparty_name/),
+    ).toBeInTheDocument();
   });
 
   it("does not surface storage_key from artifact responses", async () => {
@@ -274,5 +281,143 @@ describe("AgreementTemplateDetailPage", () => {
     // if the backend ever started returning it.
     expect(document.body.textContent ?? "").not.toContain("storage_key");
     expect(document.body.textContent ?? "").not.toContain("should-not-be-here");
+  });
+
+  it("renders generation form fields from the template's variables", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.getByTestId("agreement-template-generate"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("agreement-template-generate-field-counterparty_name"),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks generation when a required field is empty", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    fireEvent.click(screen.getByTestId("agreement-template-generate-button"));
+    const error = await screen.findByTestId(
+      "agreement-template-generate-error",
+    );
+    expect(error.textContent ?? "").toMatch(/required/i);
+  });
+
+  it("posts generation and shows success state with a link to the draft", async () => {
+    let postedBody: unknown = null;
+    fetchMock.mockImplementation(
+      async (url: string, init?: RequestInit) => {
+        if (
+          url.endsWith(
+            `/api/agreement-templates/${NDA_ID}/generate`,
+          ) &&
+          init?.method === "POST"
+        ) {
+          postedBody = JSON.parse(init.body as string);
+          const now = "2026-05-09T00:00:00Z";
+          // Defensive: the backend never returns storage_key, but the
+          // client must scrub it if a regression ever leaks the field.
+          return jsonResponse({
+            contract: {
+              id: "draft-1",
+              title: "Acme NDA",
+              status: "draft",
+              mime_type:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              file_hash_sha256: "0".repeat(64),
+              page_count: null,
+              created_at: now,
+              updated_at: now,
+            },
+            artifact: {
+              id: "art-gen-1",
+              contract_id: "draft-1",
+              artifact_type: "generated_docx",
+              storage_backend: "s3",
+              filename: "Acme_NDA.docx",
+              mime_type:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              file_hash_sha256: "0".repeat(64),
+              size_bytes: 4096,
+              source: "template_generation",
+              is_official: true,
+              created_at: now,
+              metadata_json: { template_id: NDA_ID },
+              storage_key: "documents/should-be-scrubbed.enc",
+            },
+            markdown_snapshot: null,
+          });
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+          return jsonResponse(NDA_MARKDOWN);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+          return jsonResponse([NDA_ARTIFACT]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+          return jsonResponse(NDA_VARIABLES);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+          return jsonResponse(NDA);
+        }
+        return jsonResponse({ detail: "unexpected " + url }, 500);
+      },
+    );
+
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-title"),
+      { target: { value: "Acme NDA" } },
+    );
+    fireEvent.change(
+      screen.getByTestId(
+        "agreement-template-generate-field-counterparty_name",
+      ),
+      { target: { value: "Acme Inc." } },
+    );
+    fireEvent.click(screen.getByTestId("agreement-template-generate-button"));
+
+    await screen.findByTestId("agreement-template-generate-success");
+    expect(postedBody).toMatchObject({
+      title: "Acme NDA",
+      variable_values: { counterparty_name: "Acme Inc." },
+    });
+    expect(
+      screen.getByTestId("agreement-template-generate-link"),
+    ).toHaveAttribute("href", expect.stringContaining("/contracts/draft-1"));
+    // Defensive scrub: storage_key from the artifact must not leak to the DOM.
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain(
+      "should-be-scrubbed",
+    );
+  });
+
+  it("disables the generate button when no original is uploaded", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+        return jsonResponse(NDA);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-empty");
+    expect(
+      screen.getByTestId("agreement-template-generate-button"),
+    ).toBeDisabled();
   });
 });

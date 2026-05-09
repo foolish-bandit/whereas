@@ -7,6 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contracts import ContractListItemResponse
+from app.schemas.markdown import ContractMarkdownSnapshotResponse
+
 # ---------------------------------------------------------------------------
 # Templates
 # ---------------------------------------------------------------------------
@@ -141,3 +145,33 @@ class AgreementTemplateVariableResponse(BaseModel):
     metadata_json: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
+
+
+class AgreementGenerationRequest(BaseModel):
+    """Request body for ``POST /agreement-templates/{id}/generate``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=500)
+    variable_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgreementGenerationResponse(BaseModel):
+    """Result of a successful generation.
+
+    ``contract`` is the new draft Contract; ``artifact`` is the
+    generated DOCX. ``markdown_snapshot`` is present when conversion
+    succeeded and absent otherwise — the DOCX is the legal record,
+    the snapshot is a preview.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract: ContractListItemResponse
+    artifact: ContractArtifactResponse
+    markdown_snapshot: ContractMarkdownSnapshotResponse | None = None
