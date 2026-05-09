@@ -202,6 +202,14 @@ class ContractArtifact(Base):
     artifact_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
     storage_key: Mapped[str | None] = mapped_column(String(1024))
+    # Serialized WrappedKey for the per-artifact DEK. Older
+    # ``original_upload`` and ``generated_docx`` rows leave this NULL
+    # because PRs #34/#35 stored every artifact under
+    # ``contracts.wrapped_dek``; download falls back to that column for
+    # those rows. ``signed_pdf`` rows (PR #45) write their own wrapped
+    # DEK so the DocuSeal-supplied bytes do not have to share a DEK
+    # with the pre-signature artifact.
+    wrapped_dek: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     filename: Mapped[str | None] = mapped_column(String(512))
     mime_type: Mapped[str | None] = mapped_column(String(128))
     file_hash_sha256: Mapped[str | None] = mapped_column(String(64))

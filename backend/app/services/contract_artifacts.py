@@ -82,15 +82,21 @@ async def get_latest_official_original_artifact(
     )
 
 
-# Resolution order for the contract download endpoint. ``original_upload``
-# is preferred so contracts that have one (the v1 upload flow) keep their
-# user-supplied filename and content type. ``generated_docx`` is the
-# fallback for contracts created by template generation, which never
-# have an ``original_upload`` row. Anything past these two is left for
-# the caller to handle (legacy ``Contract.s3_key``).
+# Resolution order for the contract download endpoint.
+#
+# ``signed_pdf`` wins because once a contract has been executed via
+# DocuSeal, the signed PDF is the official legal record — handing back
+# the pre-signature draft would be misleading. Below that,
+# ``generated_docx`` wins over ``original_upload`` because a contract
+# with a generated draft never had an ``original_upload`` (the only way
+# a contract has a ``generated_docx`` is via template generation), so
+# the order matters only for completeness, but it stays explicit.
+# Legacy contracts without any artifact fall through to
+# ``Contract.s3_key`` at the call site.
 DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY: tuple[str, ...] = (
-    ARTIFACT_TYPE_ORIGINAL_UPLOAD,
+    "signed_pdf",
     "generated_docx",
+    ARTIFACT_TYPE_ORIGINAL_UPLOAD,
 )
 
 # Resolution order for sending a contract to DocuSeal for signature.

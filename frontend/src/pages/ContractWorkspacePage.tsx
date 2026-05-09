@@ -135,9 +135,21 @@ export default function ContractWorkspacePage() {
     getContractArtifacts(id, { signal: controller.signal })
       .then((rows) => {
         if (controller.signal.aborted) return;
+        // Strip prefers the signed PDF if present (executed contract),
+        // falling back to the original upload. The listing endpoint
+        // returns rows newest-first; ``find`` picks the freshest of
+        // each type. Generated DOCX intentionally does NOT surface
+        // here because the existing strip is the "official artifact"
+        // affordance, and the official record is the signed PDF or
+        // the source upload, not the draft.
+        const signed =
+          rows.find((a) => a.artifact_type === "signed_pdf") ?? null;
         const original =
           rows.find((a) => a.artifact_type === "original_upload") ?? null;
-        setArtifactState({ kind: "loaded", artifact: original });
+        setArtifactState({
+          kind: "loaded",
+          artifact: signed ?? original,
+        });
       })
       .catch(() => {
         // Artifact metadata is a hint, not load-bearing — the contract
@@ -464,30 +476,38 @@ function OriginalArtifactStrip({
 }) {
   // Whereas tracks the DOCX/PDF as the official legal artifact and the
   // Markdown snapshot as the working representation. This strip is the
-  // small affordance in the workspace that makes the original artifact
+  // small affordance in the workspace that makes the official artifact
   // visible without redesigning the page.
   //
-  // Three rendered cases:
-  //   1. an official original_upload artifact exists → show filename
-  //      and MIME with the "Official" badge.
-  //   2. the artifacts list resolved but is empty → the contract
+  // Cases:
+  //   1. a ``signed_pdf`` artifact exists (DocuSeal completion) →
+  //      label as "Signed artifact"; this is the contract's executed
+  //      record.
+  //   2. an ``original_upload`` artifact exists → label as "Original
+  //      artifact" with the "Official" badge.
+  //   3. the artifacts list resolved but is empty → the contract
   //      predates the artifact model and has not been backfilled yet.
   //      Surface a quiet "Legacy original" hint so users know the
   //      Download original button still works against the contract row.
-  //   3. loading or error → render nothing. The Download original
+  //   4. loading or error → render nothing. The Download original
   //      button stays the load-bearing affordance.
   if (state.kind !== "loaded") return null;
   if (state.artifact) {
     const artifact = state.artifact;
+    const isSigned = artifact.artifact_type === "signed_pdf";
     return (
       <div
         className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
-        data-testid="original-artifact-strip"
+        data-testid={
+          isSigned ? "signed-artifact-strip" : "original-artifact-strip"
+        }
       >
-        <span className="font-medium text-ink">Original artifact</span>
+        <span className="font-medium text-ink">
+          {isSigned ? "Signed artifact" : "Original artifact"}
+        </span>
         {artifact.is_official && (
           <span className="rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-canvas">
-            Official
+            {isSigned ? "Signed" : "Official"}
           </span>
         )}
         {artifact.filename && (

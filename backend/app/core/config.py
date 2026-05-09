@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # --- DocuSeal ---
     DOCUSEAL_BASE_URL: str = "http://docuseal:3000"
     DOCUSEAL_AUTH_BRIDGE_SECRET: str
+    # Optional shared secret used to verify DocuSeal completion
+    # webhooks. When configured, the webhook receiver requires either a
+    # matching HMAC-SHA256 signature in ``X-DocuSeal-Signature`` (if
+    # the operator points DocuSeal at this value as its webhook signing
+    # secret) or the literal value in ``X-Whereas-Docuseal-Webhook-Secret``
+    # as an interim path until DocuSeal's signing scheme is finalized.
+    # Production deployments must set this; leaving it unset rejects
+    # all webhooks in non-development environments. See
+    # ``app.services.docuseal_bridge.verify_docuseal_webhook``.
+    DOCUSEAL_WEBHOOK_SECRET: str | None = None
 
     # --- Extraction confidence thresholds ---
     # Below this, extraction results are flagged as low-confidence in the UI.
