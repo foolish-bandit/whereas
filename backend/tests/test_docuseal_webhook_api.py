@@ -1,7 +1,9 @@
 """API tests for the DocuSeal webhook endpoint.
 
 Covers:
-  * verification (HMAC, shared-secret header, missing/invalid)
+  * verification — DocuSeal-format ``X-Docuseal-Signature`` (timestamp +
+    HMAC over ``"{ts}.{body}"`` with stale-timestamp rejection),
+    interim shared-secret header, malformed/missing signature
   * irrelevant events return 202 without mutating state
   * unknown submission ids return 202 without mutating state
   * completion event creates a signed_pdf artifact and flips status
@@ -17,6 +19,7 @@ import hmac
 import json
 import secrets
 import subprocess
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -332,10 +335,20 @@ def stub_docuseal_fetch(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _hmac_sig(body: bytes) -> str:
-    return hmac.new(
-        _WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256
+def _docuseal_signature_header(body: bytes, *, timestamp: int | None = None) -> str:
+    """Build a valid ``X-Docuseal-Signature`` header for testing.
+
+    DocuSeal signs ``"{timestamp}.{raw_body}"`` and emits
+    ``"{timestamp}.{hex_signature}"``. The verifier rejects both
+    malformed shapes and stale timestamps; this helper produces a
+    well-formed, fresh value so tests can assert the happy path.
+    """
+    ts = timestamp if timestamp is not None else int(time.time())
+    payload = f"{ts}.".encode("ascii") + body
+    sig = hmac.new(
+        _WEBHOOK_SECRET.encode("utf-8"), payload, hashlib.sha256
     ).hexdigest()
+    return f"{ts}.{sig}"
 
 
 def _completion_payload(submission_id: str, *, event_id: str | None = "evt-1") -> dict[str, Any]:
@@ -375,13 +388,162 @@ async def test_webhook_rejects_invalid_signature(
     client: httpx.AsyncClient,
     stub_docuseal_fetch: dict[str, Any],
 ) -> None:
+    """A well-formed-shape header with a wrong HMAC must fail."""
     body = json.dumps(_completion_payload("sub-x")).encode()
+    ts = int(time.time())
     response = await client.post(
         "/api/docuseal/webhook",
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": "0" * 64,
+            "X-Docuseal-Signature": f"{ts}.{'0' * 64}",
+        },
+    )
+    assert response.status_code == 401
+    assert stub_docuseal_fetch["calls"] == []
+
+
+async def test_webhook_rejects_unsigned_body_with_only_hex_signature(
+    client: httpx.AsyncClient,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """Pre-fix shape (raw HMAC, no timestamp prefix) must be rejected.
+
+    Guards the regression where the verifier accepted a bare hex
+    HMAC of the raw body (the format Whereas shipped before this
+    fix); DocuSeal's documented format is ``timestamp.signature`` over
+    ``timestamp.body``, and the verifier must require the prefix.
+    """
+    body = json.dumps(_completion_payload("sub-x")).encode()
+    bare_hmac = hmac.new(
+        _WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/docuseal/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Docuseal-Signature": bare_hmac,
+        },
+    )
+    assert response.status_code == 401
+    assert stub_docuseal_fetch["calls"] == []
+
+
+async def test_webhook_rejects_stale_timestamp(
+    client: httpx.AsyncClient,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """A signature whose embedded timestamp is older than the
+    tolerance window is rejected even when the HMAC itself is valid
+    against that timestamp. Closes the replay window."""
+    body = json.dumps(_completion_payload("sub-stale")).encode()
+    stale_ts = int(time.time()) - (10 * 60)  # 10 minutes old; tolerance is 5
+    header = _docuseal_signature_header(body, timestamp=stale_ts)
+    response = await client.post(
+        "/api/docuseal/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Docuseal-Signature": header,
+        },
+    )
+    assert response.status_code == 401
+    assert stub_docuseal_fetch["calls"] == []
+
+
+async def test_webhook_rejects_future_timestamp_outside_tolerance(
+    client: httpx.AsyncClient,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """Symmetric to the stale case: a far-future timestamp also
+    rejects, so a clock-skewed attacker can't claim freshness by
+    advancing the clock arbitrarily."""
+    body = json.dumps(_completion_payload("sub-future")).encode()
+    future_ts = int(time.time()) + (10 * 60)
+    header = _docuseal_signature_header(body, timestamp=future_ts)
+    response = await client.post(
+        "/api/docuseal/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Docuseal-Signature": header,
+        },
+    )
+    assert response.status_code == 401
+    assert stub_docuseal_fetch["calls"] == []
+
+
+async def test_webhook_rejects_malformed_signature_header(
+    client: httpx.AsyncClient,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """Headers that aren't ``timestamp.signature`` are rejected."""
+    body = json.dumps(_completion_payload("sub-malformed")).encode()
+    cases = [
+        "",                       # empty
+        ".",                      # both halves empty
+        "abc.def",                # non-numeric timestamp
+        f"{int(time.time())}.",   # missing signature
+        f".{'a' * 64}",           # missing timestamp
+    ]
+    for bad in cases:
+        response = await client.post(
+            "/api/docuseal/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Docuseal-Signature": bad,
+            },
+        )
+        assert response.status_code == 401, f"expected 401 for {bad!r}"
+    assert stub_docuseal_fetch["calls"] == []
+
+
+async def test_webhook_signature_header_is_case_insensitive(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """DocuSeal's documented header spelling is ``X-Docuseal-Signature``;
+    other casings (``X-DocuSeal-Signature``, all-lower) must work too,
+    matching HTTP header case-insensitivity."""
+    user_org = await _create_user_org(db_session)
+    submission_id = "sub-case-1"
+    await _seed_sent_contract(
+        db_session, user_org=user_org, docuseal_submission_id=submission_id
+    )
+    body = json.dumps(_completion_payload(submission_id)).encode()
+    header = _docuseal_signature_header(body)
+    response = await client.post(
+        "/api/docuseal/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-docuseal-signature": header,
+        },
+    )
+    assert response.status_code == 202
+
+
+async def test_webhook_shared_secret_path_does_not_override_invalid_hmac(
+    client: httpx.AsyncClient,
+    stub_docuseal_fetch: dict[str, Any],
+) -> None:
+    """A request that includes BOTH a (bad) HMAC header and the shared
+    secret must be rejected on the bad HMAC; the shared-secret path
+    is only consulted when the documented signature header is absent.
+    Otherwise an attacker who learned the shared secret could bypass
+    HMAC validation entirely."""
+    body = json.dumps(_completion_payload("sub-mix")).encode()
+    ts = int(time.time())
+    response = await client.post(
+        "/api/docuseal/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Docuseal-Signature": f"{ts}.{'0' * 64}",
+            "X-Whereas-Docuseal-Webhook-Secret": _WEBHOOK_SECRET,
         },
     )
     assert response.status_code == 401
@@ -437,7 +599,7 @@ async def test_webhook_completion_creates_signed_pdf_artifact(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 202, response.text
@@ -517,7 +679,7 @@ async def test_webhook_irrelevant_event_returns_202_without_writes(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 202
@@ -548,7 +710,7 @@ async def test_webhook_unknown_submission_returns_202_unknown(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 202
@@ -570,7 +732,7 @@ async def test_webhook_duplicate_completion_is_idempotent(
     body = json.dumps(_completion_payload(submission_id)).encode()
     headers = {
         "Content-Type": "application/json",
-        "X-DocuSeal-Signature": _hmac_sig(body),
+        "X-Docuseal-Signature": _docuseal_signature_header(body),
     }
     first = await client.post(
         "/api/docuseal/webhook", content=body, headers=headers
@@ -613,7 +775,7 @@ async def test_webhook_response_has_no_storage_internals(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 202
@@ -632,7 +794,7 @@ async def test_webhook_malformed_json_returns_400(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 400
@@ -659,7 +821,7 @@ async def test_webhook_propagates_docuseal_fetch_failure_as_502(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert response.status_code == 502
@@ -723,7 +885,7 @@ async def test_signed_pdf_is_preferred_in_download_resolution(
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-DocuSeal-Signature": _hmac_sig(body),
+            "X-Docuseal-Signature": _docuseal_signature_header(body),
         },
     )
     assert completion.status_code == 202

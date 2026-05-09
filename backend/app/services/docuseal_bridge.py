@@ -176,8 +176,13 @@ async def send_document_to_docuseal(
             ) from exc
 
 
-DOCUSEAL_SIGNATURE_HEADER = "X-DocuSeal-Signature"
+DOCUSEAL_SIGNATURE_HEADER = "X-Docuseal-Signature"
 DOCUSEAL_SHARED_SECRET_HEADER = "X-Whereas-Docuseal-Webhook-Secret"
+# Tolerance for the timestamp embedded in ``X-Docuseal-Signature``.
+# Mirrors the standard webhook-signing window (Stripe, Slack, etc.) and
+# is wide enough to absorb clock skew + DocuSeal's local queueing
+# delays without becoming a replay-window worth attacking.
+WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60
 
 
 class WebhookVerificationError(Exception):
@@ -200,22 +205,31 @@ def verify_docuseal_webhook(
     headers: dict[str, str] | Any,
     body: bytes,
     settings: Settings | None = None,
+    now: datetime | None = None,
 ) -> None:
     """Verify a webhook callback from DocuSeal.
 
     Two acceptable proofs of origin, in order of preference:
 
-      1. ``X-DocuSeal-Signature``: an HMAC-SHA256 hex digest of the raw
-         request body keyed on ``DOCUSEAL_WEBHOOK_SECRET``. This is the
-         path to use once DocuSeal's signing scheme is pinned down for
-         the target version; it is also what every well-behaved
-         DocuSeal deployment ships today, so it is the default branch.
+      1. ``X-Docuseal-Signature`` (DocuSeal's documented header): the
+         literal string ``"{timestamp}.{signature}"`` where
+         ``signature`` is the HMAC-SHA256 hex digest of
+         ``"{timestamp}.{raw_body}"`` keyed on
+         ``DOCUSEAL_WEBHOOK_SECRET``. The timestamp is a UTC UNIX
+         epoch (seconds). We reject anything older than
+         ``WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS`` to close the replay
+         window. Header lookup is case-insensitive (``X-Docuseal-Signature``
+         and ``X-DocuSeal-Signature`` both work; DocuSeal docs use the
+         former and Whereas matches that spelling).
       2. ``X-Whereas-Docuseal-Webhook-Secret``: the literal value of
-         ``DOCUSEAL_WEBHOOK_SECRET``. Provided as an interim path
-         because DocuSeal's webhook signing model is still evolving;
-         operators who cannot configure HMAC signing on their DocuSeal
-         instance can configure a shared header instead. Documented as
-         interim in the README.
+         ``DOCUSEAL_WEBHOOK_SECRET``. Provided as an interim path for
+         operators on DocuSeal versions that cannot emit signed
+         webhooks. Documented as interim in the README. This path is
+         only consulted when no ``X-Docuseal-Signature`` header is
+         present — a request with the documented signature header
+         must pass the documented check or fail; the shared-secret
+         header cannot be used as a fallback to override an invalid
+         HMAC.
 
     Production deployments must set ``DOCUSEAL_WEBHOOK_SECRET``. When
     it is unset, this function raises in any environment other than
@@ -225,13 +239,13 @@ def verify_docuseal_webhook(
     only applies when no secret is configured at all.
 
     Raises ``WebhookVerificationError`` on any failure mode (missing
-    secret in non-dev, missing or malformed signature, mismatched
+    secret in non-dev, missing/malformed/stale signature, mismatched
     signature). Returns ``None`` on success — the body remains the
     caller's responsibility to parse.
 
     The body is treated as opaque bytes; this function does not log
-    it, because DocuSeal payloads carry signer/document data we do not
-    want flowing into log aggregation.
+    it, because DocuSeal payloads carry signer/document data we do
+    not want flowing into log aggregation.
     """
     if settings is None:
         settings = get_settings()
@@ -252,14 +266,13 @@ def verify_docuseal_webhook(
         )
 
     sent_signature = header_lookup.get(DOCUSEAL_SIGNATURE_HEADER)
-    if sent_signature:
-        expected = hmac.new(
-            secret.encode("utf-8"), body, hashlib.sha256
-        ).hexdigest()
-        # ``compare_digest`` keeps timing-side-channels closed even
-        # though the comparand is a hex digest of bounded length.
-        if not hmac.compare_digest(expected, sent_signature.strip().lower()):
-            raise WebhookVerificationError("Webhook signature mismatch.")
+    if sent_signature is not None:
+        _verify_timestamped_hmac(
+            header_value=sent_signature,
+            body=body,
+            secret=secret,
+            now=now or datetime.now(UTC),
+        )
         return
 
     sent_shared = header_lookup.get(DOCUSEAL_SHARED_SECRET_HEADER)
@@ -267,6 +280,52 @@ def verify_docuseal_webhook(
         return
 
     raise WebhookVerificationError("Webhook signature missing.")
+
+
+def _verify_timestamped_hmac(
+    *,
+    header_value: str,
+    body: bytes,
+    secret: str,
+    now: datetime,
+) -> None:
+    """Verify a ``"{timestamp}.{signature}"`` header value.
+
+    Splits on the first ``.`` only; this is a deliberate choice — the
+    HMAC hex digest never contains a ``.`` so a single-split is
+    unambiguous, and being strict about the format keeps a future
+    DocuSeal version that adds extra fields from accidentally
+    succeeding under partial parsing.
+    """
+    raw = header_value.strip()
+    if not raw or "." not in raw:
+        raise WebhookVerificationError("Webhook signature is malformed.")
+    timestamp_str, _, signature = raw.partition(".")
+    if not timestamp_str or not signature:
+        raise WebhookVerificationError("Webhook signature is malformed.")
+
+    try:
+        sent_ts = int(timestamp_str)
+    except ValueError as exc:
+        raise WebhookVerificationError(
+            "Webhook signature timestamp is malformed."
+        ) from exc
+
+    skew = abs(int(now.timestamp()) - sent_ts)
+    if skew > WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:
+        # Both "in the past" (replay) and "too far in the future"
+        # (clock skew on either side) resolve to the same rejection;
+        # don't echo the exact direction back.
+        raise WebhookVerificationError("Webhook signature is stale.")
+
+    signed_payload = timestamp_str.encode("ascii") + b"." + body
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature.strip().lower()):
+        raise WebhookVerificationError("Webhook signature mismatch.")
 
 
 class _CaseInsensitiveHeaders:
