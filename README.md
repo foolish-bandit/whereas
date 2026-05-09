@@ -205,7 +205,7 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#37 and the recommended next steps, see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#45 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract) and the recommended next step — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
 
 ## Acknowledgments
 
