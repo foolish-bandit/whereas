@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, and section 11 for the next PR.
 
 ---
 
@@ -122,6 +122,7 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - Existing routers: contracts, playbooks, clause templates, QA, DocuSeal bridge, setup, agreement templates, **requests, inbox-items**.
 - DocuSeal bridge router (`app/api/docuseal_bridge.py`) exposes a verified `POST /webhook` endpoint that materializes `signed_pdf` artifacts and flips contract status to `EXECUTED`.
 - PR #47 added the CLM intake / work-queue layer: `ContractRequest` and `InboxItem` tables with full CRUD endpoints, plus an automatic `request_review` inbox item created in the same transaction as every new request. See section 7.
+- PR #48 closed the loop between intake and template generation: a request carrying a `linked_template_id` can now be converted to a draft `Contract` via `POST /api/requests/{request_id}/convert-to-contract`. The endpoint reuses the same `generate_docx_from_template()` service the agreement-templates surface uses, links the new contract back onto the request, marks the request `completed`, and resolves the open `request_review` inbox item — all in one transaction. Approval workflows, upload-file conversion, and a one-click convert-and-send remain future work.
 - Existing background concerns: extraction, clause segmentation, deviation findings, playbook review runs, audit log.
 
 ### Frontend
@@ -571,13 +572,14 @@ All routes are org-scoped through the same dev-user header pattern (`X-Whereas-D
 
 - `POST /api/docuseal-bridge/webhook` — section 6.4. Signed; production requires a valid signature.
 
-### Requests (PR #47)
+### Requests (PR #47, extended in PR #48)
 
 - `POST   /api/requests` — creates the request and a `request_review` `InboxItem` in one transaction.
 - `GET    /api/requests` — filters: `status`, `request_type`, `contract_type`, `priority`, `assigned_to`, `due_before`, `due_after`, `include_cancelled`. Cancelled requests excluded by default.
 - `GET    /api/requests/{request_id}`.
 - `PATCH  /api/requests/{request_id}` — updates fields; transitioning to `completed` or `cancelled` resolves linked open `request_review` items.
 - `DELETE /api/requests/{request_id}` — soft cancel: `status = "cancelled"` and dismisses linked open `request_review` items.
+- `POST   /api/requests/{request_id}/convert-to-contract` (PR #48) — body `{title?, variable_values}`. Reuses the agreement-template generation service to render a DOCX, materializes a draft `Contract` plus a `generated_docx` `ContractArtifact`, sets `linked_contract_id` on the request, transitions the request to `completed`, and resolves the open `request_review` inbox item. Returns the updated request, the new contract, the artifact, and (best-effort) a `generated` Markdown snapshot. Rejects with 409 if the request is cancelled, already converted, or has no `linked_template_id`; propagates the generation service's 400s for unknown / missing-required / malformed variable values; cross-org access returns 404. Storage internals (`storage_key`, `wrapped_dek`) never appear in the response.
 
 ### Inbox items (PR #47)
 
@@ -612,7 +614,8 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 Tracked, intentionally not implemented:
 
 - Approval workflow engine on top of `ContractRequest` (multi-stage approvals, gating rules).
-- Request → contract auto-generation (today the request can carry a `linked_template_id`, but generating the agreement is still a separate explicit action).
+- Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
+- Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
 - PowerSync local-first sync rules.
 - Clerk integration for local-first hosted mode (optional).
@@ -630,42 +633,51 @@ Tracked, intentionally not implemented:
 
 ---
 
-## 10. PR #47 wired up the Requests + Inbox foundation
+## 10. PR #48 closed the request → contract conversion loop
 
-(See section 5.3 for the live domain rules and section 7 for the API surface.) The intake / work-queue layer is in place. The recommended next PR (#48) builds on top of it.
+(See section 5.3 for the live domain rules and section 7 for the API surface.) The conversion route reuses the same template generation service as the agreement-templates surface — there is exactly one code path that turns a template + variable values into a draft `Contract` + `generated_docx` `ContractArtifact`. A request with `linked_template_id` is now a one-click draft, and the request is closed out and the matching `request_review` inbox item is resolved in the same transaction. The route is stricter than necessary on idempotency (already-converted requests 409 rather than silently returning the existing draft) so accidental re-clicks can't quietly produce duplicate contracts.
+
+The recommended next PR (#49) builds on top of it.
 
 ---
 
-## 11. Recommended Next PR: PR #48 — Request → Contract Conversion
+## 11. Recommended Next PR: PR #49 — Approval workflow scaffold (or: Upload-file request conversion)
 
-**Goal:** close the loop between intake and the existing template-generation flow so a `ContractRequest` carrying a `linked_template_id` can be converted to a draft contract in one click.
+Two complementary directions, both blocked on the same domain question: does an "approval" mean "another inbox item" or does it warrant its own table and lifecycle?
 
-### Recommended scope
+### 11a. Approval workflow scaffold
 
-- A new endpoint (e.g. `POST /api/requests/{request_id}/convert`) that:
-  - Requires the request to have `linked_template_id` set.
-  - Accepts a `variable_values` map.
-  - Calls the existing `generate_docx_from_template()` service.
-  - Sets `ContractRequest.linked_contract_id` on the new Contract.
-  - Transitions `ContractRequest.status` from `open` → `in_progress` (so the request is still tracked, not auto-closed — execution happens later via DocuSeal).
-  - Resolves the request's open `request_review` `InboxItem` to `completed` and creates a new `contract_review` `InboxItem` pointing at the freshly-generated `Contract`.
-- Frontend: a "Convert to draft" button on a request that has `linked_template_id`, with a variables form.
-- Audit event for the conversion.
+**Goal:** let an org configure that a `ContractRequest` of certain types (or above a dollar threshold, or with certain counterparties) requires explicit approval before `convert-to-contract` is allowed.
 
-### Out of scope for PR #48
+Suggested minimum scope:
+- A small `ApprovalRule` table (org-scoped, free-form predicate string for now — keep the matcher trivial in v1).
+- A `RequestApproval` row per gated request, with `status: pending | approved | rejected` and `approver_user_id`.
+- Convert-to-contract returns 403 (or 409) until at least one matching approval is `approved`.
+- A new `request_approval` `InboxItem` type so approvers see the queue.
+- Frontend: an "Approvals" tab on the request detail surface.
 
-- **Do not implement PowerSync yet.** Domain model is now stable through requests + inbox, but the conversion semantics still need a PR to settle before sync rules.
-- Approval workflow engine.
+### 11b. Upload-file request conversion
+
+**Goal:** a request without a linked template should still be convertible by uploading a counterparty-supplied DOCX/PDF. Today that flow exists separately on `/api/contracts/upload`; merging it into the request-convert path saves a step and keeps the request's `linked_contract_id` populated.
+
+Suggested minimum scope:
+- Extend the convert endpoint to accept a multipart form with a file (no `variable_values`); the request must NOT have a linked template in this branch.
+- Reuse the existing `/api/contracts/upload` validation + storage path; do not duplicate it.
+- Same request/inbox transition semantics as the template path.
+
+### Out of scope for PR #49 (either direction)
+
+- **Do not implement PowerSync yet.** The conversion semantics are now stable, but the approval shape isn't. Sync rules can lock in once approvals settle.
 - Calendar / Nango / reminders.
-- Clerk.
+- Clerk integration.
 - Local vault mode.
 - Rich DocuSeal status dashboard.
 
 ### Architecture asks (raise these before coding)
 
-- Should the conversion be transactional (request transition + Contract creation + InboxItem updates in one DB transaction)? Yes, almost certainly — but confirm whether Markdown conversion failure on the new Contract should roll back the whole conversion or stay best-effort. The existing `generate_docx_from_template()` already treats Markdown as best-effort; the conversion endpoint should match.
-- Should a request without `linked_template_id` be convertible by passing the template at convert time? Likely yes, as a quality-of-life improvement; confirm before implementing.
-- Should DocuSeal send happen in the same call (one-button convert + send)? **Probably no.** Keep convert and send separate so the legal team can review the draft before signature.
+- Should approval rules be predicate-based (free-form expressions evaluated server-side) or list-based (explicit "this request type + this contract type → these approvers")? Predicates are more flexible but require a sandbox. List-based first, predicate later.
+- Should approvals supersede on request edits (e.g. counterparty change resets approval)? Probably yes for material fields; confirm scope.
+- For upload-file conversion: should the "no linked template" check be a hard gate, or should an uploaded file override a linked template? Probably hard gate — a request that asked for "NDA via template" shouldn't quietly accept a counterparty paper instead.
 
 ---
 

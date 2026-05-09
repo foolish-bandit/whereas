@@ -64,6 +64,8 @@ import type {
   ContractRequest,
   ContractRequestCreateRequest,
   ContractRequestUpdateRequest,
+  ConvertRequestToContractRequest,
+  ConvertRequestToContractResponse,
   ListContractRequestFilters,
 } from "../types/requests";
 import type {
@@ -1554,6 +1556,67 @@ export async function cancelRequest(
   row.status = "cancelled";
   row.updated_at = isoNow();
   resolveSessionInboxItemsForRequest(id, "dismissed");
+}
+
+export async function convertRequestToContract(
+  id: string,
+  payload: ConvertRequestToContractRequest,
+  options: ApiOptions = {},
+): Promise<ConvertRequestToContractResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = findSessionRequest(id) ??
+    MOCK_REQUESTS.find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Contract request not found.");
+  if (row.status === "cancelled") {
+    throw new ApiError(
+      409,
+      "Cancelled requests cannot be converted to a contract.",
+    );
+  }
+  if (row.linked_contract_id) {
+    throw new ApiError(409, "This request is already linked to a contract.");
+  }
+  if (!row.linked_template_id) {
+    throw new ApiError(
+      409,
+      "Link an agreement template to this request before converting.",
+    );
+  }
+
+  // Reuse the existing generation mock so variable validation / 409
+  // for missing original / etc. all surface here too. Defensive:
+  // reach for the writable session row first so subsequent listRequests
+  // calls see the new state.
+  const generation = await generateAgreementFromTemplate(
+    row.linked_template_id,
+    {
+      title: payload.title,
+      variable_values: payload.variable_values,
+    },
+    options,
+  );
+  const writable =
+    findSessionRequest(id) ??
+    (() => {
+      // Promote the canned MOCK_REQUESTS row into session memory so the
+      // mutation is picked up by combinedRequests() / future calls.
+      const cloned = { ...row };
+      sessionRequests.unshift(cloned);
+      return cloned;
+    })();
+  writable.linked_contract_id = generation.contract.id;
+  writable.linked_template_id = row.linked_template_id;
+  writable.status = "completed";
+  writable.updated_at = isoNow();
+  resolveSessionInboxItemsForRequest(id, "completed");
+
+  return {
+    request: { ...writable },
+    contract: generation.contract,
+    artifact: generation.artifact,
+    markdown_snapshot: generation.markdown_snapshot,
+    variables_used: generation.variables_used,
+  };
 }
 
 export async function listInboxItems(

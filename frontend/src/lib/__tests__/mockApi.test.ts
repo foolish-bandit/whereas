@@ -12,11 +12,15 @@ import { ApiError } from "../api";
 import { fieldHasValidSpan } from "../fields";
 import {
   __resetMockState,
+  convertRequestToContract,
+  createRequest,
   downloadContract,
   generateAgreementFromTemplate,
   getContract,
   getContractClauses,
   getContracts,
+  listInboxItems,
+  listRequests,
   uploadContract,
 } from "../mockApi";
 import { MOCK_FAILED_ID, MOCK_LIST, MOCK_NDA_ID } from "../mockData";
@@ -188,6 +192,90 @@ describe("mockApi", () => {
       await expect(
         generateAgreementFromTemplate(MSA_TEMPLATE_ID, {
           variable_values: {},
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
+  describe("convertRequestToContract (demo)", () => {
+    it("converts a session request, links the new contract, and resolves the inbox item", async () => {
+      const request = await createRequest({
+        title: "Demo NDA conversion",
+        linked_template_id: NDA_TEMPLATE_ID,
+      });
+
+      const result = await convertRequestToContract(request.id, {
+        title: "Acme NDA",
+        variable_values: {
+          counterparty_name: "Acme Inc.",
+          effective_date: "2026-05-08",
+        },
+      });
+
+      expect(result.contract.title).toBe("Acme NDA");
+      expect(result.artifact.artifact_type).toBe("generated_docx");
+      expect(result.request.linked_contract_id).toBe(result.contract.id);
+      expect(result.request.status).toBe("completed");
+      // Storage internals never appear in the demo response.
+      const json = JSON.stringify(result);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+
+      // The list endpoint should now show the request as completed and
+      // the linked inbox item as completed (so the work-queue surface
+      // mirrors the change without a refetch hack).
+      const requests = await listRequests();
+      const updated = requests.find((r) => r.id === request.id);
+      expect(updated?.status).toBe("completed");
+      expect(updated?.linked_contract_id).toBe(result.contract.id);
+
+      const inbox = await listInboxItems({ include_dismissed: true });
+      const linked = inbox.find((i) => i.request_id === request.id);
+      expect(linked?.status).toBe("completed");
+    });
+
+    it("rejects a request with no linked template", async () => {
+      const request = await createRequest({ title: "No template" });
+      await expect(
+        convertRequestToContract(request.id, { variable_values: {} }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("rejects a cancelled request", async () => {
+      const request = await createRequest({
+        title: "Doomed",
+        linked_template_id: NDA_TEMPLATE_ID,
+      });
+      // Mark as cancelled by mutating the status through the patch API.
+      const { updateRequest } = await import("../mockApi");
+      await updateRequest(request.id, { status: "cancelled" });
+      await expect(
+        convertRequestToContract(request.id, {
+          variable_values: {
+          counterparty_name: "Acme",
+          effective_date: "2026-05-08",
+        },
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("rejects a request that has already been converted", async () => {
+      const request = await createRequest({
+        title: "Convert twice",
+        linked_template_id: NDA_TEMPLATE_ID,
+      });
+      await convertRequestToContract(request.id, {
+        variable_values: {
+          counterparty_name: "Acme",
+          effective_date: "2026-05-08",
+        },
+      });
+      await expect(
+        convertRequestToContract(request.id, {
+          variable_values: {
+          counterparty_name: "Acme",
+          effective_date: "2026-05-08",
+        },
         }),
       ).rejects.toMatchObject({ status: 409 });
     });

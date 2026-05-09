@@ -15,6 +15,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contracts import ContractListItemResponse
+from app.schemas.markdown import ContractMarkdownSnapshotResponse
+
 
 class ContractRequestCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -88,3 +92,30 @@ class ContractRequestResponse(BaseModel):
     updated_at: datetime
     created_by: uuid.UUID | None = None
     metadata_json: dict[str, Any] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Request -> Contract conversion
+#
+# Converting a request runs the same ``AgreementTemplate`` generation
+# path the templates surface uses, then links the resulting Contract
+# back to the request. The response carries both so the UI can pivot
+# straight into the contract workspace without a second round trip.
+# ---------------------------------------------------------------------------
+
+
+class ConvertRequestToContractRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=500)
+    variable_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConvertRequestToContractResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    request: ContractRequestResponse
+    contract: ContractListItemResponse
+    artifact: ContractArtifactResponse
+    markdown_snapshot: ContractMarkdownSnapshotResponse | None = None
+    variables_used: list[str] = Field(default_factory=list)

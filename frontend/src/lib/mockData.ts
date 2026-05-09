@@ -663,6 +663,12 @@ const MOCK_REQUEST_OPEN_ID = "00000000-0000-4000-8000-0000000000a1";
 const MOCK_REQUEST_IN_PROGRESS_ID = "00000000-0000-4000-8000-0000000000a2";
 const MOCK_REQUEST_COMPLETED_ID = "00000000-0000-4000-8000-0000000000a3";
 
+// Pinned for the demo so the request -> contract conversion flow
+// has a wired-up template to point at. Mirrors the NDA template id in
+// `mockApi.ts`. The seed kept zero linked-templates before PR #48; the
+// open NDA is the natural place to hook the conversion form.
+const MOCK_DEMO_NDA_TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
+
 export const MOCK_REQUESTS: ContractRequest[] = [
   {
     id: MOCK_REQUEST_OPEN_ID,
@@ -679,7 +685,7 @@ export const MOCK_REQUESTS: ContractRequest[] = [
     due_date: "2026-05-20",
     assigned_to: null,
     linked_contract_id: null,
-    linked_template_id: null,
+    linked_template_id: MOCK_DEMO_NDA_TEMPLATE_ID,
     created_at: "2026-05-08T16:00:00Z",
     updated_at: "2026-05-08T16:00:00Z",
     created_by: null,

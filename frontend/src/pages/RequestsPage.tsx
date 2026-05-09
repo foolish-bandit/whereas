@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
 import EmptyState from "../components/EmptyState";
+import RequestConvertSection, {
+  ConvertedContractLink,
+} from "../components/RequestConvertSection";
 import {
   ApiError,
   MissingDevUserError,
@@ -9,7 +12,10 @@ import {
   listRequests,
   updateRequest,
 } from "../lib/api";
-import type { ContractRequest } from "../types/requests";
+import type {
+  ContractRequest,
+  ConvertRequestToContractResponse,
+} from "../types/requests";
 
 type LoadState =
   | { kind: "loading" }
@@ -144,6 +150,22 @@ export default function RequestsPage() {
     } catch {
       // best-effort
     }
+  }
+
+  function onConverted(response: ConvertRequestToContractResponse) {
+    // The backend has already linked + completed the request and
+    // resolved the inbox item. Mirror that locally so the row's status
+    // chip and convert section update without a refetch.
+    setState((prev) =>
+      prev.kind === "loaded"
+        ? {
+            kind: "loaded",
+            rows: prev.rows.map((r) =>
+              r.id === response.request.id ? response.request : r,
+            ),
+          }
+        : prev,
+    );
   }
 
   return (
@@ -308,6 +330,39 @@ export default function RequestsPage() {
               {row.description && (
                 <p className="mt-2 text-sm text-ink-muted">{row.description}</p>
               )}
+
+              {row.status !== "cancelled" && row.linked_contract_id && (
+                <div
+                  className="mt-3 flex flex-wrap items-baseline gap-2 text-xs"
+                  data-testid="request-converted-link"
+                >
+                  <span className="text-ink-subtle">Linked contract:</span>
+                  <ConvertedContractLink
+                    contractId={row.linked_contract_id}
+                  />
+                </div>
+              )}
+
+              {row.status !== "cancelled" &&
+                !row.linked_contract_id &&
+                row.linked_template_id && (
+                  <RequestConvertSection
+                    request={row}
+                    onConverted={onConverted}
+                  />
+                )}
+
+              {row.status !== "cancelled" &&
+                !row.linked_contract_id &&
+                !row.linked_template_id && (
+                  <p
+                    className="mt-3 text-xs text-ink-subtle"
+                    data-testid="request-no-template-hint"
+                  >
+                    Link an agreement template to this request to generate a
+                    draft contract from it.
+                  </p>
+                )}
             </li>
           ))}
         </ul>
