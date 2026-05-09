@@ -93,6 +93,16 @@ DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY: tuple[str, ...] = (
     "generated_docx",
 )
 
+# Resolution order for sending a contract to DocuSeal for signature.
+# ``generated_docx`` wins so a draft generated from a template is the
+# version that goes out for signature; only contracts uploaded directly
+# fall through to ``original_upload``. Legacy contracts without any
+# artifact are handled by the caller via ``Contract.s3_key``.
+SIGNABLE_ARTIFACT_TYPES_BY_PRIORITY: tuple[str, ...] = (
+    "generated_docx",
+    ARTIFACT_TYPE_ORIGINAL_UPLOAD,
+)
+
 
 async def get_latest_official_downloadable_artifact(
     session: AsyncSession,
@@ -107,6 +117,33 @@ async def get_latest_official_downloadable_artifact(
     legacy ``Contract.s3_key``. Org scoped, official-only.
     """
     for artifact_type in DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY:
+        artifact = await get_latest_artifact_by_type(
+            session,
+            contract_id=contract_id,
+            organization_id=organization_id,
+            artifact_type=artifact_type,
+            official_only=True,
+        )
+        if artifact is not None:
+            return artifact
+    return None
+
+
+async def get_latest_official_signable_artifact(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> ContractArtifact | None:
+    """Resolve the artifact to send to DocuSeal for signature.
+
+    Walks ``SIGNABLE_ARTIFACT_TYPES_BY_PRIORITY`` in order so a generated
+    draft (``generated_docx``) takes precedence over the original upload
+    when both are present. Returns ``None`` so the caller can fall back
+    to the legacy ``Contract.s3_key`` or surface a clear error. Org
+    scoped, official-only.
+    """
+    for artifact_type in SIGNABLE_ARTIFACT_TYPES_BY_PRIORITY:
         artifact = await get_latest_artifact_by_type(
             session,
             contract_id=contract_id,

@@ -20,13 +20,20 @@ Limitations to know about:
 """
 from __future__ import annotations
 
+import base64
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 from jose import jwt
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import get_settings
 
@@ -35,6 +42,37 @@ settings = get_settings()
 
 JWT_ALGORITHM = "HS256"
 JWT_TTL_SECONDS = 300  # 5 minutes; user clicks through to DocuSeal immediately
+
+
+class DocuSealError(Exception):
+    """A DocuSeal API call failed in a way the caller cannot retry.
+
+    Used for 4xx-class upstream rejections and malformed-response
+    surfaces (non-JSON body). These represent "the request itself was
+    bad" rather than "the upstream is temporarily flaky", so retrying
+    would just burn the user's time. The retry decorator below is
+    scoped to ``RetryableDocuSealError``.
+
+    ``status_code`` is the HTTP status the API endpoint should return
+    when re-raising; defaults to 502 ("the upstream said no").
+    """
+
+    status_code: int = 502
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        if status_code is not None:
+            self.status_code = status_code
+
+
+class RetryableDocuSealError(DocuSealError):
+    """A DocuSeal API call failed in a way that may resolve on retry.
+
+    Reserved for transport-layer failures and 5xx responses. Tenacity
+    retries on this subclass so a flaky network or a momentarily
+    overloaded DocuSeal recovers without bothering the caller; a 4xx
+    "bad request" stays terminal.
+    """
 
 
 def mint_docuseal_token(*, user_id: str, email: str, organization_id: str) -> str:
@@ -55,40 +93,85 @@ def mint_docuseal_token(*, user_id: str, email: str, organization_id: str) -> st
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((httpx.HTTPError, RetryableDocuSealError)),
     reraise=True,
 )
-async def create_docuseal_submission(
+async def send_document_to_docuseal(
     *,
-    document_url: str,
-    submitters: list[dict[str, str]],
-    user_id: str,
+    document_bytes: bytes,
+    filename: str,
+    mime_type: str,
+    submitters: list[dict[str, Any]],
+    user_id: uuid.UUID | str,
     user_email: str,
-    organization_id: str,
+    organization_id: uuid.UUID | str,
 ) -> dict[str, Any]:
-    """Create a submission in DocuSeal for the given document.
+    """Create a DocuSeal submission from in-memory document bytes.
 
-    `submitters` is a list of {"email": str, "name": str, "role": str} dicts.
-    Returns the DocuSeal submission record (including an embed URL the frontend
-    can use to render the signing experience inline).
+    Whereas stores documents encrypted at rest under the org master key,
+    so the older "presigned URL to S3" handoff would only ever serve
+    DocuSeal a ciphertext blob. Instead we decrypt in the Whereas
+    backend and POST the plaintext to DocuSeal as base64. This keeps
+    the trust boundary in one place: Whereas decides what DocuSeal
+    sees, on a per-request basis, with no long-lived presigned URL
+    leaking out.
+
+    ``submitters`` is the DocuSeal submitter shape: a list of
+    ``{"email": str, "name": str, "role": str}`` dicts. The caller is
+    responsible for shaping it; this function does not invent default
+    roles or order so existing flows can pass through unchanged.
+
+    Returns the DocuSeal response JSON, including any submission /
+    submitter / embed-url fields the upstream produced. The retry
+    decorator covers transient transport / 5xx errors.
     """
     token = mint_docuseal_token(
-        user_id=user_id,
+        user_id=str(user_id),
         email=user_email,
-        organization_id=organization_id,
+        organization_id=str(organization_id),
     )
 
+    encoded_file = base64.b64encode(document_bytes).decode("ascii")
+    payload = {
+        "documents": [
+            {
+                "name": filename,
+                "file": encoded_file,
+                "content_type": mime_type,
+            }
+        ],
+        "submitters": submitters,
+        "send_email": True,
+    }
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{settings.DOCUSEAL_BASE_URL}/api/submissions",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "document_url": document_url,
-                "submitters": submitters,
-                "send_email": True,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = await client.post(
+                f"{settings.DOCUSEAL_BASE_URL}/api/submissions",
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+        except httpx.HTTPError as exc:
+            # Transport-layer failure (timeout, DNS, refused). Worth a
+            # retry — flaky network rather than a malformed request.
+            raise RetryableDocuSealError(
+                f"Could not reach DocuSeal: {type(exc).__name__}.",
+            ) from exc
+        if response.status_code >= 500:
+            raise RetryableDocuSealError(
+                f"DocuSeal returned {response.status_code}.",
+            )
+        if response.status_code >= 400:
+            raise DocuSealError(
+                f"DocuSeal rejected the submission ({response.status_code}).",
+                status_code=502,
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise DocuSealError(
+                "DocuSeal returned a non-JSON response.",
+            ) from exc
 
 
 async def verify_docuseal_webhook(*, signature: str, body: bytes) -> bool:

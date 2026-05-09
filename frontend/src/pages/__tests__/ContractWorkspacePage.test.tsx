@@ -229,3 +229,155 @@ describe("ContractWorkspacePage markdown integration", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("ContractWorkspacePage Send to DocuSeal", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  function setupGenerated(fetchImpl: Mock) {
+    const generatedArtifact = {
+      ...ARTIFACT,
+      artifact_type: "generated_docx",
+      filename: "acme-nda.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      source: "template_generation",
+    };
+    fetchImpl.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([generatedArtifact]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      if (
+        url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          {
+            contract_id: CONTRACT_ID,
+            artifact_id: generatedArtifact.id,
+            artifact_type: "generated_docx",
+            filename: "acme-nda.docx",
+            submission_id: "demo-sub-1",
+            status: "sent_for_signature",
+            embed_url: "https://docuseal.example/sign/abc",
+            signer_count: 1,
+            raw: { id: "demo-sub-1" },
+          },
+          201,
+        );
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+  }
+
+  it("renders the Send to DocuSeal action and signer form for a generated contract", async () => {
+    setupGenerated(fetchMock);
+    renderPage();
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Workspace markdown",
+    });
+    const panel = screen.getByTestId("send-to-docuseal");
+    expect(panel).toBeInTheDocument();
+    expect(panel).toHaveTextContent(/send to docuseal/i);
+    expect(screen.getByTestId("docuseal-signer-row")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("docuseal-signer-email-0"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("docuseal-signer-name-0"),
+    ).toBeInTheDocument();
+    // Submit is disabled with empty signer fields.
+    const submit = screen.getByTestId("docuseal-send-submit");
+    expect(submit).toBeDisabled();
+  });
+
+  it("shows a success state with the DocuSeal submission id after sending", async () => {
+    setupGenerated(fetchMock);
+    renderPage();
+    await screen.findByTestId("send-to-docuseal");
+    fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), {
+      target: { value: "signer@example.com" },
+    });
+    fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), {
+      target: { value: "Signer One" },
+    });
+    fireEvent.click(screen.getByTestId("docuseal-send-submit"));
+    const success = await screen.findByTestId("docuseal-send-success");
+    expect(success).toHaveTextContent(/sent 1 signer/i);
+    expect(success).toHaveTextContent(/demo-sub-1/);
+    expect(success).toHaveTextContent(/acme-nda\.docx/);
+    expect(
+      screen.getByTestId("docuseal-embed-link"),
+    ).toHaveAttribute("href", "https://docuseal.example/sign/abc");
+  });
+
+  it("renders backend error inline and does not enter the success state", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      if (
+        url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ detail: "DocuSeal exploded" }, 502);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("send-to-docuseal");
+    fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), {
+      target: { value: "signer@example.com" },
+    });
+    fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), {
+      target: { value: "Signer One" },
+    });
+    fireEvent.click(screen.getByTestId("docuseal-send-submit"));
+    const err = await screen.findByTestId("docuseal-send-error");
+    expect(err).toHaveTextContent(/docuseal/i);
+    expect(
+      screen.queryByTestId("docuseal-send-success"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never surfaces storage_key or wrapped_dek strings in the DOM", async () => {
+    setupGenerated(fetchMock);
+    renderPage();
+    await screen.findByTestId("send-to-docuseal");
+    fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), {
+      target: { value: "signer@example.com" },
+    });
+    fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), {
+      target: { value: "Signer One" },
+    });
+    fireEvent.click(screen.getByTestId("docuseal-send-submit"));
+    await screen.findByTestId("docuseal-send-success");
+    const html = document.body.innerHTML;
+    expect(html).not.toContain("storage_key");
+    expect(html).not.toContain("wrapped_dek");
+    expect(html).not.toContain("wrapped_master_key");
+  });
+});

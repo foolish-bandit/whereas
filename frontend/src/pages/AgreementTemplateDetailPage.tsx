@@ -350,8 +350,8 @@ export default function AgreementTemplateDetailPage() {
         <p className="mt-1 text-xs text-ink-subtle">
           Render a draft DOCX from this template and the variable values
           below. The original template is not modified. Generated DOCX
-          files become draft contracts in the repository — they are not
-          sent to DocuSeal yet.
+          files become draft contracts in the repository; send them out
+          for signature from the contract workspace.
         </p>
 
         {!hasOriginalUpload && (
@@ -443,8 +443,9 @@ export default function AgreementTemplateDetailPage() {
                 .
               </p>
               <p className="mt-1 text-xs text-ink-subtle">
-                Filed as a draft contract. The original template is unchanged.
-                Sending to DocuSeal is not enabled yet.
+                Filed as a draft contract. The original template is
+                unchanged. Open the generated contract to send it to
+                DocuSeal for signature.
               </p>
               <div className="mt-2 flex flex-wrap gap-3 text-xs">
                 <Link
