@@ -278,6 +278,12 @@ async def client(
     app.dependency_overrides[get_db] = override_get_db
 
     monkeypatch.setattr(agreement_templates_api, "DocumentStorage", FakeStorage)
+    # The contract download endpoint instantiates DocumentStorage from
+    # its own module, so the round-trip download test needs the same
+    # in-memory backing store.
+    from app.api import contracts as contracts_api
+
+    monkeypatch.setattr(contracts_api, "DocumentStorage", FakeStorage)
 
     def _ok_convert(
         *,
@@ -437,10 +443,13 @@ async def test_generate_creates_contract_and_generated_artifact(
     assert len(artifacts) == 1
     assert artifacts[0].artifact_type == "generated_docx"
     assert artifacts[0].metadata_json["template_id"] == template_id
-    assert artifacts[0].metadata_json["variable_values"] == {
-        "counterparty_name": "Acme Inc.",
-        "effective_date": "2026-05-08",
-    }
+    assert artifacts[0].metadata_json["template_name"] == "Mutual NDA"
+    # Privacy: variable keys are recorded, plaintext values are NOT.
+    assert sorted(artifacts[0].metadata_json["variable_keys"]) == [
+        "counterparty_name",
+        "effective_date",
+    ]
+    assert "variable_values" not in artifacts[0].metadata_json
 
     # Original template artifact is untouched (still present, still
     # original_upload).
@@ -648,6 +657,95 @@ async def test_generated_artifact_response_does_not_expose_storage_key(
     assert "storage_key" not in body["artifact"]
     assert "wrapped_dek" not in body["artifact"]
     assert "storage_key" not in body["contract"]
+
+
+async def test_generated_artifact_metadata_does_not_persist_variable_values(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Plaintext variable values must not be persisted alongside the
+    artifact row — they are already in the rendered DOCX and may
+    contain sensitive contract data (counterparty names, dates,
+    dollar amounts). The keys are kept for audit; values are not."""
+    user_org = await _create_user_org(db_session)
+    template_id = await _create_template_with_docx(client, user_org.user)
+    await _add_required_text_var(
+        client, user_org.user, template_id, key="counterparty_name"
+    )
+
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/generate",
+        headers=_headers(user_org.user),
+        json={
+            "variable_values": {
+                "counterparty_name": "Acme Health Inc. (HIPAA-covered entity)",
+            },
+        },
+    )
+    assert response.status_code == 201
+
+    # Search the response and the persisted metadata row for the
+    # value. The string is unique enough that any leak would surface.
+    sentinel = "Acme Health Inc."
+    assert sentinel not in response.text
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id
+                == uuid.UUID(response.json()["contract"]["id"])
+            )
+        )
+    ).scalar_one()
+    metadata_str = "" if artifact_row.metadata_json is None else str(
+        artifact_row.metadata_json
+    )
+    assert sentinel not in metadata_str
+    assert "variable_values" not in (artifact_row.metadata_json or {})
+    # ...but the keys ARE recorded for audit.
+    assert "counterparty_name" in (artifact_row.metadata_json or {}).get(
+        "variable_keys", []
+    )
+
+
+async def test_generated_contract_is_downloadable_via_contract_endpoint(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A generated contract has no `original_upload` artifact —
+    download resolution must fall through to the `generated_docx`
+    artifact (and recover the original filename from it) instead of
+    silently leaning on the legacy ``Contract.s3_key`` column."""
+    user_org = await _create_user_org(db_session)
+    template_id = await _create_template_with_docx(client, user_org.user)
+    await _add_required_text_var(
+        client, user_org.user, template_id, key="counterparty_name"
+    )
+
+    generation = await client.post(
+        f"/api/agreement-templates/{template_id}/generate",
+        headers=_headers(user_org.user),
+        json={
+            "title": "Acme NDA",
+            "variable_values": {"counterparty_name": "Acme Inc."},
+        },
+    )
+    assert generation.status_code == 201
+    contract_id = generation.json()["contract"]["id"]
+
+    # No original_upload exists on the generated contract — only a
+    # generated_docx. The download endpoint must still serve it.
+    download = await client.get(
+        f"/api/contracts/{contract_id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert download.status_code == 200
+    assert download.headers["content-type"] == _DOCX_MIME
+    disposition = download.headers["content-disposition"]
+    # Filename should reflect the generated artifact's filename, which
+    # is derived from the contract title.
+    assert "Acme_NDA" in disposition
+    # Round-trip: the bytes we downloaded must contain the substituted
+    # variable value, proving we actually decrypted the right blob.
+    paragraph_text = "\n".join(_docx_paragraph_text(download.content))
+    assert "Acme Inc." in paragraph_text
 
 
 async def test_generation_creates_markdown_snapshot_on_success(

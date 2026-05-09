@@ -70,7 +70,8 @@ async def get_latest_official_original_artifact(
     The original upload created by the upload handler always carries
     ``is_official=True``. Returning ``None`` is the expected legacy path
     for contracts uploaded before the artifact model landed and not yet
-    backfilled.
+    backfilled, and for generated contracts (which have no
+    ``original_upload`` — only a ``generated_docx`` artifact).
     """
     return await get_latest_artifact_by_type(
         session,
@@ -79,6 +80,43 @@ async def get_latest_official_original_artifact(
         artifact_type=ARTIFACT_TYPE_ORIGINAL_UPLOAD,
         official_only=True,
     )
+
+
+# Resolution order for the contract download endpoint. ``original_upload``
+# is preferred so contracts that have one (the v1 upload flow) keep their
+# user-supplied filename and content type. ``generated_docx`` is the
+# fallback for contracts created by template generation, which never
+# have an ``original_upload`` row. Anything past these two is left for
+# the caller to handle (legacy ``Contract.s3_key``).
+DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY: tuple[str, ...] = (
+    ARTIFACT_TYPE_ORIGINAL_UPLOAD,
+    "generated_docx",
+)
+
+
+async def get_latest_official_downloadable_artifact(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> ContractArtifact | None:
+    """Resolve the artifact the download endpoint should serve.
+
+    Walks ``DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY`` in order. Returns
+    the first match or ``None`` so the caller can fall back to the
+    legacy ``Contract.s3_key``. Org scoped, official-only.
+    """
+    for artifact_type in DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY:
+        artifact = await get_latest_artifact_by_type(
+            session,
+            contract_id=contract_id,
+            organization_id=organization_id,
+            artifact_type=artifact_type,
+            official_only=True,
+        )
+        if artifact is not None:
+            return artifact
+    return None
 
 
 @dataclass

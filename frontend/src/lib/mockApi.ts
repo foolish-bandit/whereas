@@ -1047,7 +1047,8 @@ export async function generateAgreementFromTemplate(
       metadata_json: {
         template_id: templateId,
         template_name: template.name,
-        variable_values: variableValues,
+        // Mirror the backend's privacy stance: keep keys, drop values.
+        // The values are already in the rendered DOCX.
         variable_keys: [...usedKeys].sort(),
         generated_at: now,
       },
@@ -1056,7 +1057,7 @@ export async function generateAgreementFromTemplate(
       id: `demo-md-${Math.random().toString(36).slice(2)}`,
       contract_id: id,
       markdown_text:
-        `# ${title}\n\nDemo-mode generated agreement. Variable values:\n\n` +
+        `# ${title}\n\nDemo-mode generated agreement. Variables used:\n\n` +
         usedKeys.map((k) => `- **${k}**: ${variableValues[k]}`).join("\n"),
       source_kind: "generated",
       converter_name: "demo",

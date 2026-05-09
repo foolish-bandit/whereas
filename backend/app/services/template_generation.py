@@ -183,14 +183,19 @@ async def generate_docx_from_template(
     contract.wrapped_dek = stored.wrapped_dek_bytes
     contract.status = ContractStatus.READY.value
 
+    # Privacy: we persist the keys that were used and which were left
+    # blank, but NOT the plaintext values. The values are already in the
+    # rendered DOCX (encrypted at rest under the org master key, only
+    # served via the authenticated contract download). Duplicating them
+    # into metadata_json would put potentially sensitive contract data
+    # — counterparty names, dates, dollar amounts — into a JSON column
+    # that is easier to leak through casual queries, exports, and logs.
+    # If a caller wants what was rendered, they should fetch the DOCX.
     metadata: dict[str, Any] = {
         "template_id": str(template.id),
         "template_name": template.name,
-        # Persist values so a later audit can answer "what did we send?".
-        # Empty optional values are kept so the audit shows a deliberate
-        # blank rather than implying the variable did not exist.
-        "variable_values": _serialize_variable_values(cleaned_values),
         "variable_keys": sorted(used_keys),
+        "variable_keys_blank": sorted(set(cleaned_values) - used_keys),
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -366,29 +371,29 @@ def _select_options(var: AgreementTemplateVariable) -> list[str] | None:
     return None
 
 
-def _serialize_variable_values(values: dict[str, Any]) -> dict[str, Any]:
-    """Make the metadata_json round-trippable.
-
-    Pydantic / SQLAlchemy JSON columns reject non-JSON-native types. We
-    keep things simple: bool/int/float/str pass through, everything else
-    is stringified.
-    """
-    out: dict[str, Any] = {}
-    for k, v in values.items():
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            out[k] = v
-        else:
-            out[k] = str(v)
-    return out
-
-
 # ---------------------------------------------------------------------------
 # DOCX rendering
 # ---------------------------------------------------------------------------
 
 
 def _render_docx(template_bytes: bytes, values: dict[str, Any]) -> bytes:
-    """Render a DOCX with docxtpl. Imported lazily to keep startup light."""
+    """Render a DOCX with docxtpl. Imported lazily to keep startup light.
+
+    Trust model:
+      * The DOCX template itself is operator-uploaded — the same trust
+        level as any code or playbook YAML the operator stores in the
+        system. Jinja filters / for-loops authored inside the template
+        are accepted as features.
+      * Variable VALUES are caller-supplied and may contain
+        Jinja-looking text. docxtpl inserts them as literal strings;
+        they are not re-rendered. The end-to-end test
+        ``test_docxtpl_renders_runs_split_across_xml`` plus the
+        adversarial-value smoke check ensure this stays true.
+
+    Missing placeholder behavior is deterministic: Jinja's default
+    Undefined renders absent keys as the empty string. Required
+    variables are gated upstream in ``_validate_variable_values``.
+    """
     try:
         from docxtpl import DocxTemplate  # type: ignore[import-not-found]
     except ImportError as exc:  # pragma: no cover - guarded by deps
