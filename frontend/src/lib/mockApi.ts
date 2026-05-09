@@ -56,6 +56,10 @@ import type {
   CreateDevSetupResponse,
   SetupStatus,
 } from "../types/setup";
+import type {
+  SendContractToDocuSealRequest,
+  SendContractToDocuSealResponse,
+} from "../types/docuseal";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -204,6 +208,36 @@ export async function uploadContract(
   sessionList.unshift(item);
   sessionDetailById[id] = detail;
   return { ...item, extracted_fields: [], clauses: [], message: null };
+}
+
+export async function sendContractToDocuseal(
+  id: string,
+  payload: SendContractToDocuSealRequest,
+  options: ApiOptions = {},
+): Promise<SendContractToDocuSealResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[id] ?? MOCK_DETAIL_BY_ID[id];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  if (!payload.signers || payload.signers.length === 0) {
+    throw new ApiError(400, "At least one signer is required.");
+  }
+  const submissionId = `demo-submission-${Date.now().toString(36)}`;
+  return {
+    contract_id: detail.id,
+    artifact_id: `demo-art-${Date.now().toString(36)}`,
+    artifact_type: "generated_docx",
+    filename: `${detail.title.replace(/[^A-Za-z0-9._-]+/g, "_")}.docx`.slice(
+      0,
+      180,
+    ),
+    submission_id: submissionId,
+    status: "sent_for_signature",
+    embed_url: null,
+    signer_count: payload.signers.length,
+    raw: { id: submissionId, demo: true },
+  };
 }
 
 export async function downloadContract(

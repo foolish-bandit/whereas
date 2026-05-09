@@ -16,6 +16,7 @@ import {
   downloadContract,
   getContract,
   getContractArtifacts,
+  sendContractToDocuseal,
 } from "../lib/api";
 import { clauseHasValidSpan } from "../lib/clauses";
 import { fieldKey } from "../lib/fields";
@@ -33,6 +34,10 @@ import type {
   ExtractedField,
 } from "../types/contracts";
 import type { ReviewRunDetail } from "../types/findings";
+import type {
+  DocuSealSigner,
+  SendContractToDocuSealResponse,
+} from "../types/docuseal";
 
 type LoadState =
   | { kind: "loading" }
@@ -273,6 +278,8 @@ export default function ContractWorkspacePage() {
         onDownload={onDownload}
         artifactState={artifactState}
       />
+
+      <SendToDocusealPanel contractId={state.contract.id} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
@@ -546,6 +553,223 @@ function ViewerModeToggle({
       >
         View original
       </button>
+    </div>
+  );
+}
+
+type SendDocusealState =
+  | { kind: "idle" }
+  | { kind: "sending" }
+  | { kind: "sent"; result: SendContractToDocuSealResponse }
+  | { kind: "error"; message: string };
+
+interface SignerDraft extends DocuSealSigner {
+  // Local-only id so React's keyed list re-render is stable as the
+  // user adds and removes rows. Not sent to the backend.
+  _key: string;
+}
+
+function newSignerDraft(): SignerDraft {
+  return {
+    _key: Math.random().toString(36).slice(2),
+    email: "",
+    name: "",
+    role: "signer",
+  };
+}
+
+function SendToDocusealPanel({ contractId }: { contractId: string }) {
+  const [signers, setSigners] = useState<SignerDraft[]>([newSignerDraft()]);
+  const [sendState, setSendState] = useState<SendDocusealState>({
+    kind: "idle",
+  });
+
+  const canSubmit =
+    sendState.kind !== "sending" &&
+    signers.length > 0 &&
+    signers.every(
+      (s) =>
+        s.email.trim().includes("@") && s.name.trim().length > 0,
+    );
+
+  function updateSigner(index: number, patch: Partial<SignerDraft>) {
+    setSigners((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+    );
+  }
+
+  function removeSigner(index: number) {
+    setSigners((prev) =>
+      prev.length === 1
+        ? prev
+        : prev.filter((_, i) => i !== index),
+    );
+  }
+
+  function addSigner() {
+    setSigners((prev) => [...prev, newSignerDraft()]);
+  }
+
+  async function onSubmit() {
+    setSendState({ kind: "sending" });
+    try {
+      const result = await sendContractToDocuseal(contractId, {
+        signers: signers.map((s) => ({
+          email: s.email.trim(),
+          name: s.name.trim(),
+          role: (s.role ?? "signer").trim() || "signer",
+        })),
+      });
+      setSendState({ kind: "sent", result });
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof MissingDevUserError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not send to DocuSeal.";
+      setSendState({ kind: "error", message });
+    }
+  }
+
+  return (
+    <section
+      className="mt-6 rounded border border-rule p-4"
+      data-testid="send-to-docuseal"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-medium text-ink">Send to DocuSeal</h2>
+        <p className="text-xs text-ink-subtle">
+          Whereas hands the latest official artifact to the DocuSeal peer
+          service for signature collection.
+        </p>
+      </div>
+
+      {sendState.kind === "sent" ? (
+        <SendDocusealSuccess result={sendState.result} />
+      ) : (
+        <div className="mt-3 space-y-3">
+          <ul className="space-y-2">
+            {signers.map((s, index) => (
+              <li
+                key={s._key}
+                className="grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto]"
+                data-testid="docuseal-signer-row"
+              >
+                <input
+                  type="email"
+                  className="rounded border border-rule px-2 py-1 text-sm"
+                  placeholder="signer@example.com"
+                  value={s.email}
+                  onChange={(e) =>
+                    updateSigner(index, { email: e.target.value })
+                  }
+                  data-testid={`docuseal-signer-email-${index}`}
+                />
+                <input
+                  type="text"
+                  className="rounded border border-rule px-2 py-1 text-sm"
+                  placeholder="Signer name"
+                  value={s.name}
+                  onChange={(e) =>
+                    updateSigner(index, { name: e.target.value })
+                  }
+                  data-testid={`docuseal-signer-name-${index}`}
+                />
+                <input
+                  type="text"
+                  className="w-28 rounded border border-rule px-2 py-1 text-sm"
+                  placeholder="Role"
+                  value={s.role ?? ""}
+                  onChange={(e) =>
+                    updateSigner(index, { role: e.target.value })
+                  }
+                  data-testid={`docuseal-signer-role-${index}`}
+                />
+                <button
+                  type="button"
+                  className="text-xs underline disabled:opacity-40"
+                  disabled={signers.length === 1}
+                  onClick={() => removeSigner(index)}
+                  aria-label={`Remove signer ${index + 1}`}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="text-xs underline"
+              onClick={addSigner}
+              data-testid="docuseal-add-signer"
+            >
+              Add signer
+            </button>
+            <button
+              type="button"
+              className="ml-auto inline-flex items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:cursor-not-allowed disabled:opacity-60 sm:py-1.5"
+              onClick={onSubmit}
+              disabled={!canSubmit}
+              data-testid="docuseal-send-submit"
+            >
+              {sendState.kind === "sending"
+                ? "Sending…"
+                : "Send to DocuSeal"}
+            </button>
+          </div>
+          {sendState.kind === "error" && (
+            <p
+              className="text-xs text-danger"
+              data-testid="docuseal-send-error"
+            >
+              {sendState.message}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SendDocusealSuccess({
+  result,
+}: {
+  result: SendContractToDocuSealResponse;
+}) {
+  return (
+    <div
+      className="mt-3 rounded border border-rule bg-canvas-subtle px-3 py-2 text-sm"
+      data-testid="docuseal-send-success"
+    >
+      <p className="text-ink">
+        Sent {result.signer_count}{" "}
+        {result.signer_count === 1 ? "signer" : "signers"} to DocuSeal.
+      </p>
+      <p className="mt-1 text-xs text-ink-subtle">
+        {result.filename ? <>Artifact: {result.filename}. </> : null}
+        {result.submission_id ? (
+          <>Submission id: {result.submission_id}.</>
+        ) : (
+          <>DocuSeal did not return a submission id.</>
+        )}
+      </p>
+      {result.embed_url && (
+        <p className="mt-1 text-xs">
+          <a
+            href={result.embed_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="underline"
+            data-testid="docuseal-embed-link"
+          >
+            Open signing flow
+          </a>
+        </p>
+      )}
     </div>
   );
 }

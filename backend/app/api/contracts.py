@@ -40,6 +40,10 @@ from app.schemas.contracts import (
     ContractUploadResponse,
     ExtractedFieldResponse,
 )
+from app.schemas.docuseal import (
+    SendContractToDocuSealRequest,
+    SendContractToDocuSealResponse,
+)
 from app.schemas.findings import (
     CreateReviewRunRequest,
     DeviationFindingResponse,
@@ -63,6 +67,7 @@ from app.security.encryption import (
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.contract_artifacts import (
     get_latest_official_downloadable_artifact,
+    get_latest_official_signable_artifact,
 )
 from app.services.deviation_findings import (
     InvalidFindingStatusError,
@@ -82,6 +87,10 @@ from app.services.document_parser import (
     ParsedDocument,
     UnsupportedDocumentTypeError,
     parse_document,
+)
+from app.services.docuseal_bridge import (
+    DocuSealError,
+    send_document_to_docuseal,
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.playbook_loader import (
@@ -842,6 +851,150 @@ async def download_contract(
     )
 
 
+@router.post(
+    "/{contract_id}/send-to-docuseal",
+    response_model=SendContractToDocuSealResponse,
+    status_code=201,
+)
+async def send_contract_to_docuseal(
+    contract_id: uuid.UUID,
+    payload: SendContractToDocuSealRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> SendContractToDocuSealResponse:
+    """Send a contract to DocuSeal for signature collection.
+
+    Resolves the right artifact to sign in this order:
+
+      1. Latest official ``generated_docx`` ContractArtifact (a draft
+         agreement rendered from an AgreementTemplate).
+      2. Latest official ``original_upload`` ContractArtifact.
+      3. Legacy ``Contract.s3_key`` for contracts uploaded before the
+         artifact model landed and not yet backfilled.
+
+    The artifact is decrypted in-process and POSTed to DocuSeal as
+    base64. Whereas keeps documents encrypted at rest under the org
+    master key, so a presigned URL would only ever serve DocuSeal
+    ciphertext; sending the bytes directly keeps the trust boundary
+    in one place. Storage internals (``storage_key``, ``wrapped_dek``,
+    raw S3 keys) and the DocuSeal auth-bridge JWT are never echoed
+    back to the client.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    if contract.wrapped_dek is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Contract encryption metadata is missing.",
+        )
+
+    artifact = await get_latest_official_signable_artifact(
+        session,
+        contract_id=contract.id,
+        organization_id=user.organization_id,
+    )
+    storage_key = (
+        artifact.storage_key
+        if artifact is not None and artifact.storage_key
+        else contract.s3_key
+    )
+    if not storage_key or storage_key == "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Contract has no downloadable artifact to send for signature."
+            ),
+        )
+    mime_type = (
+        artifact.mime_type
+        if artifact is not None and artifact.mime_type
+        else contract.mime_type
+    )
+    filename = _send_filename(contract, artifact=artifact)
+
+    org = await _load_organization(session, user.organization_id)
+    org_master_key = _load_org_key_or_http(org)
+    storage = DocumentStorage(get_settings())
+    try:
+        plaintext = await storage.retrieve_decrypted(
+            s3_key=storage_key,
+            document_id=str(contract.id),
+            wrapped_dek_bytes=contract.wrapped_dek,
+            org_master_key=org_master_key,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not retrieve encrypted document.",
+        ) from e
+    finally:
+        del org_master_key
+
+    submitters = [
+        {
+            "email": signer.email,
+            "name": signer.name,
+            "role": signer.role,
+        }
+        for signer in payload.signers
+    ]
+    try:
+        upstream = await send_document_to_docuseal(
+            document_bytes=plaintext,
+            filename=filename,
+            mime_type=mime_type,
+            submitters=submitters,
+            user_id=user.id,
+            user_email=user.email,
+            organization_id=user.organization_id,
+        )
+    except DocuSealError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    finally:
+        del plaintext
+
+    submission_id = _extract_submission_id(upstream)
+    embed_url = _extract_embed_url(upstream)
+
+    if submission_id is not None:
+        contract.docuseal_submission_id = submission_id
+    contract.status = ContractStatus.SENT_FOR_SIGNATURE.value
+    await session.flush()
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_SENT_FOR_SIGNATURE,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "artifact_id": str(artifact.id) if artifact is not None else None,
+            "artifact_type": artifact.artifact_type if artifact is not None else None,
+            "filename": filename,
+            "signer_count": len(submitters),
+            "submission_id": submission_id,
+        },
+    )
+
+    return SendContractToDocuSealResponse(
+        contract_id=contract.id,
+        artifact_id=artifact.id if artifact is not None else None,
+        artifact_type=artifact.artifact_type if artifact is not None else None,
+        filename=filename,
+        submission_id=submission_id,
+        status=ContractStatus.SENT_FOR_SIGNATURE.value,
+        embed_url=embed_url,
+        signer_count=len(submitters),
+        raw=_safe_upstream_projection(upstream),
+    )
+
+
 async def _current_dev_user(
     session: AsyncSession,
     header_value: str | None,
@@ -1046,6 +1199,98 @@ def _download_filename(
     if not base.lower().endswith(ext):
         base = f"{base}{ext}"
     return base[:180]
+
+
+def _send_filename(
+    contract: Contract,
+    *,
+    artifact: ContractArtifact | None,
+) -> str:
+    """Pick a sensible filename to hand DocuSeal.
+
+    Prefers the artifact's recorded filename (DOCX upload name or
+    generated DOCX name) and falls back to a derived form of the
+    contract title for legacy contracts.
+    """
+    if artifact is not None and artifact.filename:
+        return artifact.filename[:180]
+    return _download_filename(contract, artifact=artifact)
+
+
+def _extract_submission_id(upstream: dict[str, object] | None) -> str | None:
+    """Best-effort extraction of a DocuSeal submission id.
+
+    DocuSeal's response shape varies by version (top-level ``id`` /
+    ``submission_id`` / ``slug``). We take the first one that is a
+    non-empty primitive and stringify it. ``None`` is fine: callers
+    persist ``contract.docuseal_submission_id`` only when an id
+    actually came back.
+    """
+    if not isinstance(upstream, dict):
+        return None
+    for key in ("submission_id", "id", "slug"):
+        value = upstream.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value)
+    return None
+
+
+def _extract_embed_url(upstream: dict[str, object] | None) -> str | None:
+    """Pull a primary embed URL from the DocuSeal response, if any.
+
+    Handles both the top-level ``embed_url`` shape and the
+    ``submitters: [{embed_src: ...}]`` shape some DocuSeal versions
+    return. We surface the first signer's embed URL so the frontend can
+    render an inline signing flow without modeling per-signer URLs in
+    this PR.
+    """
+    if not isinstance(upstream, dict):
+        return None
+    for key in ("embed_url", "embed_src"):
+        value = upstream.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    submitters = upstream.get("submitters")
+    if isinstance(submitters, list):
+        for entry in submitters:
+            if not isinstance(entry, dict):
+                continue
+            for key in ("embed_src", "embed_url"):
+                value = entry.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+    return None
+
+
+def _safe_upstream_projection(
+    upstream: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Strip auth-bridge / token-shaped values from a DocuSeal payload.
+
+    DocuSeal's response is largely public-shaped (submission ids, embed
+    urls, signer emails), but we don't want a future DocuSeal version
+    accidentally surfacing a ``token`` or ``secret`` field through our
+    response. The blocklist is defensive — Whereas already mints its
+    own short-lived JWT for the upstream call, so any token-shaped
+    field coming back is something we don't want to reflect.
+    """
+    if not isinstance(upstream, dict):
+        return None
+    blocked = {
+        "token",
+        "access_token",
+        "auth_token",
+        "secret",
+        "signing_secret",
+        "api_key",
+        "authorization",
+    }
+    cleaned: dict[str, object] = {}
+    for key, value in upstream.items():
+        if key.lower() in blocked:
+            continue
+        cleaned[key] = value
+    return cleaned
 
 
 def _audit_contract_details(

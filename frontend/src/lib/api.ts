@@ -37,6 +37,10 @@ import type {
   AgreementTemplateVariableUpdateRequest,
 } from "../types/agreementTemplates";
 import type {
+  SendContractToDocuSealRequest,
+  SendContractToDocuSealResponse,
+} from "../types/docuseal";
+import type {
   CreateDevSetupRequest,
   CreateDevSetupResponse,
   SetupStatus,
@@ -348,6 +352,32 @@ export interface DownloadResult {
 }
 
 const FILENAME_RE = /filename="([^"]+)"/i;
+
+/**
+ * Send a contract to DocuSeal for signature collection. Backend
+ * resolves the right artifact (generated_docx > original_upload >
+ * legacy contract.s3_key), decrypts it server-side, and POSTs the
+ * bytes to DocuSeal as base64. The response carries the DocuSeal
+ * submission id and any embed URL the upstream returned; storage
+ * internals are scrubbed.
+ */
+export async function sendContractToDocuseal(
+  id: string,
+  payload: SendContractToDocuSealRequest,
+  options: ApiOptions = {},
+): Promise<SendContractToDocuSealResponse> {
+  if (isDemoMode()) return mockApi.sendContractToDocuseal(id, payload, options);
+  const data = await call<SendContractToDocuSealResponse>(
+    `/api/contracts/${encodeURIComponent(id)}/send-to-docuseal`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
 
 export async function downloadContract(
   id: string,
