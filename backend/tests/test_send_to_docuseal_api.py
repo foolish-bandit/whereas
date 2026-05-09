@@ -653,10 +653,18 @@ async def test_send_to_docuseal_audit_log_contains_no_storage_internals(
         source="template_generation",
     )
 
+    # A unique signer to act as a sentinel: if anything in the audit
+    # log surfaces signer PII, this token shows up.
+    sentinel_email = "audit-sentinel@example.com"
+    sentinel_name = "Audit Sentinel Counterparty"
     response = await client.post(
         f"/api/contracts/{contract.id}/send-to-docuseal",
         headers=_headers(user_org.user),
-        json={"signers": _VALID_SIGNERS},
+        json={
+            "signers": [
+                {"email": sentinel_email, "name": sentinel_name},
+            ],
+        },
     )
     assert response.status_code == 201
 
@@ -679,6 +687,10 @@ async def test_send_to_docuseal_audit_log_contains_no_storage_internals(
     assert "storage_key" not in raw
     assert "wrapped_dek" not in raw
     assert contract.s3_key not in raw
+    # Signer PII must not be persisted into the audit log: signer_count
+    # alone is enough, and the full submitter list lives in DocuSeal.
+    assert sentinel_email not in raw
+    assert sentinel_name not in raw
 
 
 async def test_send_to_docuseal_validates_signer_payload(
@@ -728,6 +740,11 @@ async def test_send_to_docuseal_propagates_upstream_error(
     db_session: AsyncSession,
     stub_docuseal: dict[str, Any],
 ) -> None:
+    """An upstream DocuSeal failure surfaces as 502 and leaves the
+    contract row untouched: no status flip, no submission id, no
+    audit event. The request-scoped session rolls back on the
+    exception (see ``app.core.database.get_db``), so even partial
+    state mutated before the error gets discarded."""
     from app.services.docuseal_bridge import DocuSealError
 
     user_org = await _create_user_org(db_session)
@@ -750,13 +767,118 @@ async def test_send_to_docuseal_propagates_upstream_error(
 
     stub_docuseal["raise_error"] = DocuSealError("DocuSeal exploded")
 
+    # Capture the id before the request so the post-rollback ORM state
+    # of ``contract`` doesn't matter for the assertion query.
+    contract_id = contract.id
+
     response = await client.post(
-        f"/api/contracts/{contract.id}/send-to-docuseal",
+        f"/api/contracts/{contract_id}/send-to-docuseal",
         headers=_headers(user_org.user),
         json={"signers": _VALID_SIGNERS},
     )
     assert response.status_code == 502
     assert "DocuSeal" in response.json()["detail"]
+
+    # Contract state must not have been mutated by the failed send.
+    refreshed = await db_session.get(Contract, contract_id)
+    assert refreshed is not None
+    assert refreshed.status == ContractStatus.READY.value
+    assert refreshed.docuseal_submission_id is None
+
+    # No audit event written for a failed send.
+    events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.CONTRACT_SENT_FOR_SIGNATURE.value,
+                AuditEvent.target_id == str(contract_id),
+            )
+        )
+    ).scalars().all()
+    assert events == []
+
+
+async def test_send_document_to_docuseal_retries_on_5xx_only() -> None:
+    """The retry policy must NOT burn attempts on 4xx responses.
+
+    A 4xx from DocuSeal means the request itself was malformed (bad
+    template, malformed submitter shape, expired token); retrying
+    won't fix it. A 5xx or transport error is the legitimate retry
+    surface. This is verified at the service layer with a fake
+    transport so we can assert call counts.
+    """
+    from app.services import docuseal_bridge as service
+
+    fivehundred_calls = {"n": 0}
+
+    def fake_transport_5xx(request: httpx.Request) -> httpx.Response:
+        fivehundred_calls["n"] += 1
+        return httpx.Response(503, json={"error": "down"})
+
+    fourhundred_calls = {"n": 0}
+
+    def fake_transport_4xx(request: httpx.Request) -> httpx.Response:
+        fourhundred_calls["n"] += 1
+        return httpx.Response(400, json={"error": "bad"})
+
+    class StubAsyncClient:
+        def __init__(self, transport: Any) -> None:
+            self._transport = transport
+
+        async def __aenter__(self) -> Any:
+            class Inner:
+                def __init__(self, transport: Any) -> None:
+                    self._transport = transport
+
+                async def post(
+                    self,
+                    url: str,
+                    *,
+                    headers: dict[str, str],
+                    json: dict[str, Any],
+                ) -> httpx.Response:
+                    request = httpx.Request("POST", url, headers=headers, json=json)
+                    return self._transport(request)
+
+            return Inner(self._transport)
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def patch_async_client(transport: Any) -> Any:
+        original = service.httpx.AsyncClient
+        service.httpx.AsyncClient = lambda *a, **kw: StubAsyncClient(transport)  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            service.httpx.AsyncClient = original  # type: ignore[assignment]
+
+    # Speed up the retry waits so the test stays fast.
+    service.send_document_to_docuseal.retry.wait = lambda *a, **kw: 0  # type: ignore[attr-defined]
+
+    common_kwargs: dict[str, Any] = {
+        "filename": "x.docx",
+        "mime_type": _DOCX_MIME,
+        "submitters": [{"email": "a@example.com", "name": "A", "role": "signer"}],
+        "user_id": uuid.uuid4(),
+        "user_email": "u@example.com",
+        "organization_id": uuid.uuid4(),
+        "document_bytes": b"x",
+    }
+
+    with patch_async_client(fake_transport_5xx), pytest.raises(service.RetryableDocuSealError):
+        await service.send_document_to_docuseal(**common_kwargs)
+    assert fivehundred_calls["n"] == 3, "5xx should be retried 3x"
+
+    with patch_async_client(fake_transport_4xx):
+        with pytest.raises(service.DocuSealError) as excinfo:
+            await service.send_document_to_docuseal(**common_kwargs)
+        # Plain DocuSealError (not RetryableDocuSealError) — terminal.
+        assert not isinstance(excinfo.value, service.RetryableDocuSealError)
+    assert fourhundred_calls["n"] == 1, "4xx must NOT be retried"
 
 
 async def test_send_to_docuseal_legacy_contract_falls_back_to_s3_key(

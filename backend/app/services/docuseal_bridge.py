@@ -28,7 +28,12 @@ from typing import Any
 
 import httpx
 from jose import jwt
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import get_settings
 
@@ -40,13 +45,16 @@ JWT_TTL_SECONDS = 300  # 5 minutes; user clicks through to DocuSeal immediately
 
 
 class DocuSealError(Exception):
-    """A DocuSeal API call failed.
+    """A DocuSeal API call failed in a way the caller cannot retry.
 
-    Carries an HTTP status hint so callers can map it onto the API
-    response. ``status_code`` defaults to 502 because the failure
-    surface here is "the upstream signing service did not cooperate";
-    individual call sites can override it (e.g. 4xx from DocuSeal we
-    can pass through verbatim).
+    Used for 4xx-class upstream rejections and malformed-response
+    surfaces (non-JSON body). These represent "the request itself was
+    bad" rather than "the upstream is temporarily flaky", so retrying
+    would just burn the user's time. The retry decorator below is
+    scoped to ``RetryableDocuSealError``.
+
+    ``status_code`` is the HTTP status the API endpoint should return
+    when re-raising; defaults to 502 ("the upstream said no").
     """
 
     status_code: int = 502
@@ -55,6 +63,16 @@ class DocuSealError(Exception):
         super().__init__(message)
         if status_code is not None:
             self.status_code = status_code
+
+
+class RetryableDocuSealError(DocuSealError):
+    """A DocuSeal API call failed in a way that may resolve on retry.
+
+    Reserved for transport-layer failures and 5xx responses. Tenacity
+    retries on this subclass so a flaky network or a momentarily
+    overloaded DocuSeal recovers without bothering the caller; a 4xx
+    "bad request" stays terminal.
+    """
 
 
 def mint_docuseal_token(*, user_id: str, email: str, organization_id: str) -> str:
@@ -75,6 +93,7 @@ def mint_docuseal_token(*, user_id: str, email: str, organization_id: str) -> st
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((httpx.HTTPError, RetryableDocuSealError)),
     reraise=True,
 )
 async def send_document_to_docuseal(
@@ -133,11 +152,13 @@ async def send_document_to_docuseal(
                 json=payload,
             )
         except httpx.HTTPError as exc:
-            raise DocuSealError(
+            # Transport-layer failure (timeout, DNS, refused). Worth a
+            # retry — flaky network rather than a malformed request.
+            raise RetryableDocuSealError(
                 f"Could not reach DocuSeal: {type(exc).__name__}.",
             ) from exc
         if response.status_code >= 500:
-            raise DocuSealError(
+            raise RetryableDocuSealError(
                 f"DocuSeal returned {response.status_code}.",
             )
         if response.status_code >= 400:

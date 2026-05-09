@@ -960,6 +960,15 @@ async def send_contract_to_docuseal(
     submission_id = _extract_submission_id(upstream)
     embed_url = _extract_embed_url(upstream)
 
+    # Repeated sends are deliberately allowed. A user who hit "send"
+    # with a typo in a signer's email needs to be able to send again
+    # without an admin unsticking the contract; gating this on
+    # ``contract.docuseal_submission_id is None`` would either block
+    # that legitimate retry or force a parallel "cancel previous
+    # submission" surface that DocuSeal already owns. The latest
+    # ``docuseal_submission_id`` is what we keep on the row — every
+    # send is captured separately in the audit log, so the prior
+    # submission ids are not lost from the audit view.
     if submission_id is not None:
         contract.docuseal_submission_id = submission_id
     contract.status = ContractStatus.SENT_FOR_SIGNATURE.value
