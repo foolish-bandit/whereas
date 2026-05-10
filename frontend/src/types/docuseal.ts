@@ -33,11 +33,33 @@ export type ApprovalGateCode =
   | "approvals_completed"
   | "active_approval_workflows"
   | "rejected_approval_workflows"
+  | "required_approval_policy_unmet"
   | "cancelled_without_completed_approval";
+
+/**
+ * Compact, UI-safe projection of an `ApprovalPolicy` row that the
+ * DocuSeal gate response carries so the gate can render policy *names*
+ * inline without a separate fetch. Mirrors
+ * `RequestApprovalPolicySummary` from the request approval visibility
+ * surface — same shape so display code can be reused. `description` /
+ * `metadata_json` / `created_by` / storage fields are intentionally
+ * omitted server-side.
+ */
+export interface ApprovalGatePolicySummary {
+  id: string;
+  name: string;
+  workflow_template_id: string;
+  auto_attach: boolean;
+  applies_to_generated_contracts: boolean;
+  request_type: string | null;
+  contract_type: string | null;
+  priority: string | null;
+  agreement_template_id: string | null;
+}
 
 export interface ContractApprovalGate {
   allowed: boolean;
-  code: ApprovalGateCode;
+  code: ApprovalGateCode | string;
   request_id: string | null;
   blocking_workflow_ids: string[];
   completed_workflow_ids: string[];
@@ -45,4 +67,13 @@ export interface ContractApprovalGate {
   rejected_count: number;
   cancelled_count: number;
   completed_count: number;
+  /**
+   * Policy ids retained for backwards compatibility with clients that
+   * pre-date the named-policy projection. Always aligned with
+   * `required_policies` / `missing_policies` element-by-element.
+   */
+  required_policy_ids?: string[];
+  missing_policy_ids?: string[];
+  required_policies?: ApprovalGatePolicySummary[];
+  missing_policies?: ApprovalGatePolicySummary[];
 }

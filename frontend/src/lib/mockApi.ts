@@ -269,6 +269,37 @@ export async function getContractApprovalGate(
   options: ApiOptions = {},
 ): Promise<ContractApprovalGate> {
   await delay(MOCK_LATENCY_MS, options.signal);
+  if (id.includes("policy-blocked")) {
+    // PR #59 demo: gate blocked by an unmet approval policy with a
+    // human-readable name; exercises the named-policy rendering path
+    // in SendToDocusealPanel without requiring a real backend.
+    const policy = {
+      id: "demo-policy-1",
+      name: "Standard Legal Review",
+      workflow_template_id: "demo-tpl-1",
+      auto_attach: true,
+      applies_to_generated_contracts: true,
+      request_type: null,
+      contract_type: null,
+      priority: null,
+      agreement_template_id: null,
+    };
+    return {
+      allowed: false,
+      code: "required_approval_policy_unmet",
+      request_id: "demo-request-1",
+      blocking_workflow_ids: [],
+      completed_workflow_ids: [],
+      active_count: 0,
+      rejected_count: 0,
+      cancelled_count: 0,
+      completed_count: 0,
+      required_policy_ids: [policy.id],
+      missing_policy_ids: [policy.id],
+      required_policies: [policy],
+      missing_policies: [policy],
+    };
+  }
   if (id.includes("blocked")) {
     return {
       allowed: false,
@@ -280,6 +311,10 @@ export async function getContractApprovalGate(
       rejected_count: 0,
       cancelled_count: 0,
       completed_count: 0,
+      required_policy_ids: [],
+      missing_policy_ids: [],
+      required_policies: [],
+      missing_policies: [],
     };
   }
   return {
@@ -292,6 +327,10 @@ export async function getContractApprovalGate(
     rejected_count: 0,
     cancelled_count: 0,
     completed_count: 0,
+    required_policy_ids: [],
+    missing_policy_ids: [],
+    required_policies: [],
+    missing_policies: [],
   };
 }
 

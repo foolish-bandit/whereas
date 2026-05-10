@@ -605,6 +605,30 @@ interface SignerDraft extends DocuSealSigner {
   _key: string;
 }
 
+function UnmetPolicyList({ gate }: { gate: ContractApprovalGate }) {
+  // Prefer the named summaries the gate now ships (PR #59); fall back
+  // to the id list so older/mocked responses without summaries still
+  // render something useful instead of an empty bullet.
+  const summaries = gate.missing_policies ?? [];
+  const ids = gate.missing_policy_ids ?? [];
+  const items: { key: string; label: string }[] = summaries.length
+    ? summaries.map((p) => ({ key: p.id, label: p.name }))
+    : ids.map((id) => ({ key: id, label: id }));
+  if (items.length === 0) {
+    return <p>A required approval policy has not been satisfied.</p>;
+  }
+  return (
+    <div data-testid="docuseal-gate-missing-policies">
+      <p>Required approval policies have not been satisfied:</p>
+      <ul className="ml-4 mt-1 list-disc">
+        {items.map((item) => (
+          <li key={item.key}>{item.label}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function newSignerDraft(): SignerDraft {
   return {
     _key: Math.random().toString(36).slice(2),
@@ -707,8 +731,8 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
           {gate && !gate.allowed && (
             <div className="rounded border border-warning bg-warning/10 p-2 text-xs" data-testid="docuseal-gate-blocked">
               <p className="font-medium">Approvals required before sending.</p>
-              {(gate.code as string) === "required_approval_policy_unmet" ? (
-                <p>A required approval policy has not been satisfied. {Array.isArray((gate as any).missing_policy_ids) && (gate as any).missing_policy_ids.length > 0 ? `Missing policy IDs: ${(gate as any).missing_policy_ids.join(", ")}` : ""}</p>
+              {gate.code === "required_approval_policy_unmet" ? (
+                <UnmetPolicyList gate={gate} />
               ) : (
                 <p>Reason: {gate.code}. Active: {gate.active_count}, Rejected: {gate.rejected_count}, Cancelled: {gate.cancelled_count}, Completed: {gate.completed_count}</p>
               )}

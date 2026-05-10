@@ -205,7 +205,7 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#58 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer (PR #47), the request → contract conversion route (PR #48), the dashboard analytics foundation (PR #49), the approval workflow foundation (PR #50), reusable approval workflow templates (PR #51), the DocuSeal approval gate (PR #52), backend approval policies (PR #53) and their management UI (PR #54), the request approval visibility surface (PR #56), and the approval / signature activity timeline (PR #58) — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md). The consolidated approval-system checkpoint is in **section 14** of that doc.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#59 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer (PR #47), the request → contract conversion route (PR #48), the dashboard analytics foundation (PR #49), the approval workflow foundation (PR #50), reusable approval workflow templates (PR #51), the DocuSeal approval gate (PR #52), backend approval policies (PR #53) and their management UI (PR #54), the request approval visibility surface (PR #56), the approval / signature activity timeline (PR #58), and policy names in the DocuSeal gate response (PR #59) — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md). The consolidated approval-system checkpoint is in **section 14** of that doc.
 
 Whereas tracks two layers of work:
 
@@ -247,5 +247,7 @@ For `POST /api/contracts/{id}/send-to-docuseal`, Whereas now checks approval rea
 - Active or rejected workflows block send.
 - At least one completed workflow (with no active/rejected) allows send.
 - Cancelled-only workflows block send.
+
+`GET /api/contracts/{id}/approval-gate` returns the same allow/block decision plus compact `required_policies` / `missing_policies` summaries (id + name + match attributes) so the Send-to-DocuSeal panel can render policy *names* directly when the gate blocks with `required_approval_policy_unmet`. The legacy `required_policy_ids` / `missing_policy_ids` arrays remain on the response for back-compat and are aligned element-by-element with the named summaries. Storage internals (`storage_key` / `wrapped_dek` / `s3_key`) and signer PII are never surfaced. This is explainability only; the gate's allow/block rules are unchanged.
 
 An override escape hatch exists for now (`approval_override=true`) and requires `approval_override_reason`; override details are audit logged. RBAC-limited override permissions are future work.

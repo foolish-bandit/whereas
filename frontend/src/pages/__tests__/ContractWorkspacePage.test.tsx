@@ -288,21 +288,179 @@ describe("ContractWorkspacePage markdown integration", () => {
   });
 
 
-  it("renders required approval policy unmet copy with missing IDs", async () => {
+  it("renders required approval policy unmet copy with missing policy NAMES (PR #59)", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
-        return jsonResponse({ allowed: false, code: "required_approval_policy_unmet", request_id: "r1", blocking_workflow_ids: [], completed_workflow_ids: [], active_count: 0, rejected_count: 0, cancelled_count: 0, completed_count: 0, missing_policy_ids: ["apol-1", "apol-2"] });
+        return jsonResponse({
+          allowed: false,
+          code: "required_approval_policy_unmet",
+          request_id: "r1",
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+          required_policy_ids: ["apol-1", "apol-2"],
+          missing_policy_ids: ["apol-1", "apol-2"],
+          required_policies: [
+            {
+              id: "apol-1",
+              name: "Standard Legal Review",
+              workflow_template_id: "tpl-1",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+            {
+              id: "apol-2",
+              name: "High Priority Executive Approval",
+              workflow_template_id: "tpl-2",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+          ],
+          missing_policies: [
+            {
+              id: "apol-1",
+              name: "Standard Legal Review",
+              workflow_template_id: "tpl-1",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+            {
+              id: "apol-2",
+              name: "High Priority Executive Approval",
+              workflow_template_id: "tpl-2",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+          ],
+        });
       }
       return jsonResponse({ detail: "unexpected" }, 500);
     });
     renderPage();
     const blocked = await screen.findByTestId("docuseal-gate-blocked");
-    expect(blocked).toHaveTextContent("A required approval policy has not been satisfied.");
-    expect(blocked).toHaveTextContent("apol-1");
-    expect(blocked).toHaveTextContent("apol-2");
+    expect(blocked).toHaveTextContent(
+      "Required approval policies have not been satisfied:",
+    );
+    const list = await screen.findByTestId("docuseal-gate-missing-policies");
+    expect(list).toHaveTextContent("Standard Legal Review");
+    expect(list).toHaveTextContent("High Priority Executive Approval");
+    // The opaque ids are no longer surfaced when names are present.
+    expect(list).not.toHaveTextContent("apol-1");
+    expect(list).not.toHaveTextContent("apol-2");
+  });
+
+  it("falls back to missing policy IDs when the gate response has no named summaries", async () => {
+    // Simulates an older backend (or mock) that has not yet been
+    // upgraded to PR #59 — the UI must still render *something* useful
+    // instead of dropping the missing-policy context on the floor.
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: false,
+          code: "required_approval_policy_unmet",
+          request_id: "r1",
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+          missing_policy_ids: ["apol-legacy-1", "apol-legacy-2"],
+        });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    const list = await screen.findByTestId("docuseal-gate-missing-policies");
+    expect(list).toHaveTextContent("apol-legacy-1");
+    expect(list).toHaveTextContent("apol-legacy-2");
+  });
+
+  it("override UI is preserved on required_approval_policy_unmet (PR #59 is response polish)", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: false,
+          code: "required_approval_policy_unmet",
+          request_id: "r1",
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+          required_policy_ids: ["apol-1"],
+          missing_policy_ids: ["apol-1"],
+          required_policies: [
+            {
+              id: "apol-1",
+              name: "Standard Legal Review",
+              workflow_template_id: "tpl-1",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+          ],
+          missing_policies: [
+            {
+              id: "apol-1",
+              name: "Standard Legal Review",
+              workflow_template_id: "tpl-1",
+              auto_attach: true,
+              applies_to_generated_contracts: true,
+              request_type: null,
+              contract_type: null,
+              priority: null,
+              agreement_template_id: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) && init?.method === "POST") {
+        return jsonResponse({ detail: "approval_required" }, 409);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("docuseal-gate-blocked");
+    fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
+    fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
+    expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("docuseal-override-reason"), { target: { value: "CFO unreachable; closing today" } });
+    expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
   });
 
   it("shows safe gate error state when approval-gate fetch fails", async () => {

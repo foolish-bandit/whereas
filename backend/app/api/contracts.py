@@ -42,6 +42,7 @@ from app.schemas.contracts import (
     ExtractedFieldResponse,
 )
 from app.schemas.docuseal import (
+    ContractApprovalGateResponse,
     SendContractToDocuSealRequest,
     SendContractToDocuSealResponse,
 )
@@ -934,12 +935,15 @@ async def download_contract(
 
 
 
-@router.get("/{contract_id}/approval-gate")
+@router.get(
+    "/{contract_id}/approval-gate",
+    response_model=ContractApprovalGateResponse,
+)
 async def get_contract_approval_gate(
     contract_id: uuid.UUID,
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
-) -> dict[str, object]:
+) -> ContractApprovalGateResponse:
     user = await _current_dev_user(session, x_whereas_dev_user)
     contract = await _get_contract_for_org(
         session,
@@ -947,7 +951,7 @@ async def get_contract_approval_gate(
         organization_id=user.organization_id,
     )
     gate = await can_send_contract_to_docuseal(session, contract, user.organization_id)
-    return gate.to_safe_dict()
+    return ContractApprovalGateResponse.model_validate(gate.to_safe_dict())
 
 @router.post(
     "/{contract_id}/send-to-docuseal",

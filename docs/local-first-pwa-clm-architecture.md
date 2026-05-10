@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility/timeline checkpoint as of PR #58** (the place to read first if you only have time for one), and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility/timeline checkpoint as of PR #59** (the place to read first if you only have time for one), and section 11 for the next PR.
 
 ---
 
@@ -703,24 +703,15 @@ PR #51 added **approval workflow templates** on top of that foundation: `Approva
 
 PR #53 adds a backend-only **approval policies** layer: `ApprovalPolicy` rows at `/api/approval-policies` that match request attributes (`request_type`, `contract_type`, `priority`, optional linked `AgreementTemplate`) and can auto-attach `ApprovalWorkflowTemplate` blueprints to matching requests. Null filters are wildcards; matching is deterministic and org-scoped. Auto-attachment is idempotent via run metadata (`source_approval_policy_id` et al.), and request field changes that stop matching do not remove previously created workflows yet (future reconciliation work). The DocuSeal gate now checks matching active policies (`applies_to_generated_contracts=true`) and blocks with `required_approval_policy_unmet` when required policy-linked approvals are missing. No parallel approvals, conditional builders, auto-send, RBAC expansion, calendar/Nango, or PowerSync were added. Frontend policy management UI remains deferred; policies are currently managed through API.
 
+PR #59 makes the **DocuSeal send-gate response self-describing**. `GET /api/contracts/{id}/approval-gate` and the 409 body of `POST /.../send-to-docuseal` now include `required_policies` and `missing_policies`: compact `ApprovalGatePolicySummary` projections (`id`, `name`, `workflow_template_id`, `auto_attach`, `applies_to_generated_contracts`, `request_type`, `contract_type`, `priority`, `agreement_template_id`) sorted deterministically by name. The legacy `required_policy_ids` / `missing_policy_ids` arrays remain on the response for back-compat and are aligned element-by-element with the named summaries. The frontend `SendToDocusealPanel` renders policy names directly, falling back to ids only if the named summaries are absent (e.g. an older mock). The summary is a strict allowlist with `extra="forbid"` — `description`, `metadata_json`, `created_by`, `created_at`, `status`, and storage / artifact fields cannot leak through. Gate allow/block semantics are unchanged.
+
 ---
 
-## 11. Recommended Next PR: Policy names in gate response, or signer-event mirror
+## 11. Recommended Next PR: Signer-event mirror, or richer gate remediation links
 
-The activity timeline shipped in PR #58, so users can now answer **"how did we get here?"** for a request or contract. The two best candidates for the next focused PR pick up loose threads from the approval / signature stack.
+The activity timeline shipped in PR #58 and policy names in the gate response shipped in PR #59, so users can now answer both **"how did we get here?"** and **"what's the name of the policy blocking this send?"**. The remaining loose threads on the approval / signature stack are below.
 
-### 11a. Policy names in the gate response
-
-**Goal:** make the DocuSeal send-gate response self-describing. Today, when the gate blocks with `required_approval_policy_unmet`, the response carries `missing_policy_ids` but not policy names — the UI has to render an opaque id list and the user has to cross-reference the Approval Policies page.
-
-Suggested minimum scope:
-
-- Extend `ApprovalGateResult.to_safe_dict` to include a `missing_policies` array of `{id, name}` objects in addition to the existing `missing_policy_ids` (keep `missing_policy_ids` for backward-compat).
-- The gate already loads policies via `find_matching_approval_policies`; adding name to the response is a single extra field.
-- Frontend: replace the id-list rendering in `ContractWorkspacePage.tsx:697` with the policy names, with a fallback to id when name isn't available.
-- No schema migration needed; no new state.
-
-### 11b. Signer-event mirror table
+### 11a. Signer-event mirror table
 
 **Goal:** today, the contract-level timeline only shows `contract.sent_for_signature` and `contract.executed` — it can't show "Counterparty A viewed", "Counterparty B signed", "Counterparty C declined" because Whereas doesn't persist per-signer events from DocuSeal. A small `signer_events` table mirrored from the verified DocuSeal webhook would close that loop.
 
@@ -730,6 +721,15 @@ Suggested minimum scope:
 - The DocuSeal webhook handler (`docuseal_completion.py`) already verifies HMAC and parses the payload; extend it to insert one `signer_event` per signer transition.
 - Project signer events into the contract activity timeline through a new `signer.viewed` / `signer.signed` / etc. label set in `activity_timeline._title_for`.
 - Frontend gets richer rows for free.
+
+### 11b. Richer gate remediation links
+
+**Goal:** PR #59 lets the gate name the missing policy ("Standard Legal Review") but doesn't deep-link the user to the screens where they would either start or override the workflow. A small follow-up could add per-summary `remediation` hints (e.g. an `approval_workflow_template_url` and an `approval_policy_url`) so the panel can surface a "Start Legal Review" action without inventing routes in the frontend.
+
+Suggested minimum scope:
+
+- Extend `ApprovalGatePolicySummary` with two optional URL strings (or relative paths) that the backend renders deterministically from the existing `workflow_template_id` / `policy.id`.
+- Frontend renders them as inline links from the missing-policy list. No new backend models; no new state.
 
 ### 11c. Out of scope for whichever PR is picked
 
@@ -796,7 +796,7 @@ Read these before starting any new feature work.
 When in doubt about an architectural choice, ask before coding. A short clarifying question is always cheaper than ripping out a wrong design.
 
 
-## 14. Approval system checkpoint (after PR #58)
+## 14. Approval system checkpoint (after PR #59)
 
 This is the single canonical description of the approval / policy / gate / visibility stack as it stands on `main` today. Read it first if you're new to the codebase or returning to it. Sections 7.z (PR #50) and 7.aa (PR #51), and the PR-by-PR notes in section 10, remain useful for archaeology, but **this section is the load-bearing one** — if any of them disagrees with this checkpoint, this checkpoint wins.
 
@@ -866,6 +866,8 @@ An `ApprovalPolicy` row matches a `ContractRequest` by `request_type`, `contract
 "Required" means policies with `applies_to_generated_contracts=true` that match the request. Manual completed workflows do **not** satisfy a required policy — only a completed run carrying `metadata_json.source_approval_policy_id` for that policy does. (Pinned by tests in `test_request_approval_status_api.py` and `test_approval_gating_service.py`.)
 
 **Override.** An escape hatch exists: `approval_override=true` plus a required `approval_override_reason` lets an authorized caller bypass the gate. Override usage is recorded in the audit log with compact metadata (no signer PII, no storage internals). RBAC-limited override permissions are future work.
+
+**Response shape (PR #59).** Both `GET /api/contracts/{id}/approval-gate` and the 409 body of `POST /api/contracts/{id}/send-to-docuseal` carry compact `required_policies` and `missing_policies` summaries (`id`, `name`, `workflow_template_id`, `auto_attach`, `applies_to_generated_contracts`, `request_type`, `contract_type`, `priority`, `agreement_template_id`) sorted deterministically by name. The legacy `required_policy_ids` / `missing_policy_ids` arrays remain on the response for back-compat and are aligned element-by-element with the named summaries. The summary uses `extra="forbid"` plus an explicit allowlist, so a future column on `ApprovalPolicy` cannot accidentally leak through this surface — `description`, `metadata_json`, `created_by`, `status`, and storage / artifact fields are intentionally omitted. The frontend renders policy names directly in the SendToDocuSeal panel, falling back to ids when the named summaries are absent (e.g. an older mock). PR #59 is *response polish only*: the allow/block resolution above did not change, and the same scenarios still allow / block as before.
 
 The gate **does not mutate workflows**, never auto-sends, never auto-creates or removes runs, and never changes the linked request's status.
 
@@ -948,7 +950,7 @@ The cross-cutting rules in section 8 still apply; restated for the approval surf
 
 Tracked, intentionally not implemented after PR #58:
 
-- **Policy names in gate response.** The gate returns policy ids in `missing_policy_ids`; the UI has to look them up. A future change should include policy names so the gate response is self-describing.
+- **Richer gate remediation links.** PR #59 lets the gate name the missing policy in `missing_policies[*].name`, but the UI still doesn't deep-link to the workflow-template or policy screens where the user would actually act on the block. Optional `approval_workflow_template_url` / `approval_policy_url` fields on the summary are tracked as future work.
 - **Approval timeline backfill.** PR #58 starts recording approval audit events going forward. Workflow runs that existed before PR #58 do not have audit rows and will not appear on the timeline; a backfill pass is tracked as future work.
 - **Richer timeline filters / export.** Today the timeline is a flat list with a server-side cap (default 25, max 100). Filters by event type, actor, date range, plus an exportable audit trail are tracked as future work.
 - **Actor display names.** Audit rows carry `actor_user_id`; the timeline renders the id but not the human name. Joining users in the timeline projection is future work.
