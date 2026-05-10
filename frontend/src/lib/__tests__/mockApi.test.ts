@@ -20,6 +20,7 @@ import {
   getContractClauses,
   getContracts,
   getDashboardSummary,
+  getRequestApprovalStatus,
   archiveApprovalWorkflowTemplate,
   createApprovalWorkflowTemplate,
   instantiateApprovalWorkflowTemplate,
@@ -398,6 +399,53 @@ describe("mockApi", () => {
           request_id: "req-1",
         }),
       ).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
+  describe("request approval visibility (PR #56)", () => {
+    it("creates a workflow from a template and surfaces it on the request status", async () => {
+      const request = await createRequest({
+        title: "NDA visibility",
+        request_type: "new_contract",
+        contract_type: "NDA",
+        priority: "high",
+      });
+      const template = await createApprovalWorkflowTemplate({
+        name: "Visibility Template",
+        steps: [
+          { step_order: 1, title: "Legal review", due_in_days: 2 },
+        ],
+      });
+      const run = await instantiateApprovalWorkflowTemplate(template.id, {
+        name: "Visibility run",
+        request_id: request.id,
+      });
+      expect(run.status).toBe("active");
+
+      const status = await getRequestApprovalStatus(request.id);
+      expect(status.workflow_runs).toHaveLength(1);
+      expect(status.workflow_runs[0].id).toBe(run.id);
+      expect(status.summary.has_active_workflows).toBe(true);
+      expect(status.summary.blocking_reason).toBe("active_approval_workflows");
+
+      // Storage internals never reach the visibility surface.
+      const json = JSON.stringify(status);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+    });
+
+    it("returns an empty visibility surface when no policies/workflows match", async () => {
+      const request = await createRequest({
+        title: "Floating",
+        request_type: "other",
+      });
+      const status = await getRequestApprovalStatus(request.id);
+      expect(status.matching_policies).toEqual([]);
+      expect(status.workflow_runs).toEqual([]);
+      expect(status.summary.has_active_workflows).toBe(false);
+      expect(status.summary.has_required_policies).toBe(false);
+      expect(status.summary.blocking_reason).toBeNull();
+      expect(status.summary.ready_for_signature).toBeNull();
     });
   });
 

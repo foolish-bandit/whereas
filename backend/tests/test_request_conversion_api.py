@@ -46,6 +46,11 @@ from app.models import (  # noqa: E402
     AgreementTemplateArtifact,
     AgreementTemplateMarkdownSnapshot,
     AgreementTemplateVariable,
+    ApprovalPolicy,
+    ApprovalStep,
+    ApprovalWorkflowRun,
+    ApprovalWorkflowTemplate,
+    ApprovalWorkflowTemplateStep,
     Contract,
     ContractArtifact,
     ContractMarkdownSnapshot,
@@ -108,6 +113,9 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
         engine = create_async_engine(
             "sqlite+aiosqlite:///:memory:", echo=False
         )
+        # Approval-policy tables are required because PATCHing a
+        # request fields like ``linked_template_id`` re-runs
+        # ``apply_approval_policies_to_request`` (PR #53).
         tables = [
             Organization.__table__,
             User.__table__,
@@ -121,6 +129,11 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             AgreementTemplateVariable.__table__,
             ContractRequest.__table__,
             InboxItem.__table__,
+            ApprovalWorkflowTemplate.__table__,
+            ApprovalWorkflowTemplateStep.__table__,
+            ApprovalWorkflowRun.__table__,
+            ApprovalStep.__table__,
+            ApprovalPolicy.__table__,
         ]
     else:
         engine = create_async_engine(

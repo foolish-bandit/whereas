@@ -316,6 +316,341 @@ describe("RequestsPage", () => {
     expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
   });
 
+  // -------------------------------------------------------------------------
+  // PR #56 — request approval visibility
+  // -------------------------------------------------------------------------
+
+  const APPROVAL_POLICY = {
+    id: "apol-1",
+    name: "Standard NDA Policy",
+    workflow_template_id: "wftpl-legal",
+    auto_attach: true,
+    applies_to_generated_contracts: true,
+    request_type: null,
+    contract_type: "NDA",
+    priority: null,
+    agreement_template_id: null,
+  };
+
+  function approvalStatus(overrides: Record<string, unknown> = {}) {
+    return {
+      request_id: "req-1",
+      linked_contract_id: null,
+      matching_policy_ids: [],
+      matching_policies: [],
+      workflow_runs: [],
+      summary: {
+        has_required_policies: false,
+        has_active_workflows: false,
+        has_rejected_workflows: false,
+        has_completed_workflows: false,
+        all_required_policy_workflows_completed: true,
+        ready_for_signature: null,
+        blocking_reason: null,
+        blocking_reason_text: null,
+      },
+      ...overrides,
+    };
+  }
+
+  it("shows the approval status section on toggle and renders matching policy", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(
+          approvalStatus({
+            matching_policy_ids: [APPROVAL_POLICY.id],
+            matching_policies: [APPROVAL_POLICY],
+            summary: {
+              has_required_policies: true,
+              has_active_workflows: false,
+              has_rejected_workflows: false,
+              has_completed_workflows: false,
+              all_required_policy_workflows_completed: false,
+              ready_for_signature: null,
+              blocking_reason: "required_approval_policy_unmet",
+              blocking_reason_text:
+                "A required approval policy has not been satisfied.",
+            },
+          }),
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+
+    // Section is hidden until the user opens it.
+    expect(screen.queryByTestId("request-approval-status")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-status"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("request-approval-policy"),
+    ).toHaveTextContent("Standard NDA Policy");
+    expect(
+      screen.getByTestId("request-approval-blocking-reason"),
+    ).toHaveTextContent(/required approval policy/i);
+  });
+
+  it("renders an active workflow with the current step", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(
+          approvalStatus({
+            workflow_runs: [
+              {
+                id: "wf-1",
+                name: "Standard NDA Policy - NDA with Acme",
+                status: "active",
+                current_step_order: 1,
+                started_at: "2026-05-08T16:00:00Z",
+                completed_at: null,
+                source_approval_policy_id: APPROVAL_POLICY.id,
+                source_approval_policy_name: APPROVAL_POLICY.name,
+                steps: [
+                  {
+                    id: "step-1",
+                    step_order: 1,
+                    title: "Legal review",
+                    status: "pending",
+                    assigned_to: null,
+                    approver_name: null,
+                    approver_email: "legal@example.com",
+                    due_date: null,
+                    decided_at: null,
+                  },
+                ],
+              },
+            ],
+            summary: {
+              has_required_policies: false,
+              has_active_workflows: true,
+              has_rejected_workflows: false,
+              has_completed_workflows: false,
+              all_required_policy_workflows_completed: true,
+              ready_for_signature: null,
+              blocking_reason: "active_approval_workflows",
+              blocking_reason_text:
+                "An approval workflow is still active and waiting on a decision.",
+            },
+          }),
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-current-step"),
+    ).toHaveTextContent("1. Legal review");
+    expect(
+      screen.getByTestId("request-approval-workflow-status"),
+    ).toHaveTextContent("active");
+    expect(
+      screen.getByTestId("request-approval-badge-pending"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a ready-for-signature badge when the gate allows", async () => {
+    const linked = { ...SAMPLE_REQUEST, linked_contract_id: "contract-1" };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(
+          approvalStatus({
+            linked_contract_id: "contract-1",
+            workflow_runs: [
+              {
+                id: "wf-2",
+                name: "Approved",
+                status: "completed",
+                current_step_order: 1,
+                started_at: "2026-05-08T16:00:00Z",
+                completed_at: "2026-05-09T08:00:00Z",
+                source_approval_policy_id: null,
+                source_approval_policy_name: null,
+                steps: [],
+              },
+            ],
+            summary: {
+              has_required_policies: false,
+              has_active_workflows: false,
+              has_rejected_workflows: false,
+              has_completed_workflows: true,
+              all_required_policy_workflows_completed: true,
+              ready_for_signature: true,
+              blocking_reason: null,
+              blocking_reason_text: null,
+            },
+          }),
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([linked]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-badge-ready"),
+    ).toBeInTheDocument();
+    const link = screen.getByTestId("request-approval-contract-link");
+    expect(link).toHaveAttribute("href", "/demo/contracts/contract-1");
+  });
+
+  it("renders a rejected/blocked badge with the gate reason text", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(
+          approvalStatus({
+            workflow_runs: [
+              {
+                id: "wf-3",
+                name: "Legal",
+                status: "rejected",
+                current_step_order: 1,
+                started_at: "2026-05-08T16:00:00Z",
+                completed_at: "2026-05-08T17:00:00Z",
+                source_approval_policy_id: null,
+                source_approval_policy_name: null,
+                steps: [],
+              },
+            ],
+            summary: {
+              has_required_policies: false,
+              has_active_workflows: false,
+              has_rejected_workflows: true,
+              has_completed_workflows: false,
+              all_required_policy_workflows_completed: true,
+              ready_for_signature: null,
+              blocking_reason: "rejected_approval_workflows",
+              blocking_reason_text:
+                "An approval workflow was rejected; resolve or restart before sending.",
+            },
+          }),
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-badge-rejected"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("request-approval-blocking-reason"),
+    ).toHaveTextContent(/rejected/i);
+  });
+
+  it("shows a no-approval-required state when nothing applies", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(approvalStatus());
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-badge-none"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("request-approval-none"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a safe error state when the approval-status fetch fails", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse({ detail: "boom" }, 500);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+
+    expect(
+      await screen.findByTestId("request-approval-status-error"),
+    ).toHaveTextContent(/boom|server failed/i);
+  });
+
+  it("does not render storage internals when approval status renders", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(
+          approvalStatus({
+            matching_policies: [APPROVAL_POLICY],
+            matching_policy_ids: [APPROVAL_POLICY.id],
+            workflow_runs: [
+              {
+                id: "wf-1",
+                name: "Workflow",
+                status: "active",
+                current_step_order: 1,
+                started_at: "2026-05-08T16:00:00Z",
+                completed_at: null,
+                source_approval_policy_id: APPROVAL_POLICY.id,
+                source_approval_policy_name: APPROVAL_POLICY.name,
+                steps: [
+                  {
+                    id: "step-1",
+                    step_order: 1,
+                    title: "Legal review",
+                    status: "pending",
+                    assigned_to: null,
+                    approver_name: null,
+                    approver_email: "legal@example.com",
+                    due_date: null,
+                    decided_at: null,
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.click(screen.getByTestId("request-approval-toggle"));
+    await screen.findByTestId("request-approval-status");
+
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
+    expect(document.body.textContent ?? "").not.toContain("s3_key");
+  });
+
   it("surfaces a backend error in the convert form", async () => {
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
       if (url.includes("/api/agreement-templates/") && url.includes("/variables")) {

@@ -27,10 +27,17 @@ from app.api import contracts as contracts_api
 from app.core.database import Base, get_db
 from app.main import app
 from app.models import (
+    AgreementTemplate,
+    ApprovalPolicy,
+    ApprovalStep,
+    ApprovalWorkflowRun,
+    ApprovalWorkflowTemplate,
+    ApprovalWorkflowTemplateStep,
     Clause,
     Contract,
     ContractArtifact,
     ContractMarkdownSnapshot,
+    ContractRequest,
     ContractStatus,
     ExtractedField,
     Organization,
@@ -87,6 +94,10 @@ def postgres_container() -> Iterator[Any | None]:
 async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
     if postgres_container is None:
         engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+        # Approval-gate tables are required because PR #52 added a
+        # gate check that looks up linked requests and policy-derived
+        # workflows on every send. The send endpoint runs the gate
+        # before any DocuSeal call.
         tables = [
             Organization.__table__,
             User.__table__,
@@ -96,6 +107,13 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             Clause.__table__,
             ContractMarkdownSnapshot.__table__,
             ContractArtifact.__table__,
+            AgreementTemplate.__table__,
+            ContractRequest.__table__,
+            ApprovalWorkflowTemplate.__table__,
+            ApprovalWorkflowTemplateStep.__table__,
+            ApprovalWorkflowRun.__table__,
+            ApprovalStep.__table__,
+            ApprovalPolicy.__table__,
         ]
     else:
         engine = create_async_engine(

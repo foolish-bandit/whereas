@@ -27,6 +27,11 @@ from app.core.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AgreementTemplate,
+    ApprovalPolicy,
+    ApprovalStep,
+    ApprovalWorkflowRun,
+    ApprovalWorkflowTemplate,
+    ApprovalWorkflowTemplateStep,
     Contract,
     ContractRequest,
     ContractRequestStatus,
@@ -83,6 +88,10 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
         # Whitelisted tables for SQLite — the requests/inbox surface
         # only needs orgs, users, contracts, agreement templates,
         # the new request + inbox tables, and the audit table.
+        # ApprovalPolicy + workflow tables are required because the
+        # request create/update paths call ``apply_approval_policies_to_request``
+        # (PR #53), which needs ``approval_policies`` to exist even when
+        # no policies match.
         tables = [
             Organization.__table__,
             User.__table__,
@@ -91,6 +100,11 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             AgreementTemplate.__table__,
             ContractRequest.__table__,
             InboxItem.__table__,
+            ApprovalWorkflowTemplate.__table__,
+            ApprovalWorkflowTemplateStep.__table__,
+            ApprovalWorkflowRun.__table__,
+            ApprovalStep.__table__,
+            ApprovalPolicy.__table__,
         ]
     else:
         engine = create_async_engine(

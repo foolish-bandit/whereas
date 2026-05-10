@@ -54,6 +54,7 @@ import type {
   ConvertRequestToContractResponse,
   ListContractRequestFilters,
 } from "../types/requests";
+import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
 import type { DashboardSummary } from "../types/dashboard";
 import type {
   InboxItem,
@@ -1219,6 +1220,25 @@ export async function convertRequestToContract(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Read-only approval visibility for a request: matching policies,
+ * attached workflow runs, and a summary aligned with the DocuSeal send
+ * gate. The response is server-derived; this helper does not derive
+ * additional state on the client.
+ */
+export async function getRequestApprovalStatus(
+  id: string,
+  options: ApiOptions = {},
+): Promise<RequestApprovalStatus> {
+  if (isDemoMode()) return mockApi.getRequestApprovalStatus(id, options);
+  const data = await call<RequestApprovalStatus>(
+    `/api/requests/${encodeURIComponent(id)}/approval-status`,
+    { method: "GET" },
     options,
   );
   return scrubSecrets(data);
