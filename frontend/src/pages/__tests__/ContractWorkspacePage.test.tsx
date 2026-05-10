@@ -463,6 +463,64 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
   });
 
+  it("renders the gate remediation block alongside the blocked panel", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: false,
+          code: "active_approval_workflows",
+          request_id: "req-blocked",
+          blocking_workflow_ids: ["wf-blocked"],
+          completed_workflow_ids: [],
+          active_count: 1,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+        });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("docuseal-gate-blocked");
+    const remediation = screen.getByTestId("docuseal-gate-remediation");
+    expect(remediation).toHaveTextContent(/how to unblock/i);
+    expect(remediation).toHaveTextContent(
+      /complete the active approval workflow before sending/i,
+    );
+    expect(screen.getByTestId("remediation-request-link")).toHaveAttribute(
+      "href",
+      "/demo/requests",
+    );
+    expect(screen.getByTestId("remediation-approvals-link")).toHaveAttribute(
+      "href",
+      "/demo/approvals",
+    );
+    expect(screen.getByTestId("remediation-blocking-workflows")).toHaveTextContent(
+      "wf-blocked",
+    );
+  });
+
+  it("does not render remediation links when the gate fetch fails", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) return jsonResponse({ detail: "gate unavailable" }, 500);
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("docuseal-gate-error");
+    expect(
+      screen.queryByTestId("docuseal-gate-remediation"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("docuseal-gate-blocked"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows safe gate error state when approval-gate fetch fails", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);

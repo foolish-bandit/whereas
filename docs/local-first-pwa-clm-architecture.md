@@ -705,6 +705,8 @@ PR #53 adds a backend-only **approval policies** layer: `ApprovalPolicy` rows at
 
 PR #59 makes the **DocuSeal send-gate response self-describing**. `GET /api/contracts/{id}/approval-gate` and the 409 body of `POST /.../send-to-docuseal` now include `required_policies` and `missing_policies`: compact `ApprovalGatePolicySummary` projections (`id`, `name`, `workflow_template_id`, `auto_attach`, `applies_to_generated_contracts`, `request_type`, `contract_type`, `priority`, `agreement_template_id`) sorted deterministically by name. The legacy `required_policy_ids` / `missing_policy_ids` arrays remain on the response for back-compat and are aligned element-by-element with the named summaries. The frontend `SendToDocusealPanel` renders policy names directly, falling back to ids only if the named summaries are absent (e.g. an older mock). The summary is a strict allowlist with `extra="forbid"` — `description`, `metadata_json`, `created_by`, `created_at`, `status`, and storage / artifact fields cannot leak through. Gate allow/block semantics are unchanged.
 
+PR #60 adds **gate remediation links** on top of PR #59: a frontend-only `ApprovalGateRemediation` component renders a "How to unblock" section beneath the blocked Send-to-DocuSeal panel. It maps each gate `code` to actionable copy and safe links into existing list pages — `active_approval_workflows` / `rejected_approval_workflows` link to the linked request's approval status (`/demo/requests`) and the Approvals page (`/demo/approvals`) and surface `blocking_workflow_ids` inline; `required_approval_policy_unmet` links to the Approval Policies page (`/demo/approval-policies`) and shows missing policy names (falling back to `missing_policy_ids` when names are absent); `cancelled_without_completed_approval` links to the request approvals and the Approvals page so a fresh workflow can be started. There are no new backend fields, no new routes, and no detail-level deep-links — the list pages are the destination for this PR. The gate fetch failure path is unchanged (the safe error state preempts remediation rendering, so users never see remediation copy backed by stale data). UX/explainability only: gate allow/block semantics, approval policy matching, approval state transitions, and DocuSeal send behavior are unchanged.
+
 ---
 
 ## 11. Recommended Next PR: Signer-event mirror, or richer gate remediation links
@@ -724,12 +726,14 @@ Suggested minimum scope:
 
 ### 11b. Richer gate remediation links
 
-**Goal:** PR #59 lets the gate name the missing policy ("Standard Legal Review") but doesn't deep-link the user to the screens where they would either start or override the workflow. A small follow-up could add per-summary `remediation` hints (e.g. an `approval_workflow_template_url` and an `approval_policy_url`) so the panel can surface a "Start Legal Review" action without inventing routes in the frontend.
+**Goal (mostly done in PR #60):** PR #60 mapped each gate `code` to actionable copy and links into the Requests, Approvals, and Approval Policies list pages, surfacing missing policy names and blocking workflow ids inline. The remaining loose threads are *detail-level* deep-linking and richer per-summary URL hints from the backend.
 
-Suggested minimum scope:
+Suggested follow-up scope (post-PR #60):
 
-- Extend `ApprovalGatePolicySummary` with two optional URL strings (or relative paths) that the backend renders deterministically from the existing `workflow_template_id` / `policy.id`.
-- Frontend renders them as inline links from the missing-policy list. No new backend models; no new state.
+- Extend `ApprovalGatePolicySummary` with two optional URL strings (or relative paths) that the backend renders deterministically from the existing `workflow_template_id` / `policy.id` so the frontend can deep-link without inventing routes.
+- Add detail routing on the Requests / Approvals / Approval Policies pages (currently list-only) so the remediation links can target a specific row.
+- Promote the inline copy into a remediation checklist UI as the surface grows.
+- Track override usage with RBAC-aware controls when RBAC lands.
 
 ### 11c. Out of scope for whichever PR is picked
 
@@ -950,7 +954,7 @@ The cross-cutting rules in section 8 still apply; restated for the approval surf
 
 Tracked, intentionally not implemented after PR #58:
 
-- **Richer gate remediation links.** PR #59 lets the gate name the missing policy in `missing_policies[*].name`, but the UI still doesn't deep-link to the workflow-template or policy screens where the user would actually act on the block. Optional `approval_workflow_template_url` / `approval_policy_url` fields on the summary are tracked as future work.
+- **Deeper gate remediation links.** PR #60 added the "How to unblock" remediation section to the Send-to-DocuSeal panel: it maps each gate `code` to actionable copy and links into the Requests, Approvals, and Approval Policies *list* pages, surfacing missing policy names and blocking workflow ids inline. What remains is detail-level deep-linking (link directly to a specific request row, a specific approval workflow run, and a specific policy detail page rather than the list), an explicit remediation checklist UI, RBAC-aware override controls, and notifications / calendar reminders. Optional `approval_workflow_template_url` / `approval_policy_url` fields on `ApprovalGatePolicySummary` are still on the table as a backend follow-up.
 - **Approval timeline backfill.** PR #58 starts recording approval audit events going forward. Workflow runs that existed before PR #58 do not have audit rows and will not appear on the timeline; a backfill pass is tracked as future work.
 - **Richer timeline filters / export.** Today the timeline is a flat list with a server-side cap (default 25, max 100). Filters by event type, actor, date range, plus an exportable audit trail are tracked as future work.
 - **Actor display names.** Audit rows carry `actor_user_id`; the timeline renders the id but not the human name. Joining users in the timeline projection is future work.

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import ActivityTimeline from "../components/ActivityTimeline";
+import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import ErrorState from "../components/ErrorState";
@@ -736,6 +737,7 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
               ) : (
                 <p>Reason: {gate.code}. Active: {gate.active_count}, Rejected: {gate.rejected_count}, Cancelled: {gate.cancelled_count}, Completed: {gate.completed_count}</p>
               )}
+              <ApprovalGateRemediation gate={gate} />
               <label className="mt-2 flex items-center gap-2">
                 <input type="checkbox" checked={approvalOverride} onChange={(e) => setApprovalOverride(e.target.checked)} />
                 Override approval gate
