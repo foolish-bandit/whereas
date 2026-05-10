@@ -667,6 +667,151 @@ async def test_response_has_no_storage_internals(
         assert forbidden not in text
 
 
+async def test_manual_completed_workflow_does_not_satisfy_required_policy(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A completed workflow without a ``source_approval_policy_id`` in
+    metadata must NOT satisfy a required policy. This pins the gate
+    invariant on the visibility surface: only policy-derived completed
+    runs count toward required coverage.
+    """
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+    policy = await _create_policy(db_session, org_id=user_org.org.id)
+    contract = await _create_contract(
+        db_session, org_id=user_org.org.id, uploaded_by=user_org.user.id
+    )
+    # Manual completed workflow attached to the same request — no
+    # ``source_approval_policy_id`` on its metadata.
+    request, _, _ = await _create_request_with_workflow(
+        db_session,
+        org_id=user_org.org.id,
+        request_kwargs={"linked_contract_id": contract.id},
+        workflow_status=ApprovalWorkflowRunStatus.COMPLETED.value,
+        # Deliberately no ``source_policy=policy``: this is an ad-hoc
+        # workflow, not a policy-derived one.
+    )
+    await db_session.commit()
+    # Reference the policy variable so the linter knows it's used; the
+    # test exists to assert the policy stays unmet.
+    assert policy.id is not None
+
+    response = await client.get(
+        f"/api/requests/{request.id}/approval-status", headers=headers
+    )
+    body = response.json()
+    assert response.status_code == 200
+    # The manual completed workflow must NOT satisfy the required
+    # policy: visibility says unmet, gate says blocked.
+    assert body["summary"]["all_required_policy_workflows_completed"] is False
+    assert body["summary"]["ready_for_signature"] is False
+    assert body["summary"]["blocking_reason"] == "required_approval_policy_unmet"
+
+
+async def test_auto_attach_false_policy_still_appears_in_matching_policies(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """``auto_attach=False`` is enforced at apply-time, not match-time —
+    so a manual-attach policy still surfaces in ``matching_policies``
+    (consistent with the gate's matching call). The user can then attach
+    a workflow manually if they want.
+    """
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+    policy = await _create_policy(
+        db_session, org_id=user_org.org.id, auto_attach=False
+    )
+    request = ContractRequest(
+        organization_id=user_org.org.id,
+        title="NDA with Acme",
+        request_type="new_contract",
+        contract_type="NDA",
+        priority="high",
+    )
+    db_session.add(request)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/requests/{request.id}/approval-status", headers=headers
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["matching_policy_ids"] == [str(policy.id)]
+    assert body["matching_policies"][0]["auto_attach"] is False
+
+
+async def test_unrelated_workflow_does_not_appear_on_other_request(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A workflow attached to one request must not leak into another
+    request's visibility surface. ``_workflow_links_request`` filters
+    by ``request_id`` (and optionally ``contract_id``); two unrelated
+    requests must never see each other's workflows.
+    """
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+
+    # Request A has a workflow.
+    request_a, _, _ = await _create_request_with_workflow(
+        db_session, org_id=user_org.org.id
+    )
+    # Request B has no workflows of its own.
+    request_b = ContractRequest(
+        organization_id=user_org.org.id,
+        title="B",
+        request_type="other",
+    )
+    db_session.add(request_b)
+    await db_session.commit()
+    request_b_id = str(request_b.id)
+
+    response = await client.get(
+        f"/api/requests/{request_b_id}/approval-status", headers=headers
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["workflow_runs"] == []
+    # And cross-check: A's view still has its own.
+    a_id = str(request_a.id)
+    response_a = await client.get(
+        f"/api/requests/{a_id}/approval-status", headers=headers
+    )
+    assert len(response_a.json()["workflow_runs"]) == 1
+
+
+async def test_archived_policy_does_not_appear_in_matching_policies(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The matching service filters ``status == active``; archiving a
+    policy must immediately drop it from the visibility surface.
+    """
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+    policy = await _create_policy(db_session, org_id=user_org.org.id)
+    # Archive the policy.
+    policy.status = "archived"
+    await db_session.commit()
+
+    request = ContractRequest(
+        organization_id=user_org.org.id,
+        title="Post-archive",
+        request_type="new_contract",
+        contract_type="NDA",
+        priority="high",
+    )
+    db_session.add(request)
+    await db_session.commit()
+    request_id = str(request.id)
+
+    response = await client.get(
+        f"/api/requests/{request_id}/approval-status", headers=headers
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["matching_policies"] == []
+    assert body["matching_policy_ids"] == []
+
+
 async def test_steps_are_sorted_by_step_order_then_id(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
