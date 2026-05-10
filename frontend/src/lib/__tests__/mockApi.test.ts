@@ -17,6 +17,7 @@ import {
   downloadContract,
   generateAgreementFromTemplate,
   getContract,
+  getContractApprovalGate,
   getContractClauses,
   getContracts,
   getDashboardSummary,
@@ -525,6 +526,34 @@ describe("mockApi", () => {
         name: "NDA Legal Review policy",
         workflow_template_id: "wftpl-legal-review",
       })).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
+  describe("getContractApprovalGate (PR #59)", () => {
+    it("includes named required/missing policy summaries on the policy-blocked demo", async () => {
+      const gate = await getContractApprovalGate("contract-policy-blocked");
+      expect(gate.allowed).toBe(false);
+      expect(gate.code).toBe("required_approval_policy_unmet");
+      expect(gate.required_policies).toBeDefined();
+      expect(gate.missing_policies).toBeDefined();
+      expect(gate.missing_policies?.[0]?.name).toBe("Standard Legal Review");
+      // Back-compat id fields stay present and aligned with the named lists.
+      expect(gate.required_policy_ids).toEqual(
+        gate.required_policies?.map((p) => p.id),
+      );
+      expect(gate.missing_policy_ids).toEqual(
+        gate.missing_policies?.map((p) => p.id),
+      );
+    });
+
+    it("returns empty summary lists when the gate allows", async () => {
+      const gate = await getContractApprovalGate("contract-clean");
+      expect(gate.allowed).toBe(true);
+      expect(gate.required_policies).toEqual([]);
+      expect(gate.missing_policies).toEqual([]);
+      // Back-compat id fields are still present so older clients keep working.
+      expect(gate.required_policy_ids).toEqual([]);
+      expect(gate.missing_policy_ids).toEqual([]);
     });
   });
 
