@@ -133,9 +133,78 @@ class DashboardRecentActivity(BaseModel):
     recent_signed_contracts: list[DashboardContractSummary] = Field(default_factory=list)
 
 
+class DashboardApprovalAssigneeBucket(BaseModel):
+    """Per-assignee bucket of pending approval steps.
+
+    PII posture: ``assigned_to`` is the existing ``users.id`` UUID
+    already exposed elsewhere in the app — the dashboard does not join
+    against ``users`` to surface email or display name. ``approver_email``
+    is intentionally not included on this surface.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    assigned_to: uuid.UUID | None = None
+    count: int
+    overdue_count: int
+
+
+class DashboardOldestPendingStep(BaseModel):
+    """Compact projection of the oldest still-pending approval steps.
+
+    Carries the workflow's ``request_id`` / ``contract_id`` so the
+    frontend can deep-link into the existing Requests / Approvals pages
+    (PR #61). ``approver_email`` is deliberately omitted to avoid
+    surfacing approver PII on the dashboard surface.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    workflow_run_id: uuid.UUID
+    title: str
+    step_order: int
+    assigned_to: uuid.UUID | None = None
+    approver_name: str | None = None
+    due_date: date | None = None
+    created_at: datetime
+    request_id: uuid.UUID | None = None
+    contract_id: uuid.UUID | None = None
+
+
+class DashboardApprovalAnalytics(BaseModel):
+    """Lightweight approval analytics block on the dashboard summary.
+
+    Reporting / explainability only — these are aggregate views over
+    ``approval_workflow_runs`` and ``approval_steps`` rows that already
+    drive the rest of the approval surface. The block does not change
+    workflow state, the DocuSeal gate, or approval-policy matching.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pending_steps: int = 0
+    overdue_steps: int = 0
+    active_workflows: int = 0
+    completed_workflows: int = 0
+    rejected_workflows: int = 0
+    cancelled_workflows: int = 0
+    workflows_completed_last_30_days: int = 0
+    workflows_rejected_last_30_days: int = 0
+    pending_by_assignee: list[DashboardApprovalAssigneeBucket] = Field(
+        default_factory=list
+    )
+    oldest_pending_steps: list[DashboardOldestPendingStep] = Field(
+        default_factory=list
+    )
+
+
 class DashboardSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     counts: DashboardCounts
     upcoming: DashboardUpcoming
     recent_activity: DashboardRecentActivity
+    approval_analytics: DashboardApprovalAnalytics = Field(
+        default_factory=DashboardApprovalAnalytics
+    )
