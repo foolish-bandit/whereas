@@ -20,6 +20,12 @@ env/
 *.swp
 .DS_Store
 
+# Node (frontend has its own .gitignore for its node_modules; this
+# catches stray top-level caches that some toolchains create when
+# invoked from the repo root by accident — e.g. `node_modules/.vite`
+# from a vitest run launched outside `frontend/`.)
+node_modules/
+
 # Environment files (secrets)
 .env
 .env.local
