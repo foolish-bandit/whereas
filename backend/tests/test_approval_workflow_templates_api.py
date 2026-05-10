@@ -332,6 +332,30 @@ async def test_create_template_rejects_duplicate_name(
     assert duplicate.status_code == 409
 
 
+async def test_duplicate_template_name_in_different_org_is_allowed(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Name uniqueness scope is per-org, not global."""
+    org_a = await _create_user_org(db_session, email="a@example.com")
+    org_b = await _create_user_org(db_session, email="b@example.com")
+    headers_a = _headers(org_a.user)
+    headers_b = _headers(org_b.user)
+
+    a = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers_a,
+        json=_basic_payload("Shared Name"),
+    )
+    assert a.status_code == 201
+    b = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers_b,
+        json=_basic_payload("Shared Name"),
+    )
+    assert b.status_code == 201
+    assert a.json()["id"] != b.json()["id"]
+
+
 async def test_list_excludes_archived_by_default(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -512,6 +536,35 @@ async def test_patch_template_step_updates_fields(
     assert patched.status_code == 200
     assert patched.json()["title"] == "Refreshed legal review"
     assert patched.json()["due_in_days"] == 1
+
+
+async def test_cannot_delete_last_remaining_template_step(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A template with zero steps is not instantiable; block last-step delete."""
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+    create = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers,
+        json={
+            "name": "Single-step",
+            "steps": [{"step_order": 1, "title": "Only step"}],
+        },
+    )
+    template_id = create.json()["id"]
+    only_step_id = create.json()["steps"][0]["id"]
+
+    blocked = await client.delete(
+        f"/api/approval-workflow-templates/{template_id}/steps/{only_step_id}",
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    # The step must still be present after the failed delete.
+    detail = await client.get(
+        f"/api/approval-workflow-templates/{template_id}", headers=headers
+    )
+    assert len(detail.json()["steps"]) == 1
 
 
 async def test_delete_template_step_normalizes_remaining_orders(

@@ -342,12 +342,31 @@ async def delete_template_step(
     Renumbering keeps the template's ``step_order`` values dense, which
     matches how ``ApprovalStep.step_order`` is used at instantiation time
     (``current_step_order = first_step.step_order``).
+
+    Refuses (409) to delete the only remaining step: a zero-step
+    template is not instantiable, and ``create_workflow_template``
+    requires at least one step. Blocking this here keeps the invariant
+    ``len(steps) >= 1`` true for the lifetime of the template, so a
+    pre-existing template can't silently rot into an unusable state via
+    repeated deletes.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
     template = await _get_template_for_org(
         session, template_id, user.organization_id
     )
     step = await _get_template_step(session, template.id, step_id)
+
+    existing = await _load_template_steps(session, template.id)
+    if len(existing) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete the last remaining step; a template must "
+                "have at least one step. Add another step first, or "
+                "archive the template."
+            ),
+        )
+
     await session.delete(step)
     await session.flush()
 
@@ -537,10 +556,17 @@ async def _load_template_response(
 async def _load_template_steps(
     session: AsyncSession, template_id: uuid.UUID
 ) -> list[ApprovalWorkflowTemplateStep]:
+    # Ordered by step_order; id is a deterministic tie-break that only
+    # matters mid-update (the (workflow_template_id, step_order) unique
+    # constraint guarantees no permanent ties), but using it makes the
+    # transient state during a renumber observable in a stable order.
     stmt = (
         select(ApprovalWorkflowTemplateStep)
         .where(ApprovalWorkflowTemplateStep.workflow_template_id == template_id)
-        .order_by(ApprovalWorkflowTemplateStep.step_order.asc())
+        .order_by(
+            ApprovalWorkflowTemplateStep.step_order.asc(),
+            ApprovalWorkflowTemplateStep.id.asc(),
+        )
     )
     return list((await session.execute(stmt)).scalars().all())
 

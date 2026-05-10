@@ -1347,7 +1347,12 @@ class ApprovalWorkflowTemplate(Base):
     steps: Mapped[list[ApprovalWorkflowTemplateStep]] = relationship(
         back_populates="template",
         cascade="all, delete-orphan",
-        order_by="ApprovalWorkflowTemplateStep.step_order",
+        # Sort key matches ``_load_template_steps``: deterministic even
+        # while a renumber transaction is mid-flight.
+        order_by=(
+            "ApprovalWorkflowTemplateStep.step_order, "
+            "ApprovalWorkflowTemplateStep.id"
+        ),
     )
 
     __table_args__ = (
