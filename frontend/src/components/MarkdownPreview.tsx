@@ -60,7 +60,7 @@ export default function MarkdownPreview({
         }
         setState({
           kind: "error",
-          message: "Could not load the markdown preview.",
+          message: "Could not load the text preview.",
         });
       });
     return () => controller.abort();

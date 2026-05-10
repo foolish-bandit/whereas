@@ -162,4 +162,81 @@ describe("App routing — UI consolidation pass", () => {
       screen.getByTestId("requests-card-manage-templates"),
     ).toHaveAttribute("href", "/demo/requests/templates");
   });
+
+  it("still serves the legacy /demo/agreement-templates route", async () => {
+    renderAt("/demo/agreement-templates");
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("agreement-templates-page"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("still serves the legacy /demo/inbox route", async () => {
+    renderAt("/demo/inbox");
+    await waitFor(() =>
+      expect(screen.getByTestId("inbox-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders the new /demo/approvals/workflows route", async () => {
+    renderAt("/demo/approvals/workflows");
+    await waitFor(() =>
+      expect(screen.getByTestId("approvals-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders the new /demo/approvals/templates route", async () => {
+    renderAt("/demo/approvals/templates");
+    await waitFor(() =>
+      expect(screen.getByTestId("approval-templates-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders the new /demo/approvals/policies route", async () => {
+    renderAt("/demo/approvals/policies");
+    await waitFor(() =>
+      expect(screen.getByTestId("approval-policies-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders the new /demo/approvals/tasks route (Inbox)", async () => {
+    renderAt("/demo/approvals/tasks");
+    await waitFor(() =>
+      expect(screen.getByTestId("inbox-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("preserves workflow_id when forwarding /approvals to /approvals/workflows", async () => {
+    renderAt("/demo/approvals?workflow_id=wf-deep");
+    await waitFor(() =>
+      expect(screen.getByTestId("approvals-page")).toBeInTheDocument(),
+    );
+    // The not-found notice is the most reliable observable that the query
+    // string survived the forward — the workflows page reads
+    // ?workflow_id= and renders this when the id isn't in the list.
+    expect(
+      await screen.findByTestId("approvals-deep-link-not-found"),
+    ).toHaveTextContent("wf-deep");
+  });
+
+  it("preserves request_id auto-expand on the legacy /requests?request_id route", async () => {
+    renderAt("/demo/requests?request_id=req-missing");
+    await waitFor(() =>
+      expect(screen.getByTestId("requests-page")).toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByTestId("requests-deep-link-not-found"),
+    ).toHaveTextContent("req-missing");
+  });
+
+  it("preserves policy_id deep link on /approval-policies", async () => {
+    renderAt("/demo/approval-policies?policy_id=apol-missing");
+    await waitFor(() =>
+      expect(screen.getByTestId("approval-policies-page")).toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByTestId("approval-policies-deep-link-not-found"),
+    ).toHaveTextContent("apol-missing");
+  });
 });

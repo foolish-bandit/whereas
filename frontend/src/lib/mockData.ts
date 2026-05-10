@@ -324,8 +324,8 @@ the laws of the **State of Delaware**.
 
 ---
 
-*This is a demo Markdown working snapshot. The original PDF remains
-the official legal artifact.*
+*This is a demo text preview. The original PDF remains the official
+source file.*
 `;
 
 export const MOCK_MARKDOWN_BY_CONTRACT_ID: Record<
