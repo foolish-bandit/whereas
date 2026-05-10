@@ -45,6 +45,10 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 _VALID_STATUSES = {s.value for s in InboxItemStatus}
+# PR #50 — approval inbox items are driven by the approval workflow
+# router. The generic inbox PATCH/DELETE endpoints refuse status /
+# linkage edits on these so the linked ``ApprovalStep`` cannot decouple.
+_APPROVAL_ITEM_TYPE = "approval"
 
 
 @router.post("", response_model=InboxItemResponse, status_code=201)
@@ -150,6 +154,31 @@ async def update_inbox_item(
     if "status" in data and data["status"] not in _VALID_STATUSES:
         raise HTTPException(status_code=422, detail="Invalid inbox item status.")
 
+    # Approval inbox items are owned by the approval workflow router —
+    # status / linkage transitions must go through approve/reject/cancel
+    # so the underlying ``ApprovalStep`` stays in lockstep with the
+    # work-queue surface. Edits to non-state fields (priority, due
+    # date, assignee, description) are still allowed; the approval
+    # step's ``PATCH .../steps/{id}`` endpoint mirrors title /
+    # assignee / due_date back onto the linked inbox item, but
+    # operators may also tweak presentation here without driving the
+    # workflow.
+    if (
+        item.item_type == _APPROVAL_ITEM_TYPE
+        and any(
+            k in data
+            for k in ("status", "request_id", "contract_id", "template_id", "item_type")
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Approval inbox items are driven by the approval workflow. "
+                "Use POST /api/approval-workflows/{id}/steps/{step_id}/approve "
+                "or /reject, or PATCH /api/approval-workflows/{id}/cancel."
+            ),
+        )
+
     new_links = {
         "request_id": data.get("request_id", item.request_id),
         "contract_id": data.get("contract_id", item.contract_id),
@@ -182,9 +211,22 @@ async def dismiss_inbox_item(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
 ) -> None:
-    """Soft delete: marks the inbox item as ``dismissed``."""
+    """Soft delete: marks the inbox item as ``dismissed``.
+
+    Approval items must go through the approval workflow router so the
+    underlying ``ApprovalStep`` doesn't decouple from its inbox row.
+    """
     user = await _current_dev_user(session, x_whereas_dev_user)
     item = await _get_item_for_org(session, item_id, user.organization_id)
+    if item.item_type == _APPROVAL_ITEM_TYPE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Approval inbox items cannot be dismissed directly. "
+                "Reject the step or cancel the workflow via "
+                "/api/approval-workflows."
+            ),
+        )
     item.status = InboxItemStatus.DISMISSED.value
     await session.flush()
 

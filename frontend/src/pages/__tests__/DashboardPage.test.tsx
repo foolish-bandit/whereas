@@ -18,6 +18,9 @@ const SAMPLE_SUMMARY = {
     contracts_sent_for_signature: 2,
     contracts_executed: 4,
     templates_active: 3,
+    active_approval_workflows: 2,
+    pending_approval_steps: 4,
+    overdue_approval_steps: 1,
   },
   upcoming: {
     requests_due_soon: [
@@ -142,6 +145,15 @@ describe("DashboardPage", () => {
     expect(
       within(counts).getByTestId("count-templates_active").textContent,
     ).toContain("3");
+    expect(
+      within(counts).getByTestId("count-active_approval_workflows").textContent,
+    ).toContain("2");
+    expect(
+      within(counts).getByTestId("count-pending_approval_steps").textContent,
+    ).toContain("4");
+    expect(
+      within(counts).getByTestId("count-overdue_approval_steps").textContent,
+    ).toContain("1");
   });
 
   it("renders upcoming requests and links to the requests page", async () => {

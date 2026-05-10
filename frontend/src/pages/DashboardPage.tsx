@@ -62,6 +62,21 @@ const COUNT_TILES: {
     label: "Active templates",
     hint: "Status active",
   },
+  {
+    key: "active_approval_workflows",
+    label: "Active approval workflows",
+    hint: "Workflows still moving through their steps",
+  },
+  {
+    key: "pending_approval_steps",
+    label: "Pending approval steps",
+    hint: "Steps on active workflows awaiting a decision",
+  },
+  {
+    key: "overdue_approval_steps",
+    label: "Overdue approval steps",
+    hint: "Pending steps past their due date",
+  },
 ];
 
 export default function DashboardPage() {

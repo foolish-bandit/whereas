@@ -35,19 +35,28 @@ describe("Sidebar", () => {
     const navs = screen.getAllByRole("link");
     const desktopOrder = navs
       .filter((el) =>
-        ["Dashboard", "Inbox", "Requests", "Contracts"].includes(
+        ["Dashboard", "Inbox", "Requests", "Approvals", "Contracts"].includes(
           el.textContent ?? "",
         ),
       )
       .map((el) => el.textContent);
-    // The first four CLM-surface entries should appear in this order
+    // The first five CLM-surface entries should appear in this order
     // (each appears twice: once in the desktop sidebar, once in the
     // mobile drawer).
-    expect(desktopOrder.slice(0, 4)).toEqual([
+    expect(desktopOrder.slice(0, 5)).toEqual([
       "Dashboard",
       "Inbox",
       "Requests",
+      "Approvals",
       "Contracts",
     ]);
+  });
+
+  it("includes an Approvals nav entry pointing to the demo approvals route", () => {
+    renderSidebar();
+    const approvalLinks = screen
+      .getAllByRole("link", { name: "Approvals" })
+      .filter((el) => el.getAttribute("href") === "/demo/approvals");
+    expect(approvalLinks.length).toBeGreaterThan(0);
   });
 });

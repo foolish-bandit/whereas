@@ -37,6 +37,10 @@ from app.api.contracts import DbSession, _current_dev_user
 from app.models import (
     AgreementTemplate,
     AgreementTemplateStatus,
+    ApprovalStep,
+    ApprovalStepStatus,
+    ApprovalWorkflowRun,
+    ApprovalWorkflowRunStatus,
     Contract,
     ContractArtifact,
     ContractRequest,
@@ -177,6 +181,42 @@ async def _build_counts(
         ),
     )
 
+    active_approval_workflows = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+        ),
+    )
+    pending_approval_steps = await _scalar_count(
+        session,
+        select(func.count(ApprovalStep.id))
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(
+            ApprovalStep.organization_id == org_id,
+            ApprovalStep.status == ApprovalStepStatus.PENDING.value,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+        ),
+    )
+    overdue_approval_steps = await _scalar_count(
+        session,
+        select(func.count(ApprovalStep.id))
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(
+            ApprovalStep.organization_id == org_id,
+            ApprovalStep.status == ApprovalStepStatus.PENDING.value,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+            ApprovalStep.due_date.is_not(None),
+            ApprovalStep.due_date < today,
+        ),
+    )
+
     return DashboardCounts(
         open_requests=open_requests,
         in_progress_requests=in_progress_requests,
@@ -187,6 +227,9 @@ async def _build_counts(
         contracts_sent_for_signature=contracts_sent,
         contracts_executed=contracts_executed,
         templates_active=templates_active,
+        active_approval_workflows=active_approval_workflows,
+        pending_approval_steps=pending_approval_steps,
+        overdue_approval_steps=overdue_approval_steps,
     )
 
 

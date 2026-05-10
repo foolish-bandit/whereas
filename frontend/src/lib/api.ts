@@ -60,6 +60,13 @@ import type {
   InboxItemUpdateRequest,
   ListInboxItemFilters,
 } from "../types/inboxItems";
+import type {
+  ApprovalStepDecisionRequest,
+  ApprovalWorkflowRun,
+  ApprovalWorkflowRunCreateRequest,
+  ApprovalWorkflowRunListItem,
+  ListApprovalWorkflowFilters,
+} from "../types/approvalWorkflows";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -1275,6 +1282,123 @@ export async function dismissInboxItem(
     { method: "DELETE", headers, signal: options.signal },
   );
   if (!res.ok) throw new ApiError(res.status, await readErrorMessage(res));
+}
+
+
+// ---------------------------------------------------------------------------
+// Approval workflows (PR #50 — narrow approval foundation)
+// ---------------------------------------------------------------------------
+
+function approvalWorkflowQuery(
+  filters: ListApprovalWorkflowFilters = {},
+): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.request_id) params.set("request_id", filters.request_id);
+  if (filters.contract_id) params.set("contract_id", filters.contract_id);
+  if (filters.include_terminal === false) {
+    params.set("include_terminal", "false");
+  }
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listApprovalWorkflows(
+  filters: ListApprovalWorkflowFilters = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRunListItem[]> {
+  if (isDemoMode()) return mockApi.listApprovalWorkflows(filters, options);
+  const data = await call<ApprovalWorkflowRunListItem[]>(
+    `/api/approval-workflows${approvalWorkflowQuery(filters)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getApprovalWorkflow(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  if (isDemoMode()) return mockApi.getApprovalWorkflow(id, options);
+  const data = await call<ApprovalWorkflowRun>(
+    `/api/approval-workflows/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createApprovalWorkflow(
+  payload: ApprovalWorkflowRunCreateRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  if (isDemoMode()) return mockApi.createApprovalWorkflow(payload, options);
+  const data = await call<ApprovalWorkflowRun>(
+    `/api/approval-workflows`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function approveApprovalStep(
+  workflowId: string,
+  stepId: string,
+  payload: ApprovalStepDecisionRequest = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  if (isDemoMode()) {
+    return mockApi.approveApprovalStep(workflowId, stepId, payload, options);
+  }
+  const data = await call<ApprovalWorkflowRun>(
+    `/api/approval-workflows/${encodeURIComponent(workflowId)}/steps/${encodeURIComponent(stepId)}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function rejectApprovalStep(
+  workflowId: string,
+  stepId: string,
+  payload: ApprovalStepDecisionRequest = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  if (isDemoMode()) {
+    return mockApi.rejectApprovalStep(workflowId, stepId, payload, options);
+  }
+  const data = await call<ApprovalWorkflowRun>(
+    `/api/approval-workflows/${encodeURIComponent(workflowId)}/steps/${encodeURIComponent(stepId)}/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function cancelApprovalWorkflow(
+  workflowId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  if (isDemoMode()) return mockApi.cancelApprovalWorkflow(workflowId, options);
+  const data = await call<ApprovalWorkflowRun>(
+    `/api/approval-workflows/${encodeURIComponent(workflowId)}/cancel`,
+    { method: "PATCH" },
+    options,
+  );
+  return scrubSecrets(data);
 }
 
 

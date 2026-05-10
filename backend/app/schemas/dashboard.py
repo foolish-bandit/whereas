@@ -32,6 +32,14 @@ class DashboardCounts(BaseModel):
     contracts_sent_for_signature: int
     contracts_executed: int
     templates_active: int
+    # PR #50 — narrow approval workflow surface. ``active_approval_workflows``
+    # counts runs in the ``active`` state, ``pending_approval_steps`` counts
+    # steps still waiting for a decision on those active runs, and
+    # ``overdue_approval_steps`` is the subset of pending steps whose
+    # ``due_date`` is in the past relative to ``today``.
+    active_approval_workflows: int = 0
+    pending_approval_steps: int = 0
+    overdue_approval_steps: int = 0
 
 
 class DashboardRequestSummary(BaseModel):

@@ -41,6 +41,8 @@ from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AgreementTemplate,
     AgreementTemplateStatus,
+    ApprovalStep,
+    ApprovalWorkflowRun,
     Contract,
     ContractArtifact,
     ContractRequest,
@@ -112,6 +114,8 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             AgreementTemplate.__table__,
             ContractRequest.__table__,
             InboxItem.__table__,
+            ApprovalWorkflowRun.__table__,
+            ApprovalStep.__table__,
         ]
     else:
         engine = create_async_engine(
@@ -376,6 +380,9 @@ async def test_summary_returns_zero_counts_for_empty_org(
         "contracts_sent_for_signature": 0,
         "contracts_executed": 0,
         "templates_active": 0,
+        "active_approval_workflows": 0,
+        "pending_approval_steps": 0,
+        "overdue_approval_steps": 0,
     }
     assert body["upcoming"]["requests_due_soon"] == []
     assert body["upcoming"]["inbox_items_due_soon"] == []
@@ -523,6 +530,95 @@ async def test_summary_counts_match_state(
     assert counts["contracts_sent_for_signature"] == 1
     assert counts["contracts_executed"] == 1
     assert counts["templates_active"] == 1
+    # No approval workflows exist in this test, so the PR #50 counts
+    # default to zero. The dedicated approval-counts test below covers
+    # the non-zero paths.
+    assert counts["active_approval_workflows"] == 0
+    assert counts["pending_approval_steps"] == 0
+    assert counts["overdue_approval_steps"] == 0
+
+
+async def test_summary_counts_include_approval_workflow_metrics(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Active workflows + pending/overdue steps surface on the dashboard."""
+    user_org = await _create_user_org(db_session)
+    today = _today()
+
+    # Two active workflows + their pending steps. One of those pending
+    # steps is overdue.
+    request_a = await _make_request(
+        db_session,
+        org_id=user_org.org.id,
+        created_by=user_org.user.id,
+        title="A",
+    )
+    request_b = await _make_request(
+        db_session,
+        org_id=user_org.org.id,
+        created_by=user_org.user.id,
+        title="B",
+    )
+    create_a = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user.id),
+        json={
+            "name": "A flow",
+            "request_id": str(request_a.id),
+            "steps": [
+                {
+                    "title": "Legal",
+                    "due_date": (today - timedelta(days=2)).isoformat(),
+                },
+                {"title": "Finance"},
+            ],
+        },
+    )
+    assert create_a.status_code == 201
+    create_b = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user.id),
+        json={
+            "name": "B flow",
+            "request_id": str(request_b.id),
+            "steps": [{"title": "Legal"}],
+        },
+    )
+    assert create_b.status_code == 201
+
+    # A third workflow that is already cancelled should not contribute to
+    # the active counts.
+    request_c = await _make_request(
+        db_session,
+        org_id=user_org.org.id,
+        created_by=user_org.user.id,
+        title="C",
+    )
+    create_c = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user.id),
+        json={
+            "name": "C flow",
+            "request_id": str(request_c.id),
+            "steps": [{"title": "Skipped"}],
+        },
+    )
+    cancel_c = await client.patch(
+        f"/api/approval-workflows/{create_c.json()['id']}/cancel",
+        headers=_headers(user_org.user.id),
+    )
+    assert cancel_c.status_code == 200
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    counts = response.json()["counts"]
+    assert counts["active_approval_workflows"] == 2
+    # Run A has 2 pending steps, run B has 1 pending step. Run C is
+    # cancelled so its skipped step does not count.
+    assert counts["pending_approval_steps"] == 3
+    # Only run A's first step has a past due_date.
+    assert counts["overdue_approval_steps"] == 1
 
 
 async def test_due_soon_window_is_two_weeks_inclusive(

@@ -1121,3 +1121,168 @@ class InboxItem(Base):
             "status",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Approval workflows (PR #50 — narrow approval foundation)
+#
+# An ``ApprovalWorkflowRun`` is a concrete approval process attached to a
+# ``ContractRequest`` and/or a ``Contract``. It carries an ordered list of
+# ``ApprovalStep`` rows; only one step is "current" at a time. The
+# pending step's approver finds it via an ``InboxItem`` linked through
+# ``ApprovalStep.inbox_item_id``.
+#
+# Deliberately narrow: no parallel approvals, no conditional branching,
+# no SLA reminders, no auto-send to DocuSeal. Everything is sequential
+# and explicit.
+# ---------------------------------------------------------------------------
+
+
+class ApprovalWorkflowRunStatus(StrEnum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+class ApprovalStepStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SKIPPED = "skipped"
+
+
+class ApprovalWorkflowRun(Base):
+    """A concrete approval process attached to a request and/or contract."""
+
+    __tablename__ = "approval_workflow_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=ApprovalWorkflowRunStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contract_requests.id"),
+        nullable=True,
+        index=True,
+    )
+    contract_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id"),
+        nullable=True,
+        index=True,
+    )
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agreement_templates.id"),
+        nullable=True,
+    )
+
+    current_step_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    steps: Mapped[list[ApprovalStep]] = relationship(
+        back_populates="workflow_run",
+        cascade="all, delete-orphan",
+        order_by="ApprovalStep.step_order",
+    )
+
+
+class ApprovalStep(Base):
+    """A single ordered step in an approval workflow run."""
+
+    __tablename__ = "approval_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_workflow_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    approver_name: Mapped[str | None] = mapped_column(String(255))
+    approver_email: Mapped[str | None] = mapped_column(String(255))
+    # ``assigned_to`` matches the existing ``inbox_items.assigned_to``
+    # shape — a UUID pointing at a real ``users.id`` row when known. The
+    # free-form ``approver_email`` is the off-platform fallback.
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=ApprovalStepStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+
+    decision_note: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    due_date: Mapped[date | None] = mapped_column(Date, index=True)
+
+    inbox_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inbox_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    workflow_run: Mapped[ApprovalWorkflowRun] = relationship(back_populates="steps")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_run_id", "step_order", name="uq_approval_steps_run_order"
+        ),
+        Index(
+            "ix_approval_steps_org_status_due",
+            "organization_id",
+            "status",
+            "due_date",
+        ),
+    )
