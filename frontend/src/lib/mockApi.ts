@@ -101,10 +101,12 @@ import type {
   CreateApprovalWorkflowFromTemplateResponse,
   ListApprovalWorkflowTemplateFilters,
 } from "../types/approvalWorkflowTemplates";
+import type { ApprovalPolicy, ApprovalPolicyCreateRequest, ApprovalPolicyPatchRequest, ListApprovalPolicyFilters } from "../types/approvalPolicies";
 import {
   MOCK_DEMO_ORG_ID,
   MOCK_INBOX_ITEMS,
   MOCK_REQUESTS,
+  MOCK_APPROVAL_POLICIES,
 } from "./mockData";
 
 interface ApiOptions {
@@ -723,6 +725,8 @@ export function __resetMockState(): void {
   demoSetupCompleted = false;
   sessionApprovalRuns.length = 0;
   sessionApprovalTemplates.length = 0;
+  sessionApprovalPolicies.length = 0;
+  sessionApprovalPolicies.push(...(MOCK_APPROVAL_POLICIES as ApprovalPolicy[]).map((p) => ({ ...p })));
 }
 
 const DEMO_CLAUSE_TEMPLATES: ClauseTemplate[] = [
@@ -2666,3 +2670,39 @@ function _cloneTemplate(
     steps: template.steps.map((s) => ({ ...s })),
   };
 }
+
+
+const sessionApprovalPolicies: ApprovalPolicy[] = (MOCK_APPROVAL_POLICIES as ApprovalPolicy[]).map((p) => ({ ...p }));
+
+export async function listApprovalPolicies(filters: ListApprovalPolicyFilters = {}, options: ApiOptions = {}): Promise<ApprovalPolicy[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return sessionApprovalPolicies.filter((p) => {
+    if (!filters.include_archived && p.status === "archived") return false;
+    if (filters.status && p.status !== filters.status) return false;
+    if (filters.request_type && p.request_type !== filters.request_type) return false;
+    if (filters.contract_type && p.contract_type !== filters.contract_type) return false;
+    if (filters.priority && p.priority !== filters.priority) return false;
+    if (filters.workflow_template_id && p.workflow_template_id !== filters.workflow_template_id) return false;
+    return true;
+  }).map((p) => ({ ...p }));
+}
+
+export async function getApprovalPolicy(id: string, options: ApiOptions = {}): Promise<ApprovalPolicy> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = sessionApprovalPolicies.find((p) => p.id === id);
+  if (!row) throw new ApiError(404, "Approval policy not found.");
+  return { ...row };
+}
+
+export async function createApprovalPolicy(payload: ApprovalPolicyCreateRequest, options: ApiOptions = {}): Promise<ApprovalPolicy> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (!payload.name?.trim()) throw new ApiError(422, "name is required.");
+  if (!payload.workflow_template_id?.trim()) throw new ApiError(422, "workflow_template_id is required.");
+  if (sessionApprovalPolicies.some((p) => p.status === "active" && p.name.toLowerCase() === payload.name.trim().toLowerCase())) throw new ApiError(409, "An active approval policy with that name already exists.");
+  const now = isoNow();
+  const row: ApprovalPolicy = { id: nextId('apol'), organization_id: MOCK_DEMO_ORG_ID, name: payload.name.trim(), description: payload.description ?? null, status: 'active', workflow_template_id: payload.workflow_template_id, request_type: payload.request_type?.trim() ? payload.request_type : null, contract_type: payload.contract_type?.trim() ? payload.contract_type : null, priority: payload.priority?.trim() ? payload.priority : null, agreement_template_id: payload.agreement_template_id?.trim() ? payload.agreement_template_id : null, auto_attach: payload.auto_attach ?? true, applies_to_generated_contracts: payload.applies_to_generated_contracts ?? true, created_at: now, updated_at: now, metadata_json: payload.metadata_json ?? null };
+  sessionApprovalPolicies.unshift(row);
+  return { ...row };
+}
+export async function updateApprovalPolicy(id: string, payload: ApprovalPolicyPatchRequest, options: ApiOptions = {}): Promise<ApprovalPolicy> { await delay(MOCK_LATENCY_MS, options.signal); const row = sessionApprovalPolicies.find((p) => p.id === id); if (!row) throw new ApiError(404, 'Approval policy not found.'); Object.assign(row, payload, { updated_at: isoNow() }); return { ...row }; }
+export async function archiveApprovalPolicy(id: string, options: ApiOptions = {}): Promise<ApprovalPolicy> { return updateApprovalPolicy(id, { status: 'archived' }, options); }

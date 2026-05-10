@@ -79,6 +79,12 @@ import type {
   CreateApprovalWorkflowFromTemplateResponse,
   ListApprovalWorkflowTemplateFilters,
 } from "../types/approvalWorkflowTemplates";
+import type {
+  ApprovalPolicy,
+  ApprovalPolicyCreateRequest,
+  ApprovalPolicyPatchRequest,
+  ListApprovalPolicyFilters,
+} from "../types/approvalPolicies";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -1641,5 +1647,64 @@ export async function getDashboardSummary(
     { method: "GET" },
     { signal: options.signal },
   );
+  return scrubSecrets(data);
+}
+
+
+function approvalPolicyQuery(filters: ListApprovalPolicyFilters = {}): string {
+  const params = new URLSearchParams();
+  if (filters.include_archived === true) params.set("include_archived", "true");
+  if (filters.status) params.set("status", filters.status);
+  if (filters.request_type) params.set("request_type", filters.request_type);
+  if (filters.contract_type) params.set("contract_type", filters.contract_type);
+  if (filters.priority) params.set("priority", filters.priority);
+  if (filters.workflow_template_id) params.set("workflow_template_id", filters.workflow_template_id);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listApprovalPolicies(
+  filters: ListApprovalPolicyFilters = {},
+  options: ApiOptions = {},
+): Promise<ApprovalPolicy[]> {
+  if (isDemoMode()) return mockApi.listApprovalPolicies(filters, options);
+  const data = await call<ApprovalPolicy[]>(`/api/approval-policies${approvalPolicyQuery(filters)}`, { method: "GET" }, options);
+  return scrubSecrets(data);
+}
+
+export async function getApprovalPolicy(
+  policyId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalPolicy> {
+  if (isDemoMode()) return mockApi.getApprovalPolicy(policyId, options);
+  const data = await call<ApprovalPolicy>(`/api/approval-policies/${encodeURIComponent(policyId)}`, { method: "GET" }, options);
+  return scrubSecrets(data);
+}
+
+export async function createApprovalPolicy(
+  payload: ApprovalPolicyCreateRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalPolicy> {
+  if (isDemoMode()) return mockApi.createApprovalPolicy(payload, options);
+  const data = await call<ApprovalPolicy>(`/api/approval-policies`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }, options);
+  return scrubSecrets(data);
+}
+
+export async function updateApprovalPolicy(
+  policyId: string,
+  payload: ApprovalPolicyPatchRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalPolicy> {
+  if (isDemoMode()) return mockApi.updateApprovalPolicy(policyId, payload, options);
+  const data = await call<ApprovalPolicy>(`/api/approval-policies/${encodeURIComponent(policyId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }, options);
+  return scrubSecrets(data);
+}
+
+export async function archiveApprovalPolicy(
+  policyId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalPolicy> {
+  if (isDemoMode()) return mockApi.archiveApprovalPolicy(policyId, options);
+  const data = await call<ApprovalPolicy>(`/api/approval-policies/${encodeURIComponent(policyId)}`, { method: "DELETE" }, options);
   return scrubSecrets(data);
 }

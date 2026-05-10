@@ -287,6 +287,24 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
   });
 
+
+  it("renders required approval policy unmet copy with missing IDs", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({ allowed: false, code: "required_approval_policy_unmet", request_id: "r1", blocking_workflow_ids: [], completed_workflow_ids: [], active_count: 0, rejected_count: 0, cancelled_count: 0, completed_count: 0, missing_policy_ids: ["apol-1", "apol-2"] });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    const blocked = await screen.findByTestId("docuseal-gate-blocked");
+    expect(blocked).toHaveTextContent("A required approval policy has not been satisfied.");
+    expect(blocked).toHaveTextContent("apol-1");
+    expect(blocked).toHaveTextContent("apol-2");
+  });
+
   it("shows safe gate error state when approval-gate fetch fails", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);

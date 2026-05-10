@@ -15,6 +15,7 @@ import RequestsPage from "./pages/RequestsPage";
 import InboxPage from "./pages/InboxPage";
 import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import ApprovalWorkflowTemplatesPage from "./pages/ApprovalWorkflowTemplatesPage";
+import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
 import LandingPage from "./pages/marketing/LandingPage";
 
 export default function App() {
@@ -56,6 +57,7 @@ function DemoApp() {
           path="approval-templates"
           element={<ApprovalWorkflowTemplatesPage />}
         />
+        <Route path="approval-policies" element={<ApprovalPoliciesPage />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </AppShell>
