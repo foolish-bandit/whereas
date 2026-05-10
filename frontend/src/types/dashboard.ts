@@ -21,6 +21,8 @@ export interface DashboardCounts {
   active_approval_workflows: number;
   pending_approval_steps: number;
   overdue_approval_steps: number;
+  /** PR #51 — reusable approval workflow blueprints. */
+  active_approval_workflow_templates: number;
 }
 
 export interface DashboardRequestSummary {

@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, and section 11 for the next PR.
 
 ---
 
@@ -125,6 +125,7 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - PR #48 closed the loop between intake and template generation: a request carrying a `linked_template_id` can now be converted to a draft `Contract` via `POST /api/requests/{request_id}/convert-to-contract`. The endpoint reuses the same `generate_docx_from_template()` service the agreement-templates surface uses, links the new contract back onto the request, marks the request `completed`, and resolves the open `request_review` inbox item — all in one transaction. Approval workflows, upload-file conversion, and a one-click convert-and-send remain future work.
 - PR #49 added a **dashboard analytics foundation**: a single read-only endpoint `GET /api/dashboard/summary` plus a Dashboard page. It returns counts (open / in-progress / urgent-or-high-priority requests; open / overdue inbox items; total / sent-for-signature / executed contracts; active templates), small lists of requests and inbox items due in the next 14 days, and the most recent contracts / requests / signed contracts. Org-scoped. No new tables, no caching layer, no charts — every query is a `COUNT(*)` or `ORDER BY ... LIMIT 5` over existing indexes. Compact projections (`Dashboard*Summary`) are explicit allowlists so storage internals can't accidentally end up on the surface.
 - PR #50 added a **narrow approval workflow foundation**: `ApprovalWorkflowRun` + `ApprovalStep` tables, a router at `/api/approval-workflows`, and a frontend page. Workflows attach to a request and/or contract; steps are sequential; the active step's assignee finds it via an `approval`-typed `InboxItem`. Approving advances to the next step (or completes the workflow); rejecting ends the workflow and skips remaining steps; cancelling dismisses open approval inbox items and skips pending steps. The dashboard now also reports `active_approval_workflows`, `pending_approval_steps`, and `overdue_approval_steps`. See section 7.z. No parallel approvals, no conditional logic, no auto-send to DocuSeal — those are explicitly out of scope.
+- PR #51 added **approval workflow templates**: `ApprovalWorkflowTemplate` + `ApprovalWorkflowTemplateStep` tables, a router at `/api/approval-workflow-templates`, and an `Approval Templates` page. Templates are reusable blueprints; instantiation copies their step definitions into concrete `ApprovalStep` rows on a new run, computes `due_date = today + due_in_days`, opens an `InboxItem` for the first step only, and reuses the same private helpers as the ad-hoc workflow create path. Editing a template after instantiation does not mutate in-flight runs. The dashboard reports `active_approval_workflow_templates`. See section 7.z.
 - Existing background concerns: extraction, clause segmentation, deviation findings, playbook review runs, audit log.
 
 ### Frontend
@@ -133,8 +134,8 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - PWA app shell with service worker / manifest. **No** API or sensitive-route runtime caching.
 - Markdown preview UI for contracts and templates.
 - Agreement Templates list + detail page with **Generate Agreement** and **Send to DocuSeal** controls.
-- **Requests**, **Inbox**, and **Approvals** (PR #50) pages, with sidebar entries for each.
-- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, signed-state surfaces, seed Requests + Inbox items, and the approval workflow flows (create, approve, reject, cancel) so UI tests can run end-to-end without a backend.
+- **Requests**, **Inbox**, **Approvals** (PR #50), and **Approval Templates** (PR #51) pages, with sidebar entries for each.
+- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, signed-state surfaces, seed Requests + Inbox items, the approval workflow flows (create, approve, reject, cancel), and the approval-template flows (create, archive, instantiate) — so UI tests can run end-to-end without a backend.
 - Defensive scrub of `storage_key`/`s3_key`/`wrapped_dek`/etc. on every API response.
 
 ---
@@ -594,7 +595,7 @@ All routes are org-scoped through the same dev-user header pattern (`X-Whereas-D
 ### Dashboard summary (PR #49)
 
 - `GET /api/dashboard/summary?limit=N` — read-only aggregate of CLM activity for the caller's org. ``limit`` defaults to 5 and is hard-capped at 20 by FastAPI's ``Query(le=20)``.
-- Counts: `open_requests`, `in_progress_requests`, `urgent_or_high_priority_requests` (open or in-progress, priority urgent or high), `open_inbox_items`, `overdue_inbox_items` (open + due_date < today), `contracts_total`, `contracts_sent_for_signature`, `contracts_executed`, `templates_active`. PR #50 adds `active_approval_workflows`, `pending_approval_steps` (pending steps on active workflows), and `overdue_approval_steps` (pending steps on active workflows whose `due_date` is in the past).
+- Counts: `open_requests`, `in_progress_requests`, `urgent_or_high_priority_requests` (open or in-progress, priority urgent or high), `open_inbox_items`, `overdue_inbox_items` (open + due_date < today), `contracts_total`, `contracts_sent_for_signature`, `contracts_executed`, `templates_active`. PR #50 adds `active_approval_workflows`, `pending_approval_steps` (pending steps on active workflows), and `overdue_approval_steps` (pending steps on active workflows whose `due_date` is in the past). PR #51 adds `active_approval_workflow_templates` (count of `ApprovalWorkflowTemplate` rows with `status == active`).
 - Upcoming lists: requests and inbox items with ``due_date`` in `[today, today + 14 days]` (inclusive). Requests filter to open/in_progress; inbox items filter to open. Cancelled requests and dismissed/completed inbox items never appear.
 - Recent activity: top-N contracts (by `created_at`), top-N requests (by `created_at`, cancelled excluded), top-N executed contracts (by `updated_at`).
 - Compact projections (`DashboardRequestSummary`, `DashboardInboxSummary`, `DashboardContractSummary`) — *not* the full detail responses. Contract summaries carry `has_generated_docx` / `has_signed_pdf` booleans assembled from a single `contract_artifacts` metadata-only lookup; storage / encryption columns and `full_text` are deliberately excluded.
@@ -617,7 +618,34 @@ Idempotency / 409 guards: approving or rejecting an already-decided step (or any
 
 Inbox guardrail: the generic `PATCH /api/inbox-items/{id}` (status / linkage edits) and `DELETE /api/inbox-items/{id}` endpoints return 409 when the row is an `item_type='approval'` row. The approval workflow router owns those rows; mutations have to flow through `/api/approval-workflows/.../approve|reject|cancel` so the linked `ApprovalStep` cannot decouple. Cosmetic edits (priority, description, manual due-date / assignee tweaks) on an approval inbox row are still allowed — the guardrail only blocks the transitions that would leave the workflow stuck.
 
-Out of scope by design: parallel approvals, conditional branching, workflow templates, SLA reminders, automatic DocuSeal send on completion, automatic request/contract status mutation. Future PRs land those on top.
+Out of scope by design: parallel approvals, conditional branching, SLA reminders, automatic DocuSeal send on completion, automatic request/contract status mutation. Future PRs land those on top.
+
+### Approval workflow templates (PR #51)
+
+A workflow template is a **reusable blueprint**, distinct from a concrete `ApprovalWorkflowRun`. Two new tables (`approval_workflow_templates`, `approval_workflow_template_steps`) hold the template + its ordered step definitions; a new router at `/api/approval-workflow-templates` exposes them.
+
+Naming caution: `AgreementTemplate` (a document blueprint, used to generate DOCX agreements) is a separate concept from `ApprovalWorkflowTemplate` (an approval blueprint). The instantiate request takes the AgreementTemplate id under `agreement_template_id` to keep the two from colliding on the wire.
+
+Lifecycle:
+
+- **Create** (`POST /api/approval-workflow-templates`) creates the template + its step rows. At least one step is required. Template name is unique per org.
+- **List** (`GET /api/approval-workflow-templates`) defaults to active templates; `?include_archived=true`, `?status=`, `?template_type=`, `?query=` are supported filters.
+- **Get** (`GET /api/approval-workflow-templates/{id}`) returns the template with its ordered step list.
+- **Patch** (`PATCH /api/approval-workflow-templates/{id}`) edits name / description / template_type / status / metadata.
+- **Archive** (`DELETE /api/approval-workflow-templates/{id}`) is a soft archive — `status = "archived"`. Existing runs that were instantiated from the template are not touched.
+- **Step CRUD** (`POST/PATCH/DELETE /api/approval-workflow-templates/{id}/steps[/{step_id}]`) appends, updates, or deletes step definitions. Delete renormalizes remaining `step_order` values to stay 1..n.
+- **Instantiate** (`POST /api/approval-workflow-templates/{id}/instantiate`) creates a concrete `ApprovalWorkflowRun` plus `ApprovalStep` rows from the template. Only the first step gets an `InboxItem` — exactly the same surface as an ad-hoc workflow create. Each concrete step's `due_date` is computed as `today + due_in_days` if the template step has a `due_in_days`, otherwise `null`. The new run carries `metadata_json.source_workflow_template_id` and `source_workflow_template_name` so a viewer can trace it back.
+
+Invariants pinned by tests:
+
+- Editing the template after instantiation does **not** mutate the in-flight run (steps are copies, not references). This is the entire reason templates are a separate type from runs.
+- Archived templates cannot be instantiated; the route returns 409.
+- Instantiation requires at least one of `request_id` / `contract_id`; `agreement_template_id` is optional.
+- All linked entities (`request_id`, `contract_id`, `agreement_template_id`) must belong to the same org as the caller; cross-org returns 422.
+- Cross-org template access (GET / PATCH / DELETE / instantiate) returns 404.
+- Storage / encryption columns never appear in the response; the standard `scrubSecrets` defense is layered on top.
+
+Reuse: instantiation calls into the same private helpers (`_validate_links`, `_validate_user_in_org`, `_create_inbox_item_for_step`, `_load_run_response`) the ad-hoc create endpoint already uses, so the workflow run and its first inbox item have exactly the same shape regardless of which entry point opened them.
 
 ---
 
@@ -643,7 +671,7 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 Tracked, intentionally not implemented:
 
-- Approval workflow expansion on top of the PR #50 foundation: workflow templates (predefined step lists), parallel approvals, conditional branching (e.g. "skip CFO if amount < $X"), SLA / calendar reminders, approval analytics, and request-to-DocuSeal gating. The current PR keeps the model linear and explicit.
+- Approval workflow expansion on top of the PRs #50 / #51 foundation: parallel approvals, conditional branching (e.g. "skip CFO if amount < $X"), SLA / calendar reminders, approval analytics, request-to-DocuSeal gating, and a richer template builder (drag-reorder, copy-from-existing, clone-and-edit). The current model is linear and explicit; templates ship reusable blueprints but no conditional logic.
 - Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
 - Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
@@ -663,7 +691,7 @@ Tracked, intentionally not implemented:
 
 ---
 
-## 10. PRs #48 and #49 — request → contract conversion + dashboard foundation
+## 10. PRs #48 through #51 — request → contract conversion, dashboard, approvals + templates
 
 PR #48 closed the loop between intake and template generation: the conversion route reuses the same `generate_docx_from_template()` service as the agreement-templates surface, so there is exactly one code path that turns a template + variable values into a draft `Contract` + `generated_docx` `ContractArtifact`. A request with `linked_template_id` is now a one-click draft, and the request is closed out and the matching `request_review` inbox item is resolved in the same transaction. The route is stricter than necessary on idempotency (already-converted requests 409 rather than silently returning the existing draft) so accidental re-clicks can't quietly produce duplicate contracts.
 
@@ -671,23 +699,23 @@ PR #49 added the **dashboard analytics foundation**: a single read-only `GET /ap
 
 PR #50 added the **narrow approval workflow foundation**: `ApprovalWorkflowRun` + `ApprovalStep` tables, a router at `/api/approval-workflows` (create / list / detail / cancel / approve / reject / step update), and an `Approvals` page in the frontend. The pending step's assignee finds it through an `approval`-typed `InboxItem`; approval / rejection / cancellation drive the inbox state in the same transaction. Three new dashboard counts (`active_approval_workflows`, `pending_approval_steps`, `overdue_approval_steps`) surface workload. The model is deliberately linear: no parallel approvals, no conditional branching, no SLA reminders, no auto-send to DocuSeal, no automatic mutation of the linked request/contract status.
 
-The recommended next PR (#51) builds on top of these.
+PR #51 added **approval workflow templates** on top of that foundation: `ApprovalWorkflowTemplate` + `ApprovalWorkflowTemplateStep` tables (org-scoped, with name unique per org), a router at `/api/approval-workflow-templates` (create / list / get / patch / archive plus per-step CRUD and an `instantiate` endpoint), and an `Approval Templates` page in the frontend. Instantiation copies template step definitions into concrete `ApprovalStep` rows on a fresh `ApprovalWorkflowRun`, computes each step's `due_date` from `today + due_in_days` when set, opens an `InboxItem` for the first step only, and reuses the same private helpers as the ad-hoc create path so the run shape is identical regardless of entry point. A new dashboard count (`active_approval_workflow_templates`) surfaces blueprint inventory. The path parameter and the `agreement_template_id` body field are deliberately spelled differently so the workflow-template concept does not collide with the existing `AgreementTemplate` (document blueprint).
 
 ---
 
-## 11. Recommended Next PR: PR #51 — Approval workflow templates (or: Upload-file request conversion)
+## 11. Recommended Next PR: PR #52 — Approval workflow expansion or upload-file request conversion
 
-Two complementary directions, both unblocked now that the approval foundation has shipped.
+With the approval foundation + templates in place, two complementary directions are now unblocked.
 
-### 11a. Approval workflow templates
+### 11a. Approval workflow expansion
 
-**Goal:** make creating an approval workflow a single-click action driven by a saved template ("NDA approval", "MSA over $100k approval"), instead of redefining steps every time.
+**Goal:** layer the next step of approval semantics on top of the linear template foundation.
 
-Suggested minimum scope:
-- A small `ApprovalWorkflowTemplate` table (org-scoped) with a name and an ordered list of `ApprovalWorkflowTemplateStep` rows (title, approver hint, optional due-date offset in days).
-- A "create from template" route on the existing approval-workflows surface.
-- Frontend: a CRUD page for templates plus a "use template" picker on the create form.
-- No conditional branching, no parallel approvals — those wait for a separate domain conversation.
+Candidates, each its own focused PR:
+- **Conditional approvals.** A step can be skipped based on a predicate against the linked request (e.g. `request.contract_type == "MSA" AND request.contract_value >= 100000`). Predicate language stays narrow — no full DSL.
+- **Parallel approvals.** A "step group" where several approvers are notified in parallel and the step completes when N of M (or all) approve.
+- **Approval analytics.** Cycle time per template, average days-pending, top blocked approvers — once enough runs exist to be meaningful.
+- **Request → DocuSeal gating.** Auto-send a generated agreement to DocuSeal only after a named approval template completes successfully; today the user has to click send manually.
 
 ### 11b. Upload-file request conversion
 
@@ -698,19 +726,19 @@ Suggested minimum scope:
 - Reuse the existing `/api/contracts/upload` validation + storage path; do not duplicate it.
 - Same request/inbox transition semantics as the template path.
 
-### Out of scope for PR #51 (either direction)
+### Out of scope for the next PR (either direction)
 
-- **Do not implement PowerSync yet.** The approval semantics are now stable for the linear case; sync rules can lock in once parallel/conditional shapes settle.
+- **Do not implement PowerSync yet.** The approval semantics are stable for the linear case + templates; sync rules can lock in once parallel/conditional shapes settle.
 - Calendar / Nango / reminders.
 - Clerk integration.
 - Local vault mode.
 - Rich DocuSeal status dashboard.
-- Parallel approvals, conditional branching — those are their own PRs once the workflow-template UX stabilizes.
+- A workflow-builder GUI with drag-reorder / copy-from-existing — the current page is intentionally a CRUD form.
 
 ### Architecture asks (raise these before coding)
 
-- Should approval workflows be auto-attached to requests of certain shape (e.g. contract_type=MSA, priority=urgent), or should every workflow be a manual create? Manual first, auto-attach later behind a feature flag.
-- Should approving the final step of a workflow attached to a request mark the request `completed`? PR #50 deliberately does NOT do this; revisit once the approval-template UX exists and the field-level coupling is clear.
+- Should approval workflow templates be auto-attached to requests of certain shape (e.g. `contract_type == "MSA"` always picks the "MSA approval" template), or should every workflow be a manual instantiate? Manual first, auto-attach later behind a feature flag.
+- Should approving the final step of a workflow attached to a request mark the request `completed`? PRs #50/#51 deliberately do NOT do this; revisit once the workflow-template UX has run in production and the field-level coupling is clear.
 - For upload-file conversion: should the "no linked template" check be a hard gate, or should an uploaded file override a linked template? Probably hard gate — a request that asked for "NDA via template" shouldn't quietly accept a counterparty paper instead.
 
 ---

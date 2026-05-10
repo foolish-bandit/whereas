@@ -67,6 +67,17 @@ import type {
   ApprovalWorkflowRunListItem,
   ListApprovalWorkflowFilters,
 } from "../types/approvalWorkflows";
+import type {
+  ApprovalWorkflowTemplate,
+  ApprovalWorkflowTemplateCreateRequest,
+  ApprovalWorkflowTemplatePatch,
+  ApprovalWorkflowTemplateStep,
+  ApprovalWorkflowTemplateStepCreate,
+  ApprovalWorkflowTemplateStepPatch,
+  CreateApprovalWorkflowFromTemplateRequest,
+  CreateApprovalWorkflowFromTemplateResponse,
+  ListApprovalWorkflowTemplateFilters,
+} from "../types/approvalWorkflowTemplates";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -1396,6 +1407,199 @@ export async function cancelApprovalWorkflow(
   const data = await call<ApprovalWorkflowRun>(
     `/api/approval-workflows/${encodeURIComponent(workflowId)}/cancel`,
     { method: "PATCH" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+
+// ---------------------------------------------------------------------------
+// Approval workflow templates (PR #51 — reusable approval blueprints)
+// ---------------------------------------------------------------------------
+
+function approvalWorkflowTemplateQuery(
+  filters: ListApprovalWorkflowTemplateFilters = {},
+): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.template_type) params.set("template_type", filters.template_type);
+  if (filters.include_archived === true) {
+    params.set("include_archived", "true");
+  }
+  if (filters.query) params.set("query", filters.query);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function listApprovalWorkflowTemplates(
+  filters: ListApprovalWorkflowTemplateFilters = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate[]> {
+  if (isDemoMode()) {
+    return mockApi.listApprovalWorkflowTemplates(filters, options);
+  }
+  const data = await call<ApprovalWorkflowTemplate[]>(
+    `/api/approval-workflow-templates${approvalWorkflowTemplateQuery(filters)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function getApprovalWorkflowTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  if (isDemoMode()) {
+    return mockApi.getApprovalWorkflowTemplate(id, options);
+  }
+  const data = await call<ApprovalWorkflowTemplate>(
+    `/api/approval-workflow-templates/${encodeURIComponent(id)}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createApprovalWorkflowTemplate(
+  payload: ApprovalWorkflowTemplateCreateRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  if (isDemoMode()) {
+    return mockApi.createApprovalWorkflowTemplate(payload, options);
+  }
+  const data = await call<ApprovalWorkflowTemplate>(
+    `/api/approval-workflow-templates`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateApprovalWorkflowTemplate(
+  id: string,
+  payload: ApprovalWorkflowTemplatePatch,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  if (isDemoMode()) {
+    return mockApi.updateApprovalWorkflowTemplate(id, payload, options);
+  }
+  const data = await call<ApprovalWorkflowTemplate>(
+    `/api/approval-workflow-templates/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function archiveApprovalWorkflowTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  if (isDemoMode()) {
+    return mockApi.archiveApprovalWorkflowTemplate(id, options);
+  }
+  const data = await call<ApprovalWorkflowTemplate>(
+    `/api/approval-workflow-templates/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function addApprovalWorkflowTemplateStep(
+  templateId: string,
+  payload: ApprovalWorkflowTemplateStepCreate,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplateStep> {
+  if (isDemoMode()) {
+    return mockApi.addApprovalWorkflowTemplateStep(templateId, payload, options);
+  }
+  const data = await call<ApprovalWorkflowTemplateStep>(
+    `/api/approval-workflow-templates/${encodeURIComponent(templateId)}/steps`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateApprovalWorkflowTemplateStep(
+  templateId: string,
+  stepId: string,
+  payload: ApprovalWorkflowTemplateStepPatch,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplateStep> {
+  if (isDemoMode()) {
+    return mockApi.updateApprovalWorkflowTemplateStep(
+      templateId,
+      stepId,
+      payload,
+      options,
+    );
+  }
+  const data = await call<ApprovalWorkflowTemplateStep>(
+    `/api/approval-workflow-templates/${encodeURIComponent(templateId)}/steps/${encodeURIComponent(stepId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function deleteApprovalWorkflowTemplateStep(
+  templateId: string,
+  stepId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  if (isDemoMode()) {
+    return mockApi.deleteApprovalWorkflowTemplateStep(
+      templateId,
+      stepId,
+      options,
+    );
+  }
+  const data = await call<ApprovalWorkflowTemplate>(
+    `/api/approval-workflow-templates/${encodeURIComponent(templateId)}/steps/${encodeURIComponent(stepId)}`,
+    { method: "DELETE" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function instantiateApprovalWorkflowTemplate(
+  templateId: string,
+  payload: CreateApprovalWorkflowFromTemplateRequest,
+  options: ApiOptions = {},
+): Promise<CreateApprovalWorkflowFromTemplateResponse> {
+  if (isDemoMode()) {
+    return mockApi.instantiateApprovalWorkflowTemplate(
+      templateId,
+      payload,
+      options,
+    );
+  }
+  const data = await call<CreateApprovalWorkflowFromTemplateResponse>(
+    `/api/approval-workflow-templates/${encodeURIComponent(templateId)}/instantiate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
     options,
   );
   return scrubSecrets(data);

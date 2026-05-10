@@ -20,6 +20,10 @@ import {
   getContractClauses,
   getContracts,
   getDashboardSummary,
+  archiveApprovalWorkflowTemplate,
+  createApprovalWorkflowTemplate,
+  instantiateApprovalWorkflowTemplate,
+  listApprovalWorkflowTemplates,
   listInboxItems,
   listRequests,
   uploadContract,
@@ -317,6 +321,79 @@ describe("mockApi", () => {
       for (const r of summary.recent_activity.recent_requests) {
         expect(r.status).not.toBe("cancelled");
       }
+    });
+  });
+
+  describe("approval workflow templates (PR #51)", () => {
+    it("creates a template, instantiates it, and only opens an inbox item for the first step", async () => {
+      const template = await createApprovalWorkflowTemplate({
+        name: "Standard Legal Review",
+        description: "One legal approver, then finance",
+        template_type: "legal_review",
+        steps: [
+          { step_order: 1, title: "Legal review", due_in_days: 3 },
+          { step_order: 2, title: "Finance review", due_in_days: 5 },
+        ],
+      });
+      expect(template.steps.map((s) => s.title)).toEqual([
+        "Legal review",
+        "Finance review",
+      ]);
+
+      const run = await instantiateApprovalWorkflowTemplate(template.id, {
+        name: "Acme NDA approval",
+        request_id: "req-1",
+      });
+      expect(run.status).toBe("active");
+      expect(run.steps.length).toBe(2);
+      expect(run.steps[0].inbox_item_id).not.toBeNull();
+      expect(run.steps[1].inbox_item_id).toBeNull();
+
+      // Inbox surface should carry exactly one approval item.
+      const inbox = await listInboxItems({ item_type: "approval" });
+      expect(inbox.length).toBe(1);
+      expect(inbox[0].title).toContain("Legal review");
+
+      // Source workflow template metadata is preserved on the run.
+      expect(run.metadata_json).toMatchObject({
+        source_workflow_template_id: template.id,
+        source_workflow_template_name: template.name,
+      });
+
+      // No storage internals leak.
+      const json = JSON.stringify(run);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+    });
+
+    it("excludes archived templates from the default list", async () => {
+      const template = await createApprovalWorkflowTemplate({
+        name: "Archive me",
+        steps: [{ step_order: 1, title: "Step" }],
+      });
+      await archiveApprovalWorkflowTemplate(template.id);
+      const defaultList = await listApprovalWorkflowTemplates();
+      expect(defaultList.find((t) => t.id === template.id)).toBeUndefined();
+      const withArchived = await listApprovalWorkflowTemplates({
+        include_archived: true,
+      });
+      expect(
+        withArchived.find((t) => t.id === template.id)?.status,
+      ).toBe("archived");
+    });
+
+    it("refuses to instantiate an archived template", async () => {
+      const template = await createApprovalWorkflowTemplate({
+        name: "No Soup",
+        steps: [{ step_order: 1, title: "Step" }],
+      });
+      await archiveApprovalWorkflowTemplate(template.id);
+      await expect(
+        instantiateApprovalWorkflowTemplate(template.id, {
+          name: "After archive",
+          request_id: "req-1",
+        }),
+      ).rejects.toMatchObject({ status: 409 });
     });
   });
 });

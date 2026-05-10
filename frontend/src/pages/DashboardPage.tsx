@@ -77,6 +77,11 @@ const COUNT_TILES: {
     label: "Overdue approval steps",
     hint: "Pending steps past their due date",
   },
+  {
+    key: "active_approval_workflow_templates",
+    label: "Approval templates",
+    hint: "Active approval workflow blueprints",
+  },
 ];
 
 export default function DashboardPage() {
