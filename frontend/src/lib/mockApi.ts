@@ -67,6 +67,8 @@ import type {
   ContractRequestUpdateRequest,
   ConvertRequestToContractRequest,
   ConvertRequestToContractResponse,
+  ConvertRequestUploadInput,
+  ConvertRequestUploadResponse,
   ListContractRequestFilters,
 } from "../types/requests";
 import type {
@@ -1740,6 +1742,106 @@ export async function convertRequestToContract(
     markdown_snapshot: generation.markdown_snapshot,
     variables_used: generation.variables_used,
   };
+}
+
+/**
+ * Demo-mode counterpart for ``POST /api/requests/{id}/convert-upload``
+ * (PR #65). Creates a fake Repository contract row + ``original_upload``
+ * artifact, links the request, and resolves the inbox item — the same
+ * state transitions the backend route does, minus actual storage.
+ *
+ * The fake artifact's ``metadata_json`` matches the real backend
+ * shape so frontend tests can assert on ``request_id`` /
+ * ``upload_source`` without diverging from production. No storage
+ * internals (``storage_key`` / ``wrapped_dek``) appear anywhere on
+ * the response.
+ */
+export async function convertRequestWithUpload(
+  id: string,
+  input: ConvertRequestUploadInput,
+): Promise<ConvertRequestUploadResponse> {
+  await delay(MOCK_LATENCY_MS, input.signal);
+  const row = findSessionRequest(id) ??
+    MOCK_REQUESTS.find((r) => r.id === id);
+  if (!row) throw new ApiError(404, "Contract request not found.");
+  if (row.status === "cancelled") {
+    throw new ApiError(
+      409,
+      "Cancelled requests cannot be converted to a contract.",
+    );
+  }
+  if (row.linked_contract_id) {
+    throw new ApiError(409, "This request is already linked to a contract.");
+  }
+  if (!input.file || input.file.size === 0) {
+    throw new ApiError(400, "Uploaded file is empty.");
+  }
+
+  const now = isoNow();
+  const contractId = `req-upload-contract-${id}-${Date.now()}`;
+  const artifactId = `req-upload-artifact-${id}-${Date.now()}`;
+  const trimmedTitle = (input.title ?? "").trim();
+  const trimmedCounterparty = (input.counterparty_name ?? "").trim();
+  const trimmedType = (input.contract_type ?? "").trim();
+  const trimmedNotes = (input.notes ?? "").trim();
+  const filename = input.file.name || "uploaded.pdf";
+  const mimeType = input.file.type || "application/pdf";
+  const sizeBytes = input.file.size;
+
+  const metadata: Record<string, unknown> = {
+    request_id: id,
+    upload_source: "request_conversion",
+  };
+  if (trimmedCounterparty) metadata.counterparty_name = trimmedCounterparty;
+  if (trimmedType) metadata.contract_type = trimmedType;
+  if (trimmedNotes) metadata.notes = trimmedNotes;
+
+  const response: ConvertRequestUploadResponse = {
+    request: { ...row },
+    contract: {
+      id: contractId,
+      title: trimmedTitle || filename.replace(/\.[^.]+$/, "") || "Untitled contract",
+      status: "ready",
+      mime_type: mimeType,
+      file_hash_sha256: "0".repeat(64),
+      page_count: null,
+      created_at: now,
+      updated_at: now,
+    },
+    artifact: {
+      id: artifactId,
+      contract_id: contractId,
+      artifact_type: "original_upload",
+      storage_backend: "s3",
+      filename,
+      mime_type: mimeType,
+      file_hash_sha256: "0".repeat(64),
+      size_bytes: sizeBytes,
+      source: "request_upload",
+      is_official: true,
+      created_at: now,
+      metadata_json: metadata,
+    },
+    markdown_snapshot: null,
+  };
+
+  // Mutate session state the same way the template-conversion mock
+  // does so subsequent listRequests() calls reflect the new linked
+  // contract and the request_review inbox item is resolved.
+  const writable =
+    findSessionRequest(id) ??
+    (() => {
+      const cloned = { ...row };
+      sessionRequests.unshift(cloned);
+      return cloned;
+    })();
+  writable.linked_contract_id = contractId;
+  writable.status = "completed";
+  writable.updated_at = now;
+  resolveSessionInboxItemsForRequest(id, "completed");
+
+  response.request = { ...writable };
+  return response;
 }
 
 /**

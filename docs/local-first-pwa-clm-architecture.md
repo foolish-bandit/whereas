@@ -1022,4 +1022,104 @@ User-facing copy was also tightened:
 Backend models, APIs, and the on-disk artifact taxonomy
 (`original_upload` / `generated_docx` / `signed_pdf`) are unchanged.
 
+## Request → Repository conversion by upload (PR #65)
+
+A request can now become a Repository contract via two intake paths,
+not one:
+
+1. **Template generation** (PR #48): the request's linked
+   `AgreementTemplate` is rendered against user-supplied variable
+   values to produce a `generated_docx` `ContractArtifact`.
+2. **Uploaded file** (PR #65): the user uploads a third-party
+   agreement file — counterparty paper, signed exhibit, or any
+   external draft — and the file becomes the Contract's official
+   `original_upload` `ContractArtifact`.
+
+Both paths leave the request `linked_contract_id` set and resolve the
+open `request_review` inbox item in the same transaction. The
+upload-conversion path is exposed as:
+
+```
+POST /api/requests/{request_id}/convert-upload
+Content-Type: multipart/form-data
+
+file=<UploadFile>            # required (PDF or DOCX)
+title=<str?>                 # optional Contract title override
+counterparty_name=<str?>     # optional metadata
+contract_type=<str?>         # optional metadata
+notes=<str?>                 # optional free-text note (capped at 1000 chars)
+```
+
+The route reuses the existing `/api/contracts/upload` validation
+(`_validate_upload` for empty / size / extension / magic-byte / MIME
+checks; `_parse_or_http` for the parser layer) and the same
+`DocumentStorage.store_encrypted` path. The new `ContractArtifact`
+carries `source='request_upload'` and `metadata_json` with
+`request_id` and `upload_source='request_conversion'`, plus
+trimmed/capped copies of `counterparty_name` / `contract_type` /
+`notes` for traceability. The same `create_markdown_snapshot_for_contract`
+service produces the Text preview snapshot best-effort; conversion
+failure is non-fatal and the response carries `markdown_snapshot=null`.
+
+**Validation:**
+
+- Cross-org request → 404.
+- Cancelled request → 409.
+- Already-converted request (`linked_contract_id` set) → 409.
+- Missing / empty / unsupported / oversized file → propagates the
+  same 4xx codes the existing `/api/contracts/upload` route returns.
+
+**Transaction safety:** the entire orchestration runs inside the
+request-scoped session managed by `get_db`. A failure at any step —
+storage put, DB insert, request update — rolls the whole transaction
+back: no partial `Contract` or `ContractArtifact` row, no
+half-mutated `ContractRequest`, no stranded `InboxItem`. A storage
+success without DB commit leaves only an orphan S3 blob, which
+matches the existing `/contracts/upload` posture and is preferable to
+a committed Contract row whose official artifact never landed.
+
+**Approval gate / policies / DocuSeal:** the linked Contract flows
+through the existing `can_send_contract_to_docuseal` gate via the
+request's matching policies. PR #65 does **not** auto-create
+approval workflows, mutate gate semantics, change state transitions,
+or auto-send to DocuSeal. Approval visibility (PR #56) sees the new
+contract through the request's `linked_contract_id` exactly the way
+it does for template-generated contracts.
+
+**Audit:** the route emits a new `REQUEST_CONVERTED_BY_UPLOAD`
+(`request.converted_by_upload`) event into the existing hash-chained
+audit log. Payload: `request_id`, `contract_id`, `artifact_id`,
+`filename`, `mime_type`, `file_hash_sha256`, `size_bytes`. Storage
+internals (`storage_key`, `wrapped_dek`, raw bytes) are intentionally
+not recorded.
+
+**Frontend:** the `RequestUploadConvertSection` component renders an
+inline collapsible upload form per eligible row in `RequestsPage` —
+hidden for cancelled requests and once `linked_contract_id` is set.
+The Requests workspace landing adds an "Upload third-party agreement"
+card. Demo mode wires the same flow through
+`mockApi.convertRequestWithUpload` so the UI works without a backend,
+and the `ConvertRequestUploadResponse` projection forbids storage
+internals by construction (`extra='forbid'` plus allowlist-only
+fields).
+
+**Follow-ups:**
+
+- Duplicate detection on convert-upload (the existing upload route
+  refuses duplicate file hashes; PR #65 deliberately skips that so
+  the request → repository intake isn't blocked by hash collisions
+  with an unrelated counterparty contract). A clean shape would be
+  to return 409 with a structured `existing_contract_id` and let the
+  UI offer "link to existing".
+- OCR / Docling fallback for scanned PDFs uploaded via the request
+  intake path.
+- Richer metadata extraction on uploaded contracts (the existing
+  `/contracts/upload` route runs LLM extraction inline; this route
+  lands at `status='ready'` without running extraction to match the
+  template-conversion path's posture).
+- Local-first PWA file-import polish so a user can drag the
+  counterparty paper directly onto the request row.
+- PowerSync sync rules covering `original_upload` artifact rows
+  created via the request-conversion path.
+
 These follow-ups are referenced from sections 9 and 11 too; this list is the canonical one for the approval stack.

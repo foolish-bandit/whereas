@@ -119,3 +119,23 @@ class ConvertRequestToContractResponse(BaseModel):
     artifact: ContractArtifactResponse
     markdown_snapshot: ContractMarkdownSnapshotResponse | None = None
     variables_used: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Request -> Contract conversion via uploaded file (PR #65)
+#
+# The other intake path: a user takes an open ContractRequest and
+# uploads an external agreement file (counterparty paper, third-party
+# signed exhibit, etc.) instead of generating from a template. The
+# uploaded file becomes the Contract's ``original_upload`` artifact and
+# the request is linked + completed in the same transaction.
+# ---------------------------------------------------------------------------
+
+
+class ConvertRequestUploadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    request: ContractRequestResponse
+    contract: ContractListItemResponse
+    artifact: ContractArtifactResponse
+    markdown_snapshot: ContractMarkdownSnapshotResponse | None = None

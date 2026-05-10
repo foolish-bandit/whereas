@@ -7,6 +7,7 @@ import RequestApprovalStatusSection from "../components/RequestApprovalStatusSec
 import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
+import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
 import { demoPath } from "../lib/routes";
 import {
   ApiError,
@@ -23,6 +24,7 @@ import {
 import type {
   ContractRequest,
   ConvertRequestToContractResponse,
+  ConvertRequestUploadResponse,
 } from "../types/requests";
 
 type LoadState =
@@ -215,6 +217,22 @@ export default function RequestsPage() {
     // The backend has already linked + completed the request and
     // resolved the inbox item. Mirror that locally so the row's status
     // chip and convert section update without a refetch.
+    setState((prev) =>
+      prev.kind === "loaded"
+        ? {
+            kind: "loaded",
+            rows: prev.rows.map((r) =>
+              r.id === response.request.id ? response.request : r,
+            ),
+          }
+        : prev,
+    );
+  }
+
+  function onUploaded(response: ConvertRequestUploadResponse) {
+    // Same state-swap as the template path — both intake paths end with
+    // request.status='completed' and linked_contract_id set, so the UI
+    // can collapse them onto the same in-place update.
     setState((prev) =>
       prev.kind === "loaded"
         ? {
@@ -449,9 +467,16 @@ export default function RequestsPage() {
                     data-testid="request-no-template-hint"
                   >
                     Link an agreement template to this request to generate a
-                    draft contract from it.
+                    draft contract, or upload an external agreement below.
                   </p>
                 )}
+
+              {row.status !== "cancelled" && !row.linked_contract_id && (
+                <RequestUploadConvertSection
+                  request={row}
+                  onConverted={onUploaded}
+                />
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                 <button
@@ -507,6 +532,14 @@ const WORKSPACE_CARDS: WorkspaceCard[] = [
     description:
       "Generate a draft agreement from an approved template. Templates fill counterparty, dates, and other variables for you.",
     testId: "requests-card-start-from-template",
+    variant: "primary",
+  },
+  {
+    to: demoPath("/requests#queue"),
+    title: "Upload third-party agreement",
+    description:
+      "Convert a request into a Repository contract from a PDF or Word document — counterparty paper, signed exhibit, or any external agreement.",
+    testId: "requests-card-upload",
     variant: "primary",
   },
   {

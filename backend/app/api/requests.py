@@ -20,19 +20,24 @@ cross-org references are rejected with 422.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.contracts import (
     DbSession,
     _current_dev_user,
+    _derive_title,
     _load_org_key_or_http,
     _load_organization,
+    _parse_or_http,
+    _safe_input_filename,
+    _validate_upload,
 )
 from app.core.config import get_settings
 from app.models import (
@@ -41,8 +46,10 @@ from app.models import (
     ApprovalWorkflowRun,
     ApprovalWorkflowRunStatus,
     Contract,
+    ContractArtifact,
     ContractRequest,
     ContractRequestStatus,
+    ContractStatus,
     InboxItem,
     InboxItemStatus,
     User,
@@ -64,13 +71,16 @@ from app.schemas.requests import (
     ContractRequestUpdateRequest,
     ConvertRequestToContractRequest,
     ConvertRequestToContractResponse,
+    ConvertRequestUploadResponse,
 )
+from app.security.audit_log import AuditEventType, record_event
 from app.services import activity_timeline
 from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.approval_policies import (
     apply_approval_policies_to_request,
     find_matching_approval_policies,
 )
+from app.services.document_markdown import create_markdown_snapshot_for_contract
 from app.services.storage import DocumentStorage
 from app.services.template_generation import (
     TemplateGenerationError,
@@ -403,6 +413,258 @@ async def convert_request_to_contract(
         artifact=ContractArtifactResponse.model_validate(result.artifact),
         markdown_snapshot=snapshot_response,
         variables_used=result.variables_used,
+    )
+
+
+@router.post(
+    "/{request_id}/convert-upload",
+    response_model=ConvertRequestUploadResponse,
+    status_code=201,
+)
+async def convert_request_by_upload(
+    request_id: uuid.UUID,
+    session: DbSession,
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str | None, Form()] = None,
+    counterparty_name: Annotated[str | None, Form()] = None,
+    contract_type: Annotated[str | None, Form()] = None,
+    notes: Annotated[str | None, Form()] = None,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ConvertRequestUploadResponse:
+    """Convert an open request into a Repository contract by uploading a file.
+
+    This is the third-party / counterparty-paper intake path. It sits
+    alongside ``/convert-to-contract`` (the template-generation path):
+    the request is the same workflow object, the resulting Contract is
+    the same downstream Repository row, but the source of the agreement
+    text is an uploaded DOCX or PDF instead of a rendered template.
+
+    Behavior:
+
+    * Validate / parse the upload via the same helpers
+      ``/api/contracts/upload`` uses. Unsupported extensions / MIME
+      mismatches / empty / oversized files surface the same 4xx codes.
+    * Store the encrypted file via ``DocumentStorage``.
+    * Create a ``Contract`` row + ``original_upload`` ``ContractArtifact``
+      whose ``source='request_upload'`` and ``metadata_json`` carries
+      ``request_id`` and ``upload_source='request_conversion'``.
+    * Best-effort Markdown snapshot via the same converter the upload
+      flow uses. Failure is non-fatal — the conversion still succeeds.
+    * Link the new contract back to the request, mark the request
+      ``completed``, and resolve any open ``request_review`` inbox item
+      in the same transaction.
+
+    Validation rules:
+
+    * Cross-org request → 404 (via ``_get_request_for_org``).
+    * Cancelled request → 409.
+    * Already-converted request (``linked_contract_id`` set) → 409.
+    * File validation errors propagate from ``_validate_upload`` /
+      ``_parse_or_http`` as 400/413/422.
+
+    Failure semantics:
+
+    * The whole operation runs in a single request-scoped transaction
+      (``get_db``). A failure at any DB step rolls back the partial
+      Contract / artifact insert *and* leaves the request row
+      unchanged. Storage success without DB commit only leaves an
+      orphan blob in S3 — which is preferable to a half-written
+      Contract row that's missing its official artifact, matching the
+      existing ``/contracts/upload`` posture.
+    * Markdown conversion failure is non-fatal — the response still
+      succeeds with ``markdown_snapshot=None``.
+
+    Approval gate / policy matching:
+
+    * No approval workflows are auto-created here beyond what the
+      existing request lifecycle already wires up. The linked
+      ``Contract`` flows through the existing DocuSeal gate via the
+      request's matching policies. The gate / state-transition logic
+      is unchanged by this PR.
+
+    Storage / privacy:
+
+    * The response carries ``ContractArtifactResponse`` and
+      ``ContractListItemResponse`` — both forbid ``storage_key`` and
+      ``wrapped_dek`` by construction (``extra='forbid'`` with
+      allowlist-only fields). Audit details mirror the upload route's
+      shape and never include the storage key, wrapped DEK, or raw
+      bytes.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    request = await _get_request_for_org(
+        session, request_id, user.organization_id
+    )
+
+    if request.status == ContractRequestStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=409,
+            detail="Cancelled requests cannot be converted to a contract.",
+        )
+    if request.linked_contract_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This request is already linked to a contract.",
+        )
+
+    settings = get_settings()
+    filename = _safe_input_filename(file.filename)
+    file_bytes = await file.read()
+    # ``_validate_upload`` enforces non-empty, size, extension, magic
+    # bytes, and content-type alignment. Errors propagate as 400/413
+    # which matches /api/contracts/upload exactly.
+    mime_type = _validate_upload(
+        filename=filename,
+        content_type=file.content_type,
+        file_bytes=file_bytes,
+        max_bytes=settings.CONTRACT_UPLOAD_MAX_BYTES,
+    )
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    parsed = _parse_or_http(file_bytes=file_bytes, filename=filename)
+
+    # ``title`` on the form is the user's override; otherwise we derive
+    # from the original filename. Falling back to the request's title
+    # would surprise users when their request title is the *workflow*
+    # title ("NDA with Acme") and they're uploading a counterparty paper
+    # that has a different real-world filename.
+    contract_title = _derive_title(title, filename)
+
+    org = await _load_organization(session, user.organization_id)
+    org_master_key = _load_org_key_or_http(org)
+
+    contract = Contract(
+        organization_id=user.organization_id,
+        uploaded_by=user.id,
+        title=contract_title,
+        status=ContractStatus.UPLOADED.value,
+        s3_key="pending",
+        mime_type=mime_type,
+        file_hash_sha256=file_hash,
+        page_count=parsed.page_count,
+        full_text=parsed.full_text,
+    )
+    session.add(contract)
+    await session.flush()
+
+    storage = DocumentStorage(settings)
+    try:
+        stored = await storage.store_encrypted(
+            plaintext_bytes=file_bytes,
+            document_id=str(contract.id),
+            org_master_key=org_master_key,
+        )
+    except Exception as e:
+        # ``get_db`` rolls the session back on the resulting HTTPException
+        # so the half-written Contract row does not persist. The S3 blob
+        # — if anything was written — is orphan, which is preferable to
+        # a Contract row that has no original_upload artifact.
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store encrypted document.",
+        ) from e
+    finally:
+        del org_master_key
+
+    contract.s3_key = stored.s3_key
+    contract.wrapped_dek = stored.wrapped_dek_bytes
+    # No extraction step in the conversion path — match the
+    # template-generation conversion route, which also lands at READY
+    # without running metadata extraction. Users who want extraction
+    # can run it from the contract workspace later.
+    contract.status = ContractStatus.READY.value
+    await session.flush()
+
+    artifact_metadata: dict[str, object] = {
+        "request_id": str(request.id),
+        "upload_source": "request_conversion",
+    }
+    notes_clean = (notes or "").strip()
+    if notes_clean:
+        artifact_metadata["notes"] = notes_clean[:1000]
+    counterparty_clean = (counterparty_name or "").strip()
+    if counterparty_clean:
+        artifact_metadata["counterparty_name"] = counterparty_clean[:255]
+    contract_type_clean = (contract_type or "").strip()
+    if contract_type_clean:
+        artifact_metadata["contract_type"] = contract_type_clean[:64]
+
+    original_artifact = ContractArtifact(
+        organization_id=user.organization_id,
+        contract_id=contract.id,
+        artifact_type="original_upload",
+        storage_backend="s3",
+        storage_key=stored.s3_key,
+        filename=filename,
+        mime_type=mime_type,
+        file_hash_sha256=file_hash,
+        size_bytes=len(file_bytes),
+        source="request_upload",
+        is_official=True,
+        created_by=user.id,
+        metadata_json=artifact_metadata,
+    )
+    session.add(original_artifact)
+    await session.flush()
+
+    # Best-effort markdown snapshot — failure is logged but does not
+    # fail the conversion. Same behavior as ``/api/contracts/upload``.
+    try:
+        snapshot = await create_markdown_snapshot_for_contract(
+            session,
+            contract=contract,
+            file_bytes=file_bytes,
+            fallback_plain_text=parsed.full_text,
+            actor_user_id=user.id,
+        )
+    except Exception:
+        log.exception(
+            "Markdown snapshot creation failed; conversion continues",
+            extra={"contract_id": str(contract.id)},
+        )
+        snapshot = None
+
+    # Link the new contract back to the request and close out the
+    # workflow. Same-transaction guarantee: if anything below fails the
+    # contract + artifact + snapshot inserts roll back too — we never
+    # end up with a Contract that has no request pointing at it OR a
+    # request that claims a contract id that doesn't exist.
+    request.linked_contract_id = contract.id
+    request.status = ContractRequestStatus.COMPLETED.value
+    await session.flush()
+    await _resolve_request_review_inbox_items(session, request)
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.REQUEST_CONVERTED_BY_UPLOAD,
+        actor_user_id=user.id,
+        target_type="request",
+        target_id=str(request.id),
+        details={
+            "request_id": str(request.id),
+            "contract_id": str(contract.id),
+            "artifact_id": str(original_artifact.id),
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_hash_sha256": file_hash,
+            "size_bytes": len(file_bytes),
+        },
+    )
+
+    await session.refresh(request)
+    await session.refresh(contract)
+    await session.refresh(original_artifact)
+    snapshot_response: ContractMarkdownSnapshotResponse | None = None
+    if snapshot is not None:
+        await session.refresh(snapshot)
+        snapshot_response = ContractMarkdownSnapshotResponse.model_validate(
+            snapshot
+        )
+    return ConvertRequestUploadResponse(
+        request=ContractRequestResponse.model_validate(request),
+        contract=ContractListItemResponse.model_validate(contract),
+        artifact=ContractArtifactResponse.model_validate(original_artifact),
+        markdown_snapshot=snapshot_response,
     )
 
 

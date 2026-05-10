@@ -113,6 +113,14 @@ class AuditEventType(StrEnum):
     APPROVAL_WORKFLOW_REJECTED = "approval.workflow.rejected"
     APPROVAL_WORKFLOW_CANCELLED = "approval.workflow.cancelled"
 
+    # PR #65 — request → repository conversion by uploading a
+    # third-party file (counterparty paper, signed exhibit, etc.).
+    # Payload identifies the request, the new contract, the new
+    # original_upload artifact, the filename, and the contract's
+    # file hash. Storage internals (storage_key, wrapped_dek, raw
+    # bytes) are intentionally NOT recorded.
+    REQUEST_CONVERTED_BY_UPLOAD = "request.converted_by_upload"
+
     LLM_REMOTE_PROVIDER_ENABLED = "llm.remote_provider.enabled"
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"
