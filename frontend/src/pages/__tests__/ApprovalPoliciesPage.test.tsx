@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalPolicy } from "../../types/approvalPolicies";
 import ApprovalPoliciesPage from "../ApprovalPoliciesPage";
@@ -22,6 +23,16 @@ const basePolicies: ApprovalPolicy[] = [
   { id: "p2", organization_id: "org", name: "Archived Sample Policy", description: null, status: "archived", workflow_template_id: "wftpl-legacy", request_type: null, contract_type: null, priority: null, agreement_template_id: null, auto_attach: true, applies_to_generated_contracts: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", metadata_json: null },
 ];
 
+function renderPage(initialEntry = "/approval-policies") {
+  render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/approval-policies" element={<ApprovalPoliciesPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 describe("ApprovalPoliciesPage", () => {
   beforeEach(() => {
     mocks.listApprovalPolicies.mockImplementation(async (filters?: { include_archived?: boolean }) =>
@@ -32,19 +43,19 @@ describe("ApprovalPoliciesPage", () => {
   });
 
   it("renders list/form and hides archived by default", async () => {
-    render(<ApprovalPoliciesPage />);
+    renderPage();
     expect(await screen.findByText("NDA Legal Review policy")).toBeInTheDocument();
     expect(screen.queryByText("Archived Sample Policy")).not.toBeInTheDocument();
   });
 
   it("shows archived when include archived is enabled", async () => {
-    render(<ApprovalPoliciesPage />);
+    renderPage();
     fireEvent.click(screen.getByRole("checkbox", { name: /include archived/i }));
     expect(await screen.findByText("Archived Sample Policy")).toBeInTheDocument();
   });
 
   it("submits blank criteria as null and archives", async () => {
-    render(<ApprovalPoliciesPage />);
+    renderPage();
     fireEvent.change(screen.getByPlaceholderText("Name"), { target: { value: "Wildcard Policy" } });
     await screen.findByText("Legal Review");
     fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "wftpl-legal-review" } });
@@ -58,5 +69,41 @@ describe("ApprovalPoliciesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(mocks.archiveApprovalPolicy).toHaveBeenCalled());
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #61 — policy_id deep-link
+  // -------------------------------------------------------------------------
+
+  it("highlights the deep-linked policy_id row", async () => {
+    renderPage("/approval-policies?policy_id=p1");
+    const target = await screen.findByText("NDA Legal Review policy");
+    const row = target.closest('[data-testid="approval-policy-row"]');
+    expect(row).toHaveAttribute("data-deep-link-target", "true");
+    expect(row).toHaveAttribute("aria-label", expect.stringMatching(/linked approval policy/i));
+  });
+
+  it("auto-enables include archived when the deep-linked policy is archived", async () => {
+    renderPage("/approval-policies?policy_id=p2");
+    // After the auto-toggle + reload, the archived row should appear and
+    // be highlighted.
+    const archived = await screen.findByText("Archived Sample Policy");
+    const row = archived.closest('[data-testid="approval-policy-row"]');
+    expect(row).toHaveAttribute("data-deep-link-target", "true");
+    expect(
+      (screen.getByRole("checkbox", { name: /include archived/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("shows a not-found notice when the deep-linked policy is missing", async () => {
+    renderPage("/approval-policies?policy_id=p-missing");
+    // Even after the auto-archived toggle the id is still missing, so
+    // the notice should render.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("approval-policies-deep-link-not-found"),
+      ).toHaveTextContent("p-missing");
+    });
   });
 });
