@@ -844,6 +844,54 @@ async def test_pending_step_can_be_edited(
     assert item.status == InboxItemStatus.OPEN.value
 
 
+async def test_generic_inbox_endpoints_refuse_to_close_approval_items(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The approval workflow owns approval inbox items.
+
+    Generic ``PATCH /api/inbox-items/{id}`` (status change) and
+    ``DELETE /api/inbox-items/{id}`` must 409 when the item is an
+    approval item, so the underlying ``ApprovalStep`` cannot decouple
+    from its inbox row.
+    """
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+    request = await _make_request(db_session, user_org.org.id)
+    create = await client.post(
+        "/api/approval-workflows",
+        headers=headers,
+        json={
+            "name": "Guardrail",
+            "request_id": str(request.id),
+            "steps": [{"title": "First"}],
+        },
+    )
+    inbox_id = create.json()["steps"][0]["inbox_item_id"]
+
+    patched = await client.patch(
+        f"/api/inbox-items/{inbox_id}",
+        headers=headers,
+        json={"status": "completed"},
+    )
+    assert patched.status_code == 409
+
+    dismissed = await client.delete(
+        f"/api/inbox-items/{inbox_id}", headers=headers
+    )
+    assert dismissed.status_code == 409
+
+    # Cosmetic edits (priority, description) on an approval item are
+    # still allowed — the guardrail only rejects state / linkage
+    # transitions that would decouple the inbox row from its step.
+    cosmetic = await client.patch(
+        f"/api/inbox-items/{inbox_id}",
+        headers=headers,
+        json={"priority": "high"},
+    )
+    assert cosmetic.status_code == 200
+    assert cosmetic.json()["priority"] == "high"
+
+
 async def test_decision_after_cancel_returns_409(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:

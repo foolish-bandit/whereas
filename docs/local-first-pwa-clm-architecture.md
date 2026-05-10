@@ -615,6 +615,8 @@ State transitions:
 
 Idempotency / 409 guards: approving or rejecting an already-decided step (or any non-current pending step), or operating on a non-active workflow, returns 409. The frontend page (`ApprovalWorkflowsPage.tsx`) gates buttons accordingly so a single user clicking through the UI doesn't surface 409s — the guards exist for the multi-tab / API-direct case.
 
+Inbox guardrail: the generic `PATCH /api/inbox-items/{id}` (status / linkage edits) and `DELETE /api/inbox-items/{id}` endpoints return 409 when the row is an `item_type='approval'` row. The approval workflow router owns those rows; mutations have to flow through `/api/approval-workflows/.../approve|reject|cancel` so the linked `ApprovalStep` cannot decouple. Cosmetic edits (priority, description, manual due-date / assignee tweaks) on an approval inbox row are still allowed — the guardrail only blocks the transitions that would leave the workflow stuck.
+
 Out of scope by design: parallel approvals, conditional branching, workflow templates, SLA reminders, automatic DocuSeal send on completion, automatic request/contract status mutation. Future PRs land those on top.
 
 ---
