@@ -54,6 +54,8 @@ class SendContractToDocuSealRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     signers: list[DocuSealSignerRequest] = Field(min_length=1, max_length=20)
+    approval_override: bool = False
+    approval_override_reason: str | None = Field(default=None, max_length=1000)
 
 
 class SendContractToDocuSealResponse(BaseModel):

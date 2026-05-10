@@ -16,6 +16,7 @@ import {
   downloadContract,
   getContract,
   getContractArtifacts,
+  getContractApprovalGate,
   sendContractToDocuseal,
 } from "../lib/api";
 import { clauseHasValidSpan } from "../lib/clauses";
@@ -36,6 +37,7 @@ import type {
 import type { ReviewRunDetail } from "../types/findings";
 import type {
   DocuSealSigner,
+  ContractApprovalGate,
   SendContractToDocuSealResponse,
 } from "../types/docuseal";
 
@@ -603,14 +605,25 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
   const [sendState, setSendState] = useState<SendDocusealState>({
     kind: "idle",
   });
+  const [gate, setGate] = useState<ContractApprovalGate | null>(null);
+  const [gateError, setGateError] = useState<string | null>(null);
+  const [approvalOverride, setApprovalOverride] = useState(false);
+  const [approvalOverrideReason, setApprovalOverrideReason] = useState("");
 
+  useEffect(() => {
+    let cancelled = false;
+    getContractApprovalGate(contractId)
+      .then((g) => { if (!cancelled) { setGate(g); setGateError(null); } })
+      .catch((e) => { if (!cancelled) setGateError(e instanceof Error ? e.message : "Could not verify approvals"); });
+    return () => { cancelled = true; };
+  }, [contractId]);
+
+  const gateAllows = gate?.allowed ?? false;
   const canSubmit =
     sendState.kind !== "sending" &&
     signers.length > 0 &&
-    signers.every(
-      (s) =>
-        s.email.trim().includes("@") && s.name.trim().length > 0,
-    );
+    signers.every((s) => s.email.trim().includes("@") && s.name.trim().length > 0) &&
+    (gateAllows || (approvalOverride && approvalOverrideReason.trim().length > 0));
 
   function updateSigner(index: number, patch: Partial<SignerDraft>) {
     setSigners((prev) =>
@@ -639,7 +652,10 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
           name: s.name.trim(),
           role: (s.role ?? "signer").trim() || "signer",
         })),
+        approval_override: approvalOverride,
+        approval_override_reason: approvalOverride ? approvalOverrideReason.trim() : undefined,
       });
+      setGate((prev) => (prev ? { ...prev, allowed: true } : prev));
       setSendState({ kind: "sent", result });
     } catch (err) {
       const message =
@@ -671,6 +687,22 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
         <SendDocusealSuccess result={sendState.result} />
       ) : (
         <div className="mt-3 space-y-3">
+          {gateError && (
+            <p className="text-xs text-danger" data-testid="docuseal-gate-error">{gateError}</p>
+          )}
+          {gate && !gate.allowed && (
+            <div className="rounded border border-warning bg-warning/10 p-2 text-xs" data-testid="docuseal-gate-blocked">
+              <p className="font-medium">Approvals required before sending.</p>
+              <p>Reason: {gate.code}. Active: {gate.active_count}, Rejected: {gate.rejected_count}, Cancelled: {gate.cancelled_count}, Completed: {gate.completed_count}</p>
+              <label className="mt-2 flex items-center gap-2">
+                <input type="checkbox" checked={approvalOverride} onChange={(e) => setApprovalOverride(e.target.checked)} />
+                Override approval gate
+              </label>
+              {approvalOverride && (
+                <input className="mt-2 w-full rounded border border-rule px-2 py-1" placeholder="Override reason" value={approvalOverrideReason} onChange={(e) => setApprovalOverrideReason(e.target.value)} data-testid="docuseal-override-reason" />
+              )}
+            </div>
+          )}
           <ul className="space-y-2">
             {signers.map((s, index) => (
               <li

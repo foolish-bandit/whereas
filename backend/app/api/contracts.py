@@ -64,6 +64,7 @@ from app.security.encryption import (
     load_instance_key,
     load_org_master_key,
 )
+from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.contract_artifacts import (
     get_latest_official_downloadable_artifact,
@@ -876,6 +877,23 @@ async def download_contract(
     )
 
 
+
+
+@router.get("/{contract_id}/approval-gate")
+async def get_contract_approval_gate(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    gate = await can_send_contract_to_docuseal(session, contract, user.organization_id)
+    return gate.to_safe_dict()
+
 @router.post(
     "/{contract_id}/send-to-docuseal",
     response_model=SendContractToDocuSealResponse,
@@ -916,6 +934,19 @@ async def send_contract_to_docuseal(
             status_code=409,
             detail="Contract encryption metadata is missing.",
         )
+
+    gate = await can_send_contract_to_docuseal(session, contract, user.organization_id)
+    if not gate.allowed and not payload.approval_override:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "Contract cannot be sent to DocuSeal until approvals are completed.",
+                "code": "approval_required",
+                "gate": gate.to_safe_dict(),
+            },
+        )
+    if not gate.allowed and payload.approval_override and not (payload.approval_override_reason or "").strip():
+        raise HTTPException(status_code=422, detail="approval_override_reason is required when override is enabled.")
 
     artifact = await get_latest_official_signable_artifact(
         session,
@@ -1013,6 +1044,10 @@ async def send_contract_to_docuseal(
             "filename": filename,
             "signer_count": len(submitters),
             "submission_id": submission_id,
+            "approval_override": bool(payload.approval_override),
+            "approval_override_reason": payload.approval_override_reason if payload.approval_override else None,
+            "approval_gate_code": gate.code,
+            "approval_blocking_workflow_ids": [str(wid) for wid in gate.blocking_workflow_ids],
         },
     )
 
