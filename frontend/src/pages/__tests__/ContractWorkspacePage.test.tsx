@@ -216,6 +216,19 @@ describe("ContractWorkspacePage markdown integration", () => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
       }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: true,
+          code: "no_linked_request",
+          request_id: null,
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+        });
+      }
       return jsonResponse({ detail: "unexpected" }, 500);
     });
     renderPage();
@@ -249,6 +262,45 @@ describe("ContractWorkspacePage markdown integration", () => {
       screen.getByRole("group", { name: /document view/i }),
     ).toBeInTheDocument();
   });
+
+  it("shows a blocked gate warning and requires override reason", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({ allowed: false, code: "active_approval_workflows", request_id: "r1", blocking_workflow_ids: ["w1"], completed_workflow_ids: [], active_count: 1, rejected_count: 0, cancelled_count: 0, completed_count: 0 });
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) && init?.method === "POST") {
+        return jsonResponse({ detail: "Contract cannot be sent to DocuSeal until approvals are completed." }, 409);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("docuseal-gate-blocked");
+    fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
+    fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
+    expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("docuseal-override-reason"), { target: { value: "Urgent close" } });
+    expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
+  });
+
+  it("shows safe gate error state when approval-gate fetch fails", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) return jsonResponse({ detail: "gate unavailable" }, 500);
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    const err = await screen.findByTestId("docuseal-gate-error");
+    expect(err).toHaveTextContent(/gate unavailable|unexpected/i);
+    expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
+  });
+
 });
 
 describe("ContractWorkspacePage Send to DocuSeal", () => {
@@ -283,6 +335,19 @@ describe("ContractWorkspacePage Send to DocuSeal", () => {
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: true,
+          code: "no_linked_request",
+          request_id: null,
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+        });
       }
       if (
         url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) &&
@@ -359,6 +424,19 @@ describe("ContractWorkspacePage Send to DocuSeal", () => {
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
+        return jsonResponse({
+          allowed: true,
+          code: "no_linked_request",
+          request_id: null,
+          blocking_workflow_ids: [],
+          completed_workflow_ids: [],
+          active_count: 0,
+          rejected_count: 0,
+          cancelled_count: 0,
+          completed_count: 0,
+        });
       }
       if (
         url.endsWith(`/api/contracts/${CONTRACT_ID}/send-to-docuseal`) &&
