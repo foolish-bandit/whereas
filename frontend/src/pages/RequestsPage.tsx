@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import EmptyState from "../components/EmptyState";
+import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
@@ -34,6 +35,12 @@ const REQUEST_TYPE_OPTIONS = [
 export default function RequestsPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [includeCancelled, setIncludeCancelled] = useState(false);
+  // Track which rows have their approval-status section expanded.
+  // Lazy-load on toggle so a long list doesn't fire N approval-status
+  // requests on first render.
+  const [expandedApprovalIds, setExpandedApprovalIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const [title, setTitle] = useState("");
   const [counterparty, setCounterparty] = useState("");
@@ -150,6 +157,18 @@ export default function RequestsPage() {
     } catch {
       // best-effort
     }
+  }
+
+  function onToggleApprovalStatus(id: string) {
+    setExpandedApprovalIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   }
 
   function onConverted(response: ConvertRequestToContractResponse) {
@@ -363,6 +382,23 @@ export default function RequestsPage() {
                     draft contract from it.
                   </p>
                 )}
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                  onClick={() => onToggleApprovalStatus(row.id)}
+                  data-testid="request-approval-toggle"
+                  aria-expanded={expandedApprovalIds.has(row.id)}
+                >
+                  {expandedApprovalIds.has(row.id)
+                    ? "Hide approval status"
+                    : "View approval status"}
+                </button>
+              </div>
+              {expandedApprovalIds.has(row.id) && (
+                <RequestApprovalStatusSection requestId={row.id} />
+              )}
             </li>
           ))}
         </ul>

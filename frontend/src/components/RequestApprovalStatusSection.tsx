@@ -1,0 +1,235 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
+import {
+  ApiError,
+  MissingDevUserError,
+  getRequestApprovalStatus,
+} from "../lib/api";
+import { demoPath } from "../lib/routes";
+import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
+
+interface Props {
+  /** ID of the request to look up approval status for. */
+  requestId: string;
+}
+
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "loaded"; status: RequestApprovalStatus }
+  | { kind: "error"; message: string };
+
+/**
+ * Compact, lazy-loaded approval visibility surface for a single request.
+ *
+ * The component renders inline on the Requests page when the user
+ * expands a row; it never fetches at list-render time so there's no
+ * N+1 cost on initial page load.
+ *
+ * Server-aligned: badges and blocking copy come straight from the
+ * server's ``summary`` so the UI cannot disagree with the live
+ * DocuSeal gate. No state derivation here.
+ */
+export default function RequestApprovalStatusSection({ requestId }: Props) {
+  const [state, setState] = useState<LoadState>({ kind: "loading" });
+
+  useEffect(() => {
+    let aborted = false;
+    setState({ kind: "loading" });
+    getRequestApprovalStatus(requestId)
+      .then((status) => {
+        if (!aborted) setState({ kind: "loaded", status });
+      })
+      .catch((err) => {
+        if (aborted) return;
+        if (err instanceof MissingDevUserError || err instanceof ApiError) {
+          setState({ kind: "error", message: err.message });
+        } else {
+          setState({
+            kind: "error",
+            message: "Could not load approval status.",
+          });
+        }
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [requestId]);
+
+  if (state.kind === "loading") {
+    return (
+      <p
+        className="mt-3 text-xs text-ink-subtle"
+        data-testid="request-approval-status-loading"
+      >
+        Loading approval status…
+      </p>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <p
+        className="mt-3 text-xs text-danger"
+        data-testid="request-approval-status-error"
+      >
+        {state.message}
+      </p>
+    );
+  }
+
+  const { status } = state;
+  return (
+    <div
+      className="mt-3 space-y-2 rounded border border-rule p-2 text-xs"
+      data-testid="request-approval-status"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-medium text-ink">Approval status</p>
+        <ApprovalBadge status={status} />
+      </div>
+
+      {status.matching_policies.length > 0 && (
+        <div data-testid="request-approval-policies">
+          <p className="text-ink-subtle">Matching policies</p>
+          <ul className="ml-4 list-disc">
+            {status.matching_policies.map((p) => (
+              <li
+                key={p.id}
+                data-testid="request-approval-policy"
+                className="text-ink-muted"
+              >
+                {p.name}
+                {p.applies_to_generated_contracts ? " · required" : ""}
+                {!p.auto_attach ? " · manual" : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {status.workflow_runs.length > 0 ? (
+        <div data-testid="request-approval-workflows">
+          <p className="text-ink-subtle">Workflows</p>
+          <ul className="space-y-1">
+            {status.workflow_runs.map((run) => {
+              const currentStep =
+                run.current_step_order != null
+                  ? run.steps.find(
+                      (s) => s.step_order === run.current_step_order,
+                    )
+                  : undefined;
+              return (
+                <li
+                  key={run.id}
+                  className="rounded border border-rule p-2"
+                  data-testid="request-approval-workflow"
+                >
+                  <p className="text-ink">
+                    {run.name}
+                    {run.source_approval_policy_name ? (
+                      <span className="text-ink-subtle">
+                        {" "}· from policy {run.source_approval_policy_name}
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="text-ink-subtle">
+                    Status:{" "}
+                    <span data-testid="request-approval-workflow-status">
+                      {run.status}
+                    </span>
+                    {currentStep ? (
+                      <>
+                        {" · current step "}
+                        <span data-testid="request-approval-current-step">
+                          {currentStep.step_order}. {currentStep.title}
+                        </span>
+                      </>
+                    ) : null}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : (
+        status.matching_policies.length === 0 && (
+          <p
+            className="text-ink-subtle"
+            data-testid="request-approval-none"
+          >
+            No approval workflows or policies apply to this request.
+          </p>
+        )
+      )}
+
+      {status.summary.blocking_reason_text && (
+        <p
+          className="text-warning"
+          data-testid="request-approval-blocking-reason"
+        >
+          {status.summary.blocking_reason_text}
+        </p>
+      )}
+
+      {status.linked_contract_id ? (
+        <p>
+          <Link
+            to={demoPath(`/contracts/${status.linked_contract_id}`)}
+            className="text-ink-muted underline-offset-2 hover:underline"
+            data-testid="request-approval-contract-link"
+          >
+            Open linked contract workspace
+          </Link>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ApprovalBadge({ status }: { status: RequestApprovalStatus }) {
+  const { summary } = status;
+  let label: string;
+  let testIdSuffix: string;
+  let className: string;
+
+  if (summary.has_active_workflows) {
+    label = "Approval pending";
+    testIdSuffix = "pending";
+    className = "border-warning text-warning";
+  } else if (summary.has_rejected_workflows) {
+    label = "Approval rejected";
+    testIdSuffix = "rejected";
+    className = "border-danger text-danger";
+  } else if (summary.ready_for_signature === true) {
+    label = "Ready for signature";
+    testIdSuffix = "ready";
+    className = "border-success text-success";
+  } else if (summary.has_completed_workflows && status.linked_contract_id == null) {
+    // Workflows completed but no contract yet — convey "approval done"
+    // without claiming gate readiness.
+    label = "Approval completed";
+    testIdSuffix = "completed";
+    className = "border-success text-success";
+  } else if (summary.blocking_reason) {
+    label = "Approval blocked";
+    testIdSuffix = "blocked";
+    className = "border-danger text-danger";
+  } else if (status.matching_policies.length === 0 && status.workflow_runs.length === 0) {
+    label = "No approval required";
+    testIdSuffix = "none";
+    className = "border-rule text-ink-subtle";
+  } else {
+    label = "Approval pending";
+    testIdSuffix = "pending";
+    className = "border-warning text-warning";
+  }
+
+  return (
+    <span
+      className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${className}`}
+      data-testid={`request-approval-badge-${testIdSuffix}`}
+    >
+      {label}
+    </span>
+  );
+}

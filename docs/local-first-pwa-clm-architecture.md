@@ -808,4 +808,21 @@ Request-linked contracts are gated before DocuSeal send. Rules: no linked reques
 ## Approval Policies UI (PR #54)
 Approval Policies are now manageable from the frontend UI. Users can create, view, and archive policies that match request_type, contract_type, priority, and linked AgreementTemplate, with blank criteria interpreted as wildcard/Any. Matching active auto-attach policies apply Approval Workflow Templates, and approval-policy gates can block DocuSeal send until requirements are met.
 
-Future work: richer policy builder, policy precedence/conflicts, reconciliation/removal when requests stop matching, RBAC for policy/override actions, policy names in gate responses, dashboard readiness metrics, and PowerSync sync rules.
+## Request Approval Visibility (PR #56)
+
+Read-only visibility surface for the approval state of a single request. The endpoint `GET /api/requests/{request_id}/approval-status` stitches together matching `ApprovalPolicy` rows, the `ApprovalWorkflowRun`s attached to the request (and, when present, its linked contract), and a summary that mirrors the DocuSeal send gate's allow/block decision.
+
+Response shape (compact, per-field allowlist; storage internals excluded by `extra="forbid"`):
+
+* `request_id`, `linked_contract_id`
+* `matching_policy_ids`, `matching_policies` — every policy that matches the request as it stands today, including non-required ones (so a user can see, for example, an internal-only policy that's auto-attaching a workflow even though it doesn't gate signature)
+* `workflow_runs` — each run's status, current step pointer, started/completed timestamps, and step list (id / order / title / status / assignee / approver / due / decided_at). Each run also carries `source_approval_policy_id` and `source_approval_policy_name`, lifted from `metadata_json` so the UI can label policy-derived runs vs ad-hoc ones.
+* `summary` — `has_required_policies`, `has_active_workflows`, `has_rejected_workflows`, `has_completed_workflows`, `all_required_policy_workflows_completed`, `ready_for_signature` (null when no contract is linked), `blocking_reason` (gate code), `blocking_reason_text` (server-rendered plain English).
+
+Logic reuse: the endpoint imports `find_matching_approval_policies` and, when a contract is linked, calls `can_send_contract_to_docuseal` directly, so the visibility surface cannot drift away from the live gate. When there is no linked contract, the gate isn't run and `ready_for_signature` is null; a lightweight derivation still surfaces a `blocking_reason` for active/rejected/required-unmet states so the UI can render the right badge.
+
+Frontend: the Requests page renders an inline, lazy-loaded approval-status section per row (`RequestApprovalStatusSection`), so list-render does not fan out into N approval-status fetches. Badges (`Approval pending` / `Ready for signature` / `Approval rejected` / `Approval blocked` / `Approval completed` / `No approval required`) and blocking copy come straight from the server's `summary`. When a contract is linked, the section also renders a link into the contract workspace.
+
+Out of scope by design (and tracked as follow-ups): policy names in the gate response itself, request approval timeline / cycle-time analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy reconciliation/removal when requests stop matching, and PowerSync sync rules.
+
+Future work: richer policy builder, policy precedence/conflicts, reconciliation/removal when requests stop matching, RBAC for policy/override actions, policy names in gate responses, request approval timeline, approval analytics, SLA / calendar reminders, and PowerSync sync rules.

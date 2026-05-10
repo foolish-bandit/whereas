@@ -70,6 +70,11 @@ import type {
   ListContractRequestFilters,
 } from "../types/requests";
 import type {
+  RequestApprovalPolicySummary,
+  RequestApprovalStatus,
+  RequestApprovalWorkflowSummary,
+} from "../types/requestApprovalStatus";
+import type {
   DashboardContractSummary,
   DashboardCounts,
   DashboardInboxSummary,
@@ -1693,6 +1698,180 @@ export async function convertRequestToContract(
     variables_used: generation.variables_used,
   };
 }
+
+/**
+ * Demo-mode counterpart for ``GET /api/requests/{id}/approval-status``.
+ *
+ * Mirrors the backend visibility surface: stitch matching policies,
+ * attached workflow runs, and a gate-aligned summary. Reuses
+ * ``sessionApprovalRuns`` and ``sessionApprovalPolicies`` so the UI sees
+ * the same state the rest of the demo just mutated (creating/approving/
+ * cancelling workflows, archiving policies). When no contract is linked,
+ * ``ready_for_signature`` is null because the gate doesn't run.
+ */
+export async function getRequestApprovalStatus(
+  id: string,
+  options: ApiOptions = {},
+): Promise<RequestApprovalStatus> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const request =
+    findSessionRequest(id) ?? MOCK_REQUESTS.find((r) => r.id === id);
+  if (!request) throw new ApiError(404, "Contract request not found.");
+
+  const matchingPolicies = sessionApprovalPolicies
+    .filter((p) => p.status === "active")
+    .filter(
+      (p) =>
+        (p.request_type == null || p.request_type === request.request_type) &&
+        (p.contract_type == null || p.contract_type === request.contract_type) &&
+        (p.priority == null || p.priority === request.priority) &&
+        (p.agreement_template_id == null ||
+          p.agreement_template_id === request.linked_template_id),
+    );
+
+  const workflowRuns = sessionApprovalRuns.filter(
+    (run) =>
+      run.request_id === request.id ||
+      (request.linked_contract_id != null &&
+        run.contract_id === request.linked_contract_id),
+  );
+
+  const policySummaries: RequestApprovalPolicySummary[] = matchingPolicies.map(
+    (p) => ({
+      id: p.id,
+      name: p.name,
+      workflow_template_id: p.workflow_template_id,
+      auto_attach: p.auto_attach,
+      applies_to_generated_contracts: p.applies_to_generated_contracts,
+      request_type: p.request_type,
+      contract_type: p.contract_type,
+      priority: p.priority,
+      agreement_template_id: p.agreement_template_id,
+    }),
+  );
+
+  const workflowSummaries: RequestApprovalWorkflowSummary[] = workflowRuns.map(
+    (run) => {
+      const meta = (run.metadata_json ?? {}) as Record<string, unknown>;
+      const sourceId = typeof meta.source_approval_policy_id === "string"
+        ? (meta.source_approval_policy_id as string)
+        : null;
+      const sourceName = typeof meta.source_approval_policy_name === "string"
+        ? (meta.source_approval_policy_name as string)
+        : null;
+      return {
+        id: run.id,
+        name: run.name,
+        status: run.status,
+        current_step_order: run.current_step_order,
+        started_at: run.started_at,
+        completed_at: run.completed_at,
+        source_approval_policy_id: sourceId,
+        source_approval_policy_name: sourceName,
+        steps: run.steps.map((s) => ({
+          id: s.id,
+          step_order: s.step_order,
+          title: s.title,
+          status: s.status,
+          assigned_to: s.assigned_to,
+          approver_name: s.approver_name,
+          approver_email: s.approver_email,
+          due_date: s.due_date,
+          decided_at: s.decided_at,
+        })),
+      };
+    },
+  );
+
+  const hasRequiredPolicies = matchingPolicies.some(
+    (p) => p.applies_to_generated_contracts,
+  );
+  const statuses = workflowRuns.map((w) => w.status);
+  const hasActive = statuses.includes("active");
+  const hasRejected = statuses.includes("rejected");
+  const hasCompleted = statuses.includes("completed");
+
+  const completedPolicyIds = new Set(
+    workflowRuns
+      .filter((w) => w.status === "completed")
+      .map((w) => {
+        const meta = (w.metadata_json ?? {}) as Record<string, unknown>;
+        return typeof meta.source_approval_policy_id === "string"
+          ? (meta.source_approval_policy_id as string)
+          : null;
+      })
+      .filter((x): x is string => x != null),
+  );
+  const requiredPolicyIds = matchingPolicies
+    .filter((p) => p.applies_to_generated_contracts)
+    .map((p) => p.id);
+  const allRequiredCompleted = requiredPolicyIds.every((pid) =>
+    completedPolicyIds.has(pid),
+  );
+
+  let readyForSignature: boolean | null = null;
+  let blockingReason: string | null = null;
+  if (request.linked_contract_id != null) {
+    if (hasActive) {
+      readyForSignature = false;
+      blockingReason = "active_approval_workflows";
+    } else if (hasRejected) {
+      readyForSignature = false;
+      blockingReason = "rejected_approval_workflows";
+    } else if (requiredPolicyIds.length && !allRequiredCompleted) {
+      readyForSignature = false;
+      blockingReason = "required_approval_policy_unmet";
+    } else if (hasCompleted) {
+      readyForSignature = true;
+    } else if (workflowRuns.length === 0 && requiredPolicyIds.length === 0) {
+      readyForSignature = true;
+    } else {
+      // Cancelled-only or other terminal-without-completed states map
+      // back to the gate's cancelled_without_completed_approval code.
+      readyForSignature = false;
+      blockingReason = "cancelled_without_completed_approval";
+    }
+  } else {
+    if (hasActive) blockingReason = "active_approval_workflows";
+    else if (hasRejected) blockingReason = "rejected_approval_workflows";
+    else if (requiredPolicyIds.length && !allRequiredCompleted) {
+      blockingReason = "required_approval_policy_unmet";
+    }
+  }
+
+  const reasonText = blockingReason
+    ? GATE_REASON_TEXT[blockingReason] ?? null
+    : null;
+
+  return {
+    request_id: request.id,
+    linked_contract_id: request.linked_contract_id,
+    matching_policy_ids: matchingPolicies.map((p) => p.id),
+    matching_policies: policySummaries,
+    workflow_runs: workflowSummaries,
+    summary: {
+      has_required_policies: hasRequiredPolicies,
+      has_active_workflows: hasActive,
+      has_rejected_workflows: hasRejected,
+      has_completed_workflows: hasCompleted,
+      all_required_policy_workflows_completed: allRequiredCompleted,
+      ready_for_signature: readyForSignature,
+      blocking_reason: blockingReason,
+      blocking_reason_text: reasonText,
+    },
+  };
+}
+
+const GATE_REASON_TEXT: Record<string, string> = {
+  active_approval_workflows:
+    "An approval workflow is still active and waiting on a decision.",
+  rejected_approval_workflows:
+    "An approval workflow was rejected; resolve or restart before sending.",
+  required_approval_policy_unmet:
+    "A required approval policy has not been satisfied.",
+  cancelled_without_completed_approval:
+    "All attached approval workflows were cancelled without a completed approval.",
+};
 
 export async function listInboxItems(
   filters: ListInboxItemFilters = {},

@@ -37,6 +37,9 @@ from app.api.contracts import (
 from app.core.config import get_settings
 from app.models import (
     AgreementTemplate,
+    ApprovalStep,
+    ApprovalWorkflowRun,
+    ApprovalWorkflowRunStatus,
     Contract,
     ContractRequest,
     ContractRequestStatus,
@@ -47,6 +50,13 @@ from app.models import (
 from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import ContractListItemResponse
 from app.schemas.markdown import ContractMarkdownSnapshotResponse
+from app.schemas.request_approval_status import (
+    RequestApprovalPolicySummary,
+    RequestApprovalStatusResponse,
+    RequestApprovalStepSummary,
+    RequestApprovalSummary,
+    RequestApprovalWorkflowSummary,
+)
 from app.schemas.requests import (
     ContractRequestCreateRequest,
     ContractRequestResponse,
@@ -54,7 +64,11 @@ from app.schemas.requests import (
     ConvertRequestToContractRequest,
     ConvertRequestToContractResponse,
 )
-from app.services.approval_policies import apply_approval_policies_to_request
+from app.services.approval_gating import can_send_contract_to_docuseal
+from app.services.approval_policies import (
+    apply_approval_policies_to_request,
+    find_matching_approval_policies,
+)
 from app.services.storage import DocumentStorage
 from app.services.template_generation import (
     TemplateGenerationError,
@@ -387,6 +401,240 @@ async def convert_request_to_contract(
         artifact=ContractArtifactResponse.model_validate(result.artifact),
         markdown_snapshot=snapshot_response,
         variables_used=result.variables_used,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Approval visibility (PR #56)
+#
+# Read-only stitch of policies + workflow runs + the gate result for a
+# single request. Reuses ``find_matching_approval_policies`` and
+# ``can_send_contract_to_docuseal`` so the answer here cannot drift away
+# from the live gate; the UI uses this to render badges / step lists /
+# blocking reasons on the Requests page without flipping between pages.
+# ---------------------------------------------------------------------------
+
+
+# Plain-English phrasing for each gate code so every client renders the
+# same string. Codes themselves come from ``approval_gating.ApprovalGateResult``;
+# extending that enum requires extending this map (covered by tests).
+_GATE_REASON_TEXT: dict[str, str] = {
+    "active_approval_workflows": (
+        "An approval workflow is still active and waiting on a decision."
+    ),
+    "rejected_approval_workflows": (
+        "An approval workflow was rejected; resolve or restart before sending."
+    ),
+    "required_approval_policy_unmet": (
+        "A required approval policy has not been satisfied."
+    ),
+    "cancelled_without_completed_approval": (
+        "All attached approval workflows were cancelled without a completed approval."
+    ),
+}
+
+
+@router.get(
+    "/{request_id}/approval-status",
+    response_model=RequestApprovalStatusResponse,
+)
+async def get_request_approval_status(
+    request_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> RequestApprovalStatusResponse:
+    """Return matching policies + attached workflows + a gate-aligned summary.
+
+    Visibility only — never mutates state, never auto-creates workflows.
+    Cross-org access returns 404 (via ``_get_request_for_org``). Storage
+    internals are excluded by construction: every nested response model
+    sets ``extra="forbid"`` and only allowlists scalar fields.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    request = await _get_request_for_org(
+        session, request_id, user.organization_id
+    )
+
+    # Policies that match this request *as it stands today*. We pass
+    # ``applies_to_generated_contracts=None`` so the visibility surface
+    # shows every match — not just the ones the gate cares about — so a
+    # user can see, for example, an internal-only policy that's
+    # auto-attaching a workflow even though it doesn't gate signature.
+    matching_policies = await find_matching_approval_policies(session, request)
+
+    # Workflow runs attached to this request and (if applicable) the
+    # linked contract. Cross-org rows are filtered by the same
+    # ``organization_id`` constraint used everywhere else.
+    workflow_stmt = (
+        select(ApprovalWorkflowRun)
+        .where(
+            ApprovalWorkflowRun.organization_id == request.organization_id,
+            _workflow_links_request(request),
+        )
+        .order_by(
+            ApprovalWorkflowRun.started_at.asc(),
+            ApprovalWorkflowRun.id.asc(),
+        )
+    )
+    workflow_rows = (
+        (await session.execute(workflow_stmt)).scalars().unique().all()
+    )
+
+    # Bulk-load steps for the runs we found so the response is one
+    # query for the run set + one query for all steps.
+    workflow_ids = [w.id for w in workflow_rows]
+    steps_by_run: dict[uuid.UUID, list[ApprovalStep]] = {
+        wid: [] for wid in workflow_ids
+    }
+    if workflow_ids:
+        step_stmt = (
+            select(ApprovalStep)
+            .where(ApprovalStep.workflow_run_id.in_(workflow_ids))
+            .order_by(
+                ApprovalStep.workflow_run_id.asc(),
+                ApprovalStep.step_order.asc(),
+                ApprovalStep.id.asc(),
+            )
+        )
+        for step in (await session.execute(step_stmt)).scalars().all():
+            steps_by_run.setdefault(step.workflow_run_id, []).append(step)
+
+    workflow_summaries = [
+        _build_workflow_summary(w, steps_by_run.get(w.id, []))
+        for w in workflow_rows
+    ]
+    policy_summaries = [
+        RequestApprovalPolicySummary.model_validate(p) for p in matching_policies
+    ]
+
+    summary = await _build_approval_summary(
+        session, request, matching_policies, workflow_rows
+    )
+
+    return RequestApprovalStatusResponse(
+        request_id=request.id,
+        linked_contract_id=request.linked_contract_id,
+        matching_policy_ids=[p.id for p in matching_policies],
+        matching_policies=policy_summaries,
+        workflow_runs=workflow_summaries,
+        summary=summary,
+    )
+
+
+def _workflow_links_request(request: ContractRequest):
+    """``workflow_run_id == request_id OR workflow_run.contract_id == linked_contract_id``.
+
+    Split out so the query can short-circuit cleanly when there's no
+    linked contract — most requests don't have one.
+    """
+    from sqlalchemy import or_
+
+    if request.linked_contract_id is None:
+        return ApprovalWorkflowRun.request_id == request.id
+    return or_(
+        ApprovalWorkflowRun.request_id == request.id,
+        ApprovalWorkflowRun.contract_id == request.linked_contract_id,
+    )
+
+
+def _build_workflow_summary(
+    run: ApprovalWorkflowRun,
+    steps: list[ApprovalStep],
+) -> RequestApprovalWorkflowSummary:
+    metadata = run.metadata_json or {}
+    source_id_raw = metadata.get("source_approval_policy_id")
+    source_id: uuid.UUID | None = None
+    if isinstance(source_id_raw, str):
+        try:
+            source_id = uuid.UUID(source_id_raw)
+        except (TypeError, ValueError):
+            # Bad metadata shouldn't break the visibility surface — fall
+            # back to None and let the UI render "ad-hoc workflow".
+            source_id = None
+    source_name = metadata.get("source_approval_policy_name")
+    if not isinstance(source_name, str):
+        source_name = None
+    return RequestApprovalWorkflowSummary(
+        id=run.id,
+        name=run.name,
+        status=run.status,
+        current_step_order=run.current_step_order,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        source_approval_policy_id=source_id,
+        source_approval_policy_name=source_name,
+        steps=[RequestApprovalStepSummary.model_validate(s) for s in steps],
+    )
+
+
+async def _build_approval_summary(
+    session: AsyncSession,
+    request: ContractRequest,
+    matching_policies: list,
+    workflow_rows: list[ApprovalWorkflowRun],
+) -> RequestApprovalSummary:
+    has_required_policies = any(
+        p.applies_to_generated_contracts for p in matching_policies
+    )
+    statuses = [w.status for w in workflow_rows]
+    has_active = ApprovalWorkflowRunStatus.ACTIVE.value in statuses
+    has_rejected = ApprovalWorkflowRunStatus.REJECTED.value in statuses
+    has_completed = ApprovalWorkflowRunStatus.COMPLETED.value in statuses
+
+    # Whether every required-gate policy has at least one completed
+    # policy-derived workflow. Mirrors the gate logic exactly so the UI
+    # cannot disagree with the actual send decision.
+    completed_policy_ids = {
+        str((w.metadata_json or {}).get("source_approval_policy_id"))
+        for w in workflow_rows
+        if w.status == ApprovalWorkflowRunStatus.COMPLETED.value
+    }
+    required_policy_ids_str = {
+        str(p.id) for p in matching_policies if p.applies_to_generated_contracts
+    }
+    all_required_completed = required_policy_ids_str.issubset(completed_policy_ids)
+
+    ready_for_signature: bool | None = None
+    blocking_reason: str | None = None
+    if request.linked_contract_id is not None:
+        contract = (
+            await session.execute(
+                select(Contract).where(
+                    Contract.id == request.linked_contract_id,
+                    Contract.organization_id == request.organization_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if contract is not None:
+            gate = await can_send_contract_to_docuseal(
+                session, contract, request.organization_id
+            )
+            ready_for_signature = gate.allowed
+            if not gate.allowed:
+                blocking_reason = gate.code
+
+    if blocking_reason is None and ready_for_signature is None:
+        # No linked contract: derive a soft blocker for the UI even
+        # though the gate wasn't consulted. Don't claim "ready" in this
+        # branch — there's nothing to send yet.
+        if has_active:
+            blocking_reason = "active_approval_workflows"
+        elif has_rejected:
+            blocking_reason = "rejected_approval_workflows"
+        elif has_required_policies and not all_required_completed:
+            blocking_reason = "required_approval_policy_unmet"
+
+    return RequestApprovalSummary(
+        has_required_policies=has_required_policies,
+        has_active_workflows=has_active,
+        has_rejected_workflows=has_rejected,
+        has_completed_workflows=has_completed,
+        all_required_policy_workflows_completed=all_required_completed,
+        ready_for_signature=ready_for_signature,
+        blocking_reason=blocking_reason,
+        blocking_reason_text=_GATE_REASON_TEXT.get(blocking_reason)
+        if blocking_reason
+        else None,
     )
 
 
