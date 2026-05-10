@@ -1286,3 +1286,135 @@ class ApprovalStep(Base):
             "due_date",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Approval workflow templates (PR #51 — reusable approval blueprints)
+#
+# An ``ApprovalWorkflowTemplate`` is a reusable blueprint, distinct from
+# ``ApprovalWorkflowRun`` which is a concrete in-flight process. The
+# template-step rows define the shape of a future workflow; instantiation
+# copies those rows into concrete ``ApprovalStep`` rows on a new run and
+# the concrete steps are what own ``InboxItem`` rows. A template edit
+# never mutates an in-flight run.
+#
+# Naming caution: ``AgreementTemplate`` (a document blueprint) already
+# exists. These are deliberately spelled ``ApprovalWorkflowTemplate`` /
+# ``ApprovalWorkflowTemplateStep`` so the two never get confused at the
+# API boundary.
+# ---------------------------------------------------------------------------
+
+
+class ApprovalWorkflowTemplateStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class ApprovalWorkflowTemplate(Base):
+    """A reusable blueprint for an approval workflow."""
+
+    __tablename__ = "approval_workflow_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    # Free-form so customers can model their own taxonomy without a
+    # migration; example values are documented in the API schema.
+    template_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=ApprovalWorkflowTemplateStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    steps: Mapped[list[ApprovalWorkflowTemplateStep]] = relationship(
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="ApprovalWorkflowTemplateStep.step_order",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "name",
+            name="uq_approval_workflow_templates_org_name",
+        ),
+        Index(
+            "ix_approval_workflow_templates_org_status_type",
+            "organization_id",
+            "status",
+            "template_type",
+        ),
+    )
+
+
+class ApprovalWorkflowTemplateStep(Base):
+    """A single ordered step in an approval workflow template."""
+
+    __tablename__ = "approval_workflow_template_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    workflow_template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_workflow_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    approver_name: Mapped[str | None] = mapped_column(String(255))
+    approver_email: Mapped[str | None] = mapped_column(String(255))
+    # Mirrors ``ApprovalStep.assigned_to`` so instantiation can copy the
+    # value across without a translation step.
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    # Relative due offset used at instantiation time:
+    # ``due_date = today + due_in_days`` when set, ``None`` otherwise.
+    due_in_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    template: Mapped[ApprovalWorkflowTemplate] = relationship(back_populates="steps")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_template_id",
+            "step_order",
+            name="uq_approval_workflow_template_steps_template_order",
+        ),
+        Index(
+            "ix_approval_workflow_template_steps_template_order",
+            "workflow_template_id",
+            "step_order",
+        ),
+    )

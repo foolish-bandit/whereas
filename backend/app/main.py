@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from app.api import (
     agreement_templates,
+    approval_workflow_templates,
     approval_workflows,
     auth,
     clause_templates,
@@ -75,6 +76,11 @@ app.include_router(
     approval_workflows.router,
     prefix="/api/approval-workflows",
     tags=["approval-workflows"],
+)
+app.include_router(
+    approval_workflow_templates.router,
+    prefix="/api/approval-workflow-templates",
+    tags=["approval-workflow-templates"],
 )
 app.include_router(qa.router, prefix="/api/qa", tags=["qa"])
 app.include_router(docuseal_bridge.router, prefix="/api/docuseal", tags=["docuseal"])

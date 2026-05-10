@@ -40,6 +40,10 @@ class DashboardCounts(BaseModel):
     active_approval_workflows: int = 0
     pending_approval_steps: int = 0
     overdue_approval_steps: int = 0
+    # PR #51 — reusable approval workflow blueprints. Counts only
+    # ``status == "active"`` rows (archived templates are hidden from the
+    # default list view).
+    active_approval_workflow_templates: int = 0
 
 
 class DashboardRequestSummary(BaseModel):

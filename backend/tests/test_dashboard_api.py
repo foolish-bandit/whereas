@@ -43,6 +43,8 @@ from app.models import (  # noqa: E402
     AgreementTemplateStatus,
     ApprovalStep,
     ApprovalWorkflowRun,
+    ApprovalWorkflowTemplate,
+    ApprovalWorkflowTemplateStep,
     Contract,
     ContractArtifact,
     ContractRequest,
@@ -116,6 +118,8 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             InboxItem.__table__,
             ApprovalWorkflowRun.__table__,
             ApprovalStep.__table__,
+            ApprovalWorkflowTemplate.__table__,
+            ApprovalWorkflowTemplateStep.__table__,
         ]
     else:
         engine = create_async_engine(
@@ -383,6 +387,7 @@ async def test_summary_returns_zero_counts_for_empty_org(
         "active_approval_workflows": 0,
         "pending_approval_steps": 0,
         "overdue_approval_steps": 0,
+        "active_approval_workflow_templates": 0,
     }
     assert body["upcoming"]["requests_due_soon"] == []
     assert body["upcoming"]["inbox_items_due_soon"] == []
@@ -619,6 +624,41 @@ async def test_summary_counts_include_approval_workflow_metrics(
     assert counts["pending_approval_steps"] == 3
     # Only run A's first step has a past due_date.
     assert counts["overdue_approval_steps"] == 1
+
+
+async def test_summary_counts_active_approval_workflow_templates(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Active templates contribute to the dashboard counter; archived ones don't."""
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user.id)
+
+    base_payload = {
+        "steps": [
+            {"step_order": 1, "title": "Legal review", "due_in_days": 1},
+        ],
+    }
+    create_active = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers,
+        json={**base_payload, "name": "Active template"},
+    )
+    assert create_active.status_code == 201
+    create_archived = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers,
+        json={**base_payload, "name": "Archived template"},
+    )
+    assert create_archived.status_code == 201
+    archive = await client.delete(
+        f"/api/approval-workflow-templates/{create_archived.json()['id']}",
+        headers=headers,
+    )
+    assert archive.status_code == 200
+
+    response = await client.get("/api/dashboard/summary", headers=headers)
+    counts = response.json()["counts"]
+    assert counts["active_approval_workflow_templates"] == 1
 
 
 async def test_due_soon_window_is_two_weeks_inclusive(

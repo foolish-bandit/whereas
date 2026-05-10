@@ -21,6 +21,7 @@ const SAMPLE_SUMMARY = {
     active_approval_workflows: 2,
     pending_approval_steps: 4,
     overdue_approval_steps: 1,
+    active_approval_workflow_templates: 3,
   },
   upcoming: {
     requests_due_soon: [

@@ -59,4 +59,12 @@ describe("Sidebar", () => {
       .filter((el) => el.getAttribute("href") === "/demo/approvals");
     expect(approvalLinks.length).toBeGreaterThan(0);
   });
+
+  it("includes an Approval Templates nav entry pointing to the demo approval-templates route", () => {
+    renderSidebar();
+    const links = screen
+      .getAllByRole("link", { name: "Approval Templates" })
+      .filter((el) => el.getAttribute("href") === "/demo/approval-templates");
+    expect(links.length).toBeGreaterThan(0);
+  });
 });

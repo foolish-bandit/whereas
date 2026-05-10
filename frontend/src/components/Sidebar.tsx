@@ -8,6 +8,7 @@ const NAV = [
   { to: demoPath("/inbox"), label: "Inbox" },
   { to: demoPath("/requests"), label: "Requests" },
   { to: demoPath("/approvals"), label: "Approvals" },
+  { to: demoPath("/approval-templates"), label: "Approval Templates" },
   { to: demoPath("/contracts"), label: "Contracts" },
   { to: demoPath("/agreement-templates"), label: "Agreement Templates" },
   { to: demoPath("/playbooks"), label: "Playbooks" },

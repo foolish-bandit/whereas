@@ -89,6 +89,17 @@ import type {
   ApprovalWorkflowRunListItem,
   ListApprovalWorkflowFilters,
 } from "../types/approvalWorkflows";
+import type {
+  ApprovalWorkflowTemplate,
+  ApprovalWorkflowTemplateCreateRequest,
+  ApprovalWorkflowTemplatePatch,
+  ApprovalWorkflowTemplateStep,
+  ApprovalWorkflowTemplateStepCreate,
+  ApprovalWorkflowTemplateStepPatch,
+  CreateApprovalWorkflowFromTemplateRequest,
+  CreateApprovalWorkflowFromTemplateResponse,
+  ListApprovalWorkflowTemplateFilters,
+} from "../types/approvalWorkflowTemplates";
 import {
   MOCK_DEMO_ORG_ID,
   MOCK_INBOX_ITEMS,
@@ -667,6 +678,8 @@ export function __resetMockState(): void {
   }
   cannedDeactivations.clear();
   demoSetupCompleted = false;
+  sessionApprovalRuns.length = 0;
+  sessionApprovalTemplates.length = 0;
 }
 
 const DEMO_CLAUSE_TEMPLATES: ClauseTemplate[] = [
@@ -2138,6 +2151,10 @@ function _buildDashboardCounts(): DashboardCounts {
       0,
     );
 
+  const active_approval_workflow_templates = sessionApprovalTemplates.filter(
+    (t) => t.status === "active",
+  ).length;
+
   return {
     open_requests,
     in_progress_requests,
@@ -2151,6 +2168,7 @@ function _buildDashboardCounts(): DashboardCounts {
     active_approval_workflows,
     pending_approval_steps,
     overdue_approval_steps,
+    active_approval_workflow_templates,
   };
 }
 
@@ -2215,5 +2233,393 @@ export async function getDashboardSummary(
       recent_requests,
       recent_signed_contracts,
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Approval workflow templates (PR #51 — reusable approval blueprints, demo mode)
+//
+// Mirrors the backend behavior closely enough for UI tests:
+//  * creating a template stores its steps,
+//  * archiving hides the template from the default list,
+//  * instantiating creates a concrete workflow run + steps + a single
+//    inbox item for the first step only,
+//  * editing the template after instantiation does NOT mutate the run.
+// No storage internals are ever materialized here.
+// ---------------------------------------------------------------------------
+
+const sessionApprovalTemplates: ApprovalWorkflowTemplate[] = [];
+
+function _findApprovalTemplate(
+  id: string,
+): ApprovalWorkflowTemplate | undefined {
+  return sessionApprovalTemplates.find((t) => t.id === id);
+}
+
+function _normalizeTemplateStepOrders(
+  template: ApprovalWorkflowTemplate,
+): void {
+  template.steps.sort((a, b) => a.step_order - b.step_order);
+  template.steps.forEach((step, index) => {
+    step.step_order = index + 1;
+  });
+}
+
+export async function listApprovalWorkflowTemplates(
+  filters: ListApprovalWorkflowTemplateFilters = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return sessionApprovalTemplates
+    .filter((tmpl) => {
+      if (filters.status && tmpl.status !== filters.status) return false;
+      if (
+        !filters.status &&
+        !filters.include_archived &&
+        tmpl.status !== "active"
+      ) {
+        return false;
+      }
+      if (
+        filters.template_type &&
+        tmpl.template_type !== filters.template_type
+      ) {
+        return false;
+      }
+      if (
+        filters.query &&
+        !tmpl.name.toLowerCase().includes(filters.query.toLowerCase())
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((t) => _cloneTemplate(t));
+}
+
+export async function getApprovalWorkflowTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const tmpl = _findApprovalTemplate(id);
+  if (!tmpl) throw new ApiError(404, "Approval workflow template not found.");
+  return _cloneTemplate(tmpl);
+}
+
+export async function createApprovalWorkflowTemplate(
+  payload: ApprovalWorkflowTemplateCreateRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (!payload.steps || payload.steps.length === 0) {
+    throw new ApiError(422, "At least one step is required.");
+  }
+  if (
+    sessionApprovalTemplates.some(
+      (t) => t.name.toLowerCase() === payload.name.toLowerCase(),
+    )
+  ) {
+    throw new ApiError(
+      409,
+      "A workflow template with that name already exists.",
+    );
+  }
+  const now = isoNow();
+  const templateId = nextId("wftpl");
+  const steps: ApprovalWorkflowTemplateStep[] = payload.steps.map(
+    (step, index) => ({
+      id: nextId("wftpl-step"),
+      organization_id: MOCK_DEMO_ORG_ID,
+      workflow_template_id: templateId,
+      step_order: step.step_order ?? index + 1,
+      title: step.title,
+      description: step.description ?? null,
+      approver_name: step.approver_name ?? null,
+      approver_email: step.approver_email ?? null,
+      assigned_to: step.assigned_to ?? null,
+      due_in_days: step.due_in_days ?? null,
+      metadata_json: step.metadata_json ?? null,
+      created_at: now,
+      updated_at: now,
+    }),
+  );
+  const template: ApprovalWorkflowTemplate = {
+    id: templateId,
+    organization_id: MOCK_DEMO_ORG_ID,
+    name: payload.name,
+    description: payload.description ?? null,
+    template_type: payload.template_type ?? null,
+    status: "active",
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: payload.metadata_json ?? null,
+    steps,
+  };
+  sessionApprovalTemplates.unshift(template);
+  return _cloneTemplate(template);
+}
+
+export async function updateApprovalWorkflowTemplate(
+  id: string,
+  payload: ApprovalWorkflowTemplatePatch,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(id);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  if (
+    payload.name !== undefined &&
+    payload.name !== null &&
+    payload.name !== template.name &&
+    sessionApprovalTemplates.some(
+      (t) =>
+        t.id !== template.id &&
+        t.name.toLowerCase() === payload.name!.toLowerCase(),
+    )
+  ) {
+    throw new ApiError(
+      409,
+      "A workflow template with that name already exists.",
+    );
+  }
+  if (payload.name !== undefined && payload.name !== null) {
+    template.name = payload.name;
+  }
+  if (payload.description !== undefined) {
+    template.description = payload.description;
+  }
+  if (payload.template_type !== undefined) {
+    template.template_type = payload.template_type;
+  }
+  if (payload.status !== undefined && payload.status !== null) {
+    template.status = payload.status;
+  }
+  if (payload.metadata_json !== undefined) {
+    template.metadata_json = payload.metadata_json;
+  }
+  template.updated_at = isoNow();
+  return _cloneTemplate(template);
+}
+
+export async function archiveApprovalWorkflowTemplate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(id);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  template.status = "archived";
+  template.updated_at = isoNow();
+  return _cloneTemplate(template);
+}
+
+export async function addApprovalWorkflowTemplateStep(
+  templateId: string,
+  payload: ApprovalWorkflowTemplateStepCreate,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplateStep> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(templateId);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  const order =
+    payload.step_order ??
+    (template.steps.length === 0
+      ? 1
+      : template.steps[template.steps.length - 1].step_order + 1);
+  if (template.steps.some((s) => s.step_order === order)) {
+    throw new ApiError(409, "step_order is already in use by another step.");
+  }
+  const now = isoNow();
+  const step: ApprovalWorkflowTemplateStep = {
+    id: nextId("wftpl-step"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    workflow_template_id: template.id,
+    step_order: order,
+    title: payload.title,
+    description: payload.description ?? null,
+    approver_name: payload.approver_name ?? null,
+    approver_email: payload.approver_email ?? null,
+    assigned_to: payload.assigned_to ?? null,
+    due_in_days: payload.due_in_days ?? null,
+    metadata_json: payload.metadata_json ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+  template.steps.push(step);
+  template.steps.sort((a, b) => a.step_order - b.step_order);
+  template.updated_at = now;
+  return { ...step };
+}
+
+export async function updateApprovalWorkflowTemplateStep(
+  templateId: string,
+  stepId: string,
+  payload: ApprovalWorkflowTemplateStepPatch,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplateStep> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(templateId);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  const step = template.steps.find((s) => s.id === stepId);
+  if (!step) {
+    throw new ApiError(404, "Approval workflow template step not found.");
+  }
+  if (
+    payload.step_order !== undefined &&
+    payload.step_order !== null &&
+    payload.step_order !== step.step_order &&
+    template.steps.some(
+      (s) => s.id !== step.id && s.step_order === payload.step_order,
+    )
+  ) {
+    throw new ApiError(409, "step_order is already in use by another step.");
+  }
+  if (payload.step_order !== undefined && payload.step_order !== null) {
+    step.step_order = payload.step_order;
+  }
+  if (payload.title !== undefined && payload.title !== null) {
+    step.title = payload.title;
+  }
+  if (payload.description !== undefined) step.description = payload.description;
+  if (payload.approver_name !== undefined) {
+    step.approver_name = payload.approver_name;
+  }
+  if (payload.approver_email !== undefined) {
+    step.approver_email = payload.approver_email;
+  }
+  if (payload.assigned_to !== undefined) step.assigned_to = payload.assigned_to;
+  if (payload.due_in_days !== undefined) step.due_in_days = payload.due_in_days;
+  if (payload.metadata_json !== undefined) {
+    step.metadata_json = payload.metadata_json;
+  }
+  step.updated_at = isoNow();
+  template.steps.sort((a, b) => a.step_order - b.step_order);
+  template.updated_at = step.updated_at;
+  return { ...step };
+}
+
+export async function deleteApprovalWorkflowTemplateStep(
+  templateId: string,
+  stepId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowTemplate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(templateId);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  const idx = template.steps.findIndex((s) => s.id === stepId);
+  if (idx === -1) {
+    throw new ApiError(404, "Approval workflow template step not found.");
+  }
+  template.steps.splice(idx, 1);
+  _normalizeTemplateStepOrders(template);
+  template.updated_at = isoNow();
+  return _cloneTemplate(template);
+}
+
+export async function instantiateApprovalWorkflowTemplate(
+  templateId: string,
+  payload: CreateApprovalWorkflowFromTemplateRequest,
+  options: ApiOptions = {},
+): Promise<CreateApprovalWorkflowFromTemplateResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const template = _findApprovalTemplate(templateId);
+  if (!template) {
+    throw new ApiError(404, "Approval workflow template not found.");
+  }
+  if (template.status !== "active") {
+    throw new ApiError(
+      409,
+      "Archived workflow templates cannot be instantiated.",
+    );
+  }
+  if (template.steps.length === 0) {
+    throw new ApiError(
+      409,
+      "Workflow template has no steps; add at least one step before instantiating.",
+    );
+  }
+  if (!payload.request_id && !payload.contract_id) {
+    throw new ApiError(
+      422,
+      "At least one of request_id or contract_id is required.",
+    );
+  }
+
+  const now = isoNow();
+  const today = now.slice(0, 10);
+  const runId = nextId("wf");
+  const orderedTemplateSteps = [...template.steps].sort(
+    (a, b) => a.step_order - b.step_order,
+  );
+  const steps: ApprovalStep[] = orderedTemplateSteps.map((tmplStep) => ({
+    id: nextId("step"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    workflow_run_id: runId,
+    step_order: tmplStep.step_order,
+    title: tmplStep.title,
+    description: tmplStep.description,
+    approver_name: tmplStep.approver_name,
+    approver_email: tmplStep.approver_email,
+    assigned_to: tmplStep.assigned_to,
+    status: "pending",
+    decision_note: null,
+    decided_at: null,
+    due_date:
+      tmplStep.due_in_days !== null && tmplStep.due_in_days !== undefined
+        ? _addDays(today, tmplStep.due_in_days)
+            .toISOString()
+            .slice(0, 10)
+        : null,
+    inbox_item_id: null,
+    created_at: now,
+    updated_at: now,
+    metadata_json: tmplStep.metadata_json,
+  }));
+  const run: ApprovalWorkflowRun = {
+    id: runId,
+    organization_id: MOCK_DEMO_ORG_ID,
+    name: payload.name,
+    status: "active",
+    request_id: payload.request_id ?? null,
+    contract_id: payload.contract_id ?? null,
+    template_id: payload.agreement_template_id ?? null,
+    current_step_order: steps[0].step_order,
+    started_at: now,
+    completed_at: null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: {
+      ...(payload.metadata_json ?? {}),
+      source_workflow_template_id: template.id,
+      source_workflow_template_name: template.name,
+    },
+    steps,
+  };
+  // Inbox item for the first step only.
+  const inbox = _emitApprovalInbox(run, steps[0]);
+  steps[0].inbox_item_id = inbox.id;
+  sessionApprovalRuns.unshift(run);
+  return run;
+}
+
+function _cloneTemplate(
+  template: ApprovalWorkflowTemplate,
+): ApprovalWorkflowTemplate {
+  return {
+    ...template,
+    steps: template.steps.map((s) => ({ ...s })),
   };
 }

@@ -41,6 +41,8 @@ from app.models import (
     ApprovalStepStatus,
     ApprovalWorkflowRun,
     ApprovalWorkflowRunStatus,
+    ApprovalWorkflowTemplate,
+    ApprovalWorkflowTemplateStatus,
     Contract,
     ContractArtifact,
     ContractRequest,
@@ -217,6 +219,15 @@ async def _build_counts(
         ),
     )
 
+    active_approval_workflow_templates = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowTemplate.id)).where(
+            ApprovalWorkflowTemplate.organization_id == org_id,
+            ApprovalWorkflowTemplate.status
+            == ApprovalWorkflowTemplateStatus.ACTIVE.value,
+        ),
+    )
+
     return DashboardCounts(
         open_requests=open_requests,
         in_progress_requests=in_progress_requests,
@@ -230,6 +241,7 @@ async def _build_counts(
         active_approval_workflows=active_approval_workflows,
         pending_approval_steps=pending_approval_steps,
         overdue_approval_steps=overdue_approval_steps,
+        active_approval_workflow_templates=active_approval_workflow_templates,
     )
 
 
