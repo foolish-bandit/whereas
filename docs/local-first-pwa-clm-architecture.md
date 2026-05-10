@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility checkpoint as of PR #56** (the place to read first if you only have time for one), and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility/timeline checkpoint as of PR #58** (the place to read first if you only have time for one), and section 11 for the next PR.
 
 ---
 
@@ -669,9 +669,9 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 ## 9. Known Gaps / Follow-ups
 
-Tracked, intentionally not implemented. See **section 14.7** for the canonical, scoped list of approval-system gaps; the bullet here is a pointer.
+Tracked, intentionally not implemented. See **section 14.8** for the canonical, scoped list of approval-system gaps; the bullet here is a pointer.
 
-- **Approval system gaps** — see section 14.7 for the full list (policy names in gate response, request approval timeline, approval analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy precedence/conflicts, policy reconciliation/removal, conditional/parallel approvals).
+- **Approval system gaps** — see section 14.8 for the full list (policy names in gate response, request approval timeline, approval analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy precedence/conflicts, policy reconciliation/removal, conditional/parallel approvals).
 - Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
 - Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
@@ -705,42 +705,38 @@ PR #53 adds a backend-only **approval policies** layer: `ApprovalPolicy` rows at
 
 ---
 
-## 11. Recommended Next PR: Approval Timeline / Activity Feed
+## 11. Recommended Next PR: Policy names in gate response, or signer-event mirror
 
-With approval workflows (PR #50), templates (PR #51), the DocuSeal gate (PR #52), policies (PR #53), the policies UI (PR #54), and the visibility surface (PR #56) all in place, users can now answer **"what's the current state?"** for a request. They cannot yet answer **"how did we get here?"** — that's the next focused PR.
+The activity timeline shipped in PR #58, so users can now answer **"how did we get here?"** for a request or contract. The two best candidates for the next focused PR pick up loose threads from the approval / signature stack.
 
-### 11a. Goal
+### 11a. Policy names in the gate response
 
-Add a chronological approval activity feed for a request (and, transitively, its linked contract). The feed should surface, in time order:
+**Goal:** make the DocuSeal send-gate response self-describing. Today, when the gate blocks with `required_approval_policy_unmet`, the response carries `missing_policy_ids` but not policy names — the UI has to render an opaque id list and the user has to cross-reference the Approval Policies page.
 
-- workflow created (ad-hoc create or policy-derived auto-attach)
-- step activated (became the current step + opened its inbox item)
-- step approved / rejected / skipped
-- workflow completed / rejected / cancelled
-- DocuSeal sent (`contract.sent_for_signature` audit event)
-- signed PDF received (`contract.executed` audit event from the verified DocuSeal webhook)
+Suggested minimum scope:
 
-### 11b. Suggested minimum scope
+- Extend `ApprovalGateResult.to_safe_dict` to include a `missing_policies` array of `{id, name}` objects in addition to the existing `missing_policy_ids` (keep `missing_policy_ids` for backward-compat).
+- The gate already loads policies via `find_matching_approval_policies`; adding name to the response is a single extra field.
+- Frontend: replace the id-list rendering in `ContractWorkspacePage.tsx:697` with the policy names, with a fallback to id when name isn't available.
+- No schema migration needed; no new state.
 
-- **Backend: a single read-only endpoint.** `GET /api/requests/{request_id}/approval-timeline` returning a flat, time-sorted list of `TimelineEvent` rows assembled from existing tables — `ApprovalWorkflowRun.started_at` / `completed_at`, `ApprovalStep.decided_at`, `ContractRequest.created_at`, and the existing `AuditEvent` rows for DocuSeal send / webhook. **Do not add a new audit table** — derive the timeline from what's already there. If a state transition isn't observable from existing fields (e.g. step "activated" timestamps), either add a single nullable `activated_at` column on `ApprovalStep` or derive it from the prior step's `decided_at`. Pick one and document.
-- **Compact event schema.** `event_type`, `occurred_at`, `actor_user_id` (if known), `workflow_run_id` (if applicable), `step_id` (if applicable), `payload` (a small allowlist — never raw audit metadata). No storage internals; same `extra="forbid"` discipline as the visibility surface.
-- **Frontend: render the timeline inline on the Requests page** under the existing approval-status section, behind the same lazy-load toggle. A vertical list with a one-line description per event and a relative-time stamp is enough; no charts, no filters in v1.
-- **Mock/demo mode parity.** Fold the event derivation over `sessionApprovalRuns` + `sessionApprovalPolicies` so demo behavior matches the backend.
+### 11b. Signer-event mirror table
 
-### 11c. Out of scope for the timeline PR
+**Goal:** today, the contract-level timeline only shows `contract.sent_for_signature` and `contract.executed` — it can't show "Counterparty A viewed", "Counterparty B signed", "Counterparty C declined" because Whereas doesn't persist per-signer events from DocuSeal. A small `signer_events` table mirrored from the verified DocuSeal webhook would close that loop.
 
-- No new state-machine transitions.
-- No new audit events; reuse the existing `AuditEvent` table.
-- No charts, cycle-time math, or per-assignee breakdowns. Those belong in a later analytics PR.
-- No PowerSync sync rules.
-- No RBAC / Clerk / Nango / calendar.
-- No conditional / parallel approvals.
+Suggested minimum scope:
 
-### 11d. Architecture asks (raise before coding)
+- New `signer_events` table: `id`, `contract_id`, `submission_id`, `event_type` (allowlist: `viewed`/`signed`/`declined`/`completed`), `occurred_at`, `signer_email_hash` (NOT raw email — hash with the per-org master key so the audit value can't be enumerated by an attacker).
+- The DocuSeal webhook handler (`docuseal_completion.py`) already verifies HMAC and parses the payload; extend it to insert one `signer_event` per signer transition.
+- Project signer events into the contract activity timeline through a new `signer.viewed` / `signer.signed` / etc. label set in `activity_timeline._title_for`.
+- Frontend gets richer rows for free.
 
-- Should the timeline include events for the **linked contract** as well as the request (e.g. `contract.uploaded`, signed_pdf), or should those live on a separate contract-timeline endpoint? Recommendation: include them on the request timeline since users land on the request page first.
-- Should "step activated" be a derived event (from the prior step's `decided_at`) or stored explicitly (new column)? Derived is simpler; explicit is more honest. Pick one and pin it in tests.
-- Should the timeline be paginated? Probably not in v1 — a request has at most a handful of workflows, each with a handful of steps. Cap the response size and revisit.
+### 11c. Out of scope for whichever PR is picked
+
+- No new approval state transitions.
+- No DocuSeal gate rule changes (gate output shape can grow but allow/block logic stays).
+- No PowerSync, RBAC, Nango, calendar, Docling, local vault.
+- No richer analytics / cycle-time math.
 
 ---
 
@@ -800,7 +796,7 @@ Read these before starting any new feature work.
 When in doubt about an architectural choice, ask before coding. A short clarifying question is always cheaper than ripping out a wrong design.
 
 
-## 14. Approval system checkpoint (after PR #56)
+## 14. Approval system checkpoint (after PR #58)
 
 This is the single canonical description of the approval / policy / gate / visibility stack as it stands on `main` today. Read it first if you're new to the codebase or returning to it. Sections 7.z (PR #50) and 7.aa (PR #51), and the PR-by-PR notes in section 10, remain useful for archaeology, but **this section is the load-bearing one** — if any of them disagrees with this checkpoint, this checkpoint wins.
 
@@ -812,7 +808,7 @@ The pieces, in dependency order:
 4. DocuSeal send gate — what blocks `POST /api/contracts/{id}/send-to-docuseal`.
 5. Request approval visibility — explainability surface that stitches the above together.
 
-The whole thing is intentionally linear and explicit: **no parallel approvals, no conditional branching, no auto-send, no automatic mutation of request/contract status, no RBAC, no calendar, no PowerSync.** Those are tracked in section 14.7.
+The whole thing is intentionally linear and explicit: **no parallel approvals, no conditional branching, no auto-send, no automatic mutation of request/contract status, no RBAC, no calendar, no PowerSync.** Those are tracked in section 14.8.
 
 ### 14.1 Approval Workflow Runs
 
@@ -850,8 +846,8 @@ An `ApprovalPolicy` row matches a `ContractRequest` by `request_type`, `contract
 - Auto-attach is **idempotent via run metadata**: a non-cancelled run with `metadata_json.source_approval_policy_id` equal to the policy's id is treated as already-attached, so re-applying the same policy on an update does not duplicate runs.
 - A **cancelled** policy-derived run does NOT block reattach: if an admin cancels the auto-attached workflow and the request is then re-saved, the policy will reattach. (Soft skip filters on `status != cancelled`.)
 - `auto_attach=false` policies still surface in the matching set and in the visibility surface; they're simply not auto-instantiated. A user can still pick one up manually.
-- Archiving a policy (`status='archived'`) immediately drops it from the matching set. Existing policy-derived runs on requests are not retroactively touched — that's tracked as policy reconciliation/removal in 14.7.
-- Frontend management UI ships under `Approval Policies` in the demo sidebar (list / create / archive, archived hidden by default with an include-archived toggle). **There is no RBAC** on policy management today — anyone with API access to the org can create / archive policies. Tracked in 14.7.
+- Archiving a policy (`status='archived'`) immediately drops it from the matching set. Existing policy-derived runs on requests are not retroactively touched — that's tracked as policy reconciliation/removal in 14.8.
+- Frontend management UI ships under `Approval Policies` in the demo sidebar (list / create / archive, archived hidden by default with an include-archived toggle). **There is no RBAC** on policy management today — anyone with API access to the org can create / archive policies. Tracked in 14.8.
 
 ### 14.4 DocuSeal Approval Gate
 
@@ -898,7 +894,47 @@ Frontend: the Requests page renders an inline, lazy-loaded approval-status secti
 
 Visibility is **explainability only**. It does not change workflow or gate semantics, does not auto-create or remove runs, and never mutates request/contract state.
 
-### 14.6 Security / privacy rules (approval system)
+### 14.6 Activity Timeline (PR #58)
+
+Read-only chronological feed for a request or a contract. Two endpoints, same item shape:
+
+- `GET /api/requests/{request_id}/activity` — approval events on workflow runs attached to the request *or* its linked contract, plus DocuSeal events on the linked contract. Mirrors the visibility surface's "this is the request's set of runs" predicate so the two cannot disagree.
+- `GET /api/contracts/{contract_id}/activity` — approval events on workflow runs attached to the contract directly, plus DocuSeal events on the contract.
+
+Both default to `?limit=25` and hard-cap at 100. Items are ordered `occurred_at DESC, id DESC`. Cross-org access returns 404 (via the existing `_get_request_for_org` / `_get_contract_for_org`).
+
+**Audit-backed.** The timeline is a projection over the existing append-only hash-chained `audit_events` table. PR #58 adds seven narrowly-named approval event types to `AuditEventType`:
+
+```
+approval.workflow.created
+approval.step.activated
+approval.step.approved
+approval.step.rejected
+approval.workflow.completed
+approval.workflow.rejected
+approval.workflow.cancelled
+```
+
+Plus the existing `contract.sent_for_signature` (PR #44) and `contract.executed` (PR #45) events.
+
+These are emitted from the same handlers the API already exposes — `create_workflow`, `approve_step`, `reject_step`, `cancel_workflow`, `instantiate_workflow_template` — via a small wrapper module (`app.services.approval_audit`). Audit writes happen inside the same transaction as the workflow / step writes, so a chain failure rolls everything back.
+
+**Compact, allowlisted detail payloads.** The audit chain is hash-validated, so what goes into `details` becomes part of the persisted record. The `approval_audit` helpers stamp only:
+
+- `workflow_run_id`, `workflow_run_name`
+- `request_id`, `contract_id` (whichever the run is attached to)
+- `source` — one of `ad_hoc` / `template` / `policy`, derived from `metadata_json`
+- `source_workflow_template_id`, `source_approval_policy_id`, `source_approval_policy_name` (when known)
+- step-level: `approval_step_id`, `step_order`, `step_title`
+- `decision_note_present: bool` — **never** the decision-note text. The `ApprovalStep.decision_note` column already holds the raw text for the few places that need it; the audit chain is not the right place for user-typed content.
+
+**Server-rendered titles.** The projection emits a `title` and optional `description` per item so every client renders the same string and there's no client-side i18n / format drift. Adding a new event type requires extending the title map (`activity_timeline._title_for`); a test pins the existing set.
+
+**Frontend.** A reusable `ActivityTimeline` component (props: `kind: "request" | "contract"` plus the matching id) lazy-loads the feed on mount and renders a simple vertical list with category dots (success / warning / danger / info) — no charts, no filters. `RequestsPage` mounts it inline alongside the approval-status section when a row is expanded; `ContractWorkspacePage` mounts it as a dedicated panel on every contract page.
+
+**Backfill caveat.** The timeline starts recording approval events at PR #58. Workflow runs that existed before PR #58 have no approval audit rows and will not appear in the feed; their existing DocuSeal send / completion audit events from PRs #44 / #45 still surface if they target the request's linked contract.
+
+### 14.7 Security / privacy rules (approval system)
 
 The cross-cutting rules in section 8 still apply; restated for the approval surfaces specifically:
 
@@ -908,13 +944,16 @@ The cross-cutting rules in section 8 still apply; restated for the approval surf
 - The service worker does not cache `/api/*` (NavigationRoute denylist `[/^\/api\//]`); approval / policy / gate / visibility responses are never precached.
 - Cross-org access on every approval / policy / template / visibility endpoint returns 404; linked entity (`request_id`, `contract_id`, `agreement_template_id`) cross-org references return 422.
 
-### 14.7 Known gaps in the approval system
+### 14.8 Known gaps in the approval system
 
-Tracked, intentionally not implemented after PR #56:
+Tracked, intentionally not implemented after PR #58:
 
 - **Policy names in gate response.** The gate returns policy ids in `missing_policy_ids`; the UI has to look them up. A future change should include policy names so the gate response is self-describing.
-- **Request approval timeline.** Today users see "what's the current state?" but not "how did we get here?" — a chronological feed of workflow created / step activated / step decided / DocuSeal sent / signed_pdf received is the recommended next PR. See section 11.
-- **Approval analytics.** Cycle time per template, average days-pending, top blocked approvers — once enough runs exist to be meaningful.
+- **Approval timeline backfill.** PR #58 starts recording approval audit events going forward. Workflow runs that existed before PR #58 do not have audit rows and will not appear on the timeline; a backfill pass is tracked as future work.
+- **Richer timeline filters / export.** Today the timeline is a flat list with a server-side cap (default 25, max 100). Filters by event type, actor, date range, plus an exportable audit trail are tracked as future work.
+- **Actor display names.** Audit rows carry `actor_user_id`; the timeline renders the id but not the human name. Joining users in the timeline projection is future work.
+- **Signer-event mirror table.** Per-signer DocuSeal events (viewed / signed / declined) are not surfaced on the timeline today — only the contract-level `sent_for_signature` and `executed` events are. A `signer_events` table mirrored from DocuSeal webhooks is the right shape, future work.
+- **Approval analytics.** Cycle time per template, average days-pending, top blocked approvers — once enough audit rows exist to be meaningful.
 - **SLA / calendar reminders.** Pending-step due dates exist but nothing notifies anyone; calendar / Nango integration is the eventual home.
 - **RBAC for policy management and gate overrides.** Today any caller in the org can create / archive policies or use `approval_override`. Override usage is audit-logged but not gated.
 - **Policy precedence / conflicts.** Two matching policies that point at different workflow templates both auto-attach today; first-match precedence or explicit ordering is future work.

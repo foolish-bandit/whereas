@@ -449,6 +449,47 @@ describe("mockApi", () => {
     });
   });
 
+  describe("activity timeline (PR #58)", () => {
+    it("emits workflow_created + step_activated when a template is instantiated", async () => {
+      const { getRequestActivity } = await import("../mockApi");
+      const request = await createRequest({
+        title: "Timeline test",
+        request_type: "new_contract",
+        contract_type: "NDA",
+      });
+      const template = await createApprovalWorkflowTemplate({
+        name: "Timeline Template",
+        steps: [{ step_order: 1, title: "Legal review" }],
+      });
+      await instantiateApprovalWorkflowTemplate(template.id, {
+        name: "Timeline run",
+        request_id: request.id,
+      });
+
+      const tl = await getRequestActivity(request.id);
+      const types = tl.items.map((i) => i.event_type);
+      expect(types).toContain("approval.workflow.created");
+      expect(types).toContain("approval.step.activated");
+      // The created+activated pair fires at the same instant on
+      // instantiation, so the relative order between just those two is
+      // intentionally unasserted; what matters is that both surface
+      // and the timeline is sorted DESC by occurred_at across runs.
+
+      // No storage internals in the projected items.
+      const json = JSON.stringify(tl);
+      expect(json).not.toContain("storage_key");
+      expect(json).not.toContain("wrapped_dek");
+      expect(json).not.toContain("decision_note");
+    });
+
+    it("returns an empty timeline for a request with no workflows", async () => {
+      const { getRequestActivity } = await import("../mockApi");
+      const request = await createRequest({ title: "No timeline" });
+      const tl = await getRequestActivity(request.id);
+      expect(tl.items).toEqual([]);
+    });
+  });
+
   describe("approval policies (demo)", () => {
     it("excludes archived by default and includes them when requested", async () => {
       const activeOnly = await listApprovalPolicies();

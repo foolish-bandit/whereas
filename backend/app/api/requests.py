@@ -47,6 +47,7 @@ from app.models import (
     InboxItemStatus,
     User,
 )
+from app.schemas.activity import ActivityTimelineResponse
 from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import ContractListItemResponse
 from app.schemas.markdown import ContractMarkdownSnapshotResponse
@@ -64,6 +65,7 @@ from app.schemas.requests import (
     ConvertRequestToContractRequest,
     ConvertRequestToContractResponse,
 )
+from app.services import activity_timeline
 from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.approval_policies import (
     apply_approval_policies_to_request,
@@ -519,6 +521,49 @@ async def get_request_approval_status(
         workflow_runs=workflow_summaries,
         summary=summary,
     )
+
+
+@router.get(
+    "/{request_id}/activity",
+    response_model=ActivityTimelineResponse,
+)
+async def get_request_activity(
+    request_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+    limit: int = Query(
+        default=activity_timeline.DEFAULT_LIMIT,
+        ge=1,
+        le=activity_timeline.MAX_LIMIT,
+        description=(
+            "Max number of timeline items to return. Default "
+            f"{activity_timeline.DEFAULT_LIMIT}, hard-capped at "
+            f"{activity_timeline.MAX_LIMIT}."
+        ),
+    ),
+) -> ActivityTimelineResponse:
+    """Chronological activity feed for a request.
+
+    Visibility-only: assembled from existing ``AuditEvent`` rows. Cross-org
+    access returns 404 (via ``_get_request_for_org``). Storage internals
+    cannot leak — every nested item model uses ``extra="forbid"`` and only
+    allowlisted scalar fields are projected from each audit row's
+    ``details``.
+
+    The timeline starts recording approval events at PR #58. Older
+    workflow runs and step decisions that happened before this PR have
+    no audit rows and will not appear; existing DocuSeal send /
+    completion audit events from PR #44 / PR #45 are surfaced if they
+    point at this request's linked contract.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    request = await _get_request_for_org(
+        session, request_id, user.organization_id
+    )
+    items = await activity_timeline.load_request_activity(
+        session, request, limit=limit
+    )
+    return ActivityTimelineResponse(items=items)
 
 
 def _workflow_links_request(request: ContractRequest):
