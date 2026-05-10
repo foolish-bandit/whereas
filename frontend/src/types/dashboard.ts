@@ -77,8 +77,50 @@ export interface DashboardRecentActivity {
   recent_signed_contracts: DashboardContractSummary[];
 }
 
+/**
+ * PR #62 — lightweight approval analytics block.
+ *
+ * Aggregate over existing approval workflow + step rows; no new
+ * backend tables, no state transitions. Reporting / explainability
+ * only. ``approver_email`` is intentionally omitted from the row
+ * shape to keep approver PII off the dashboard surface.
+ */
+export interface DashboardApprovalAssigneeBucket {
+  assigned_to: string | null;
+  count: number;
+  overdue_count: number;
+}
+
+export interface DashboardOldestPendingStep {
+  id: string;
+  workflow_run_id: string;
+  title: string;
+  step_order: number;
+  assigned_to: string | null;
+  approver_name: string | null;
+  /** ISO date (YYYY-MM-DD). */
+  due_date: string | null;
+  created_at: string;
+  request_id: string | null;
+  contract_id: string | null;
+}
+
+export interface DashboardApprovalAnalytics {
+  pending_steps: number;
+  overdue_steps: number;
+  active_workflows: number;
+  completed_workflows: number;
+  rejected_workflows: number;
+  cancelled_workflows: number;
+  workflows_completed_last_30_days: number;
+  workflows_rejected_last_30_days: number;
+  pending_by_assignee: DashboardApprovalAssigneeBucket[];
+  oldest_pending_steps: DashboardOldestPendingStep[];
+}
+
 export interface DashboardSummary {
   counts: DashboardCounts;
   upcoming: DashboardUpcoming;
   recent_activity: DashboardRecentActivity;
+  approval_analytics: DashboardApprovalAnalytics;
 }

@@ -75,9 +75,12 @@ import type {
   RequestApprovalWorkflowSummary,
 } from "../types/requestApprovalStatus";
 import type {
+  DashboardApprovalAnalytics,
+  DashboardApprovalAssigneeBucket,
   DashboardContractSummary,
   DashboardCounts,
   DashboardInboxSummary,
+  DashboardOldestPendingStep,
   DashboardRequestSummary,
   DashboardSummary,
 } from "../types/dashboard";
@@ -768,6 +771,7 @@ export function __resetMockState(): void {
   cannedDeactivations.clear();
   demoSetupCompleted = false;
   sessionApprovalRuns.length = 0;
+  sessionApprovalRuns.push(..._buildDemoApprovalRuns());
   sessionApprovalTemplates.length = 0;
   sessionApprovalPolicies.length = 0;
   sessionApprovalPolicies.push(...(MOCK_APPROVAL_POLICIES as ApprovalPolicy[]).map((p) => ({ ...p })));
@@ -2252,6 +2256,141 @@ export async function dismissInboxItem(
 
 const sessionApprovalRuns: ApprovalWorkflowRun[] = [];
 
+/**
+ * Hard-coded demo approval workflow fixtures so the dashboard's
+ * approval analytics block has something to render in demo mode
+ * without the user creating workflows by hand. Mirrors the shape the
+ * real backend would emit; carries no storage internals.
+ *
+ * Seeded states cover:
+ *   * one active workflow with two pending steps (one overdue, one
+ *     not), assigned to two different demo users,
+ *   * one completed workflow inside the 30-day window,
+ *   * one rejected workflow inside the 30-day window,
+ *   * one cancelled workflow.
+ */
+function _buildDemoApprovalRuns(): ApprovalWorkflowRun[] {
+  const today = DEMO_TODAY;
+  const minus = (days: number): string =>
+    _addDays(today, days).toISOString().slice(0, 10);
+  const minusTs = (days: number): string =>
+    `${minus(days)}T12:00:00Z`;
+  const orgId = MOCK_DEMO_ORG_ID;
+
+  const runActive: ApprovalWorkflowRun = {
+    id: "demo-run-active",
+    organization_id: orgId,
+    name: "NDA legal review",
+    status: "active",
+    request_id: "demo-request-1",
+    contract_id: null,
+    template_id: null,
+    current_step_order: 1,
+    started_at: minusTs(-3),
+    completed_at: null,
+    created_at: minusTs(-3),
+    updated_at: minusTs(-3),
+    created_by: null,
+    metadata_json: null,
+    steps: [
+      {
+        id: "demo-step-active-1",
+        organization_id: orgId,
+        workflow_run_id: "demo-run-active",
+        step_order: 1,
+        title: "Legal review",
+        description: null,
+        approver_name: "Alice Counsel",
+        approver_email: null,
+        assigned_to: "demo-user-alice",
+        status: "pending",
+        decision_note: null,
+        decided_at: null,
+        due_date: minus(-2),
+        inbox_item_id: null,
+        created_at: minusTs(-3),
+        updated_at: minusTs(-3),
+        metadata_json: null,
+      },
+      {
+        id: "demo-step-active-2",
+        organization_id: orgId,
+        workflow_run_id: "demo-run-active",
+        step_order: 2,
+        title: "Finance approval",
+        description: null,
+        approver_name: "Bob Finance",
+        approver_email: null,
+        assigned_to: "demo-user-bob",
+        status: "pending",
+        decision_note: null,
+        decided_at: null,
+        due_date: minus(3),
+        inbox_item_id: null,
+        created_at: minusTs(-3),
+        updated_at: minusTs(-3),
+        metadata_json: null,
+      },
+    ],
+  };
+
+  const runCompleted: ApprovalWorkflowRun = {
+    id: "demo-run-completed",
+    organization_id: orgId,
+    name: "MSA renewal",
+    status: "completed",
+    request_id: "demo-request-2",
+    contract_id: null,
+    template_id: null,
+    current_step_order: null,
+    started_at: minusTs(-10),
+    completed_at: minusTs(-5),
+    created_at: minusTs(-10),
+    updated_at: minusTs(-5),
+    created_by: null,
+    metadata_json: null,
+    steps: [],
+  };
+
+  const runRejected: ApprovalWorkflowRun = {
+    id: "demo-run-rejected",
+    organization_id: orgId,
+    name: "Vendor SOW review",
+    status: "rejected",
+    request_id: "demo-request-3",
+    contract_id: null,
+    template_id: null,
+    current_step_order: null,
+    started_at: minusTs(-12),
+    completed_at: minusTs(-7),
+    created_at: minusTs(-12),
+    updated_at: minusTs(-7),
+    created_by: null,
+    metadata_json: null,
+    steps: [],
+  };
+
+  const runCancelled: ApprovalWorkflowRun = {
+    id: "demo-run-cancelled",
+    organization_id: orgId,
+    name: "Internal pilot — cancelled",
+    status: "cancelled",
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    current_step_order: null,
+    started_at: minusTs(-20),
+    completed_at: minusTs(-15),
+    created_at: minusTs(-20),
+    updated_at: minusTs(-15),
+    created_by: null,
+    metadata_json: null,
+    steps: [],
+  };
+
+  return [runActive, runCompleted, runRejected, runCancelled];
+}
+
 function _toRunListItem(
   run: ApprovalWorkflowRun,
 ): ApprovalWorkflowRunListItem {
@@ -2750,6 +2889,122 @@ export async function getDashboardSummary(
       recent_requests,
       recent_signed_contracts,
     },
+    approval_analytics: _buildApprovalAnalytics(),
+  };
+}
+
+// PR #62 — approval analytics block. Mirrors the backend definitions
+// in ``app/api/dashboard.py``: only pending steps on active runs count
+// toward the pending / overdue / by-assignee / oldest lists, and the
+// 30-day windows look at completed_at on completed/rejected runs.
+function _buildApprovalAnalytics(): DashboardApprovalAnalytics {
+  const todayDate = _isoToDate(DEMO_TODAY);
+  const cutoff = _addDays(DEMO_TODAY, -30);
+
+  const activeRuns = sessionApprovalRuns.filter((r) => r.status === "active");
+  const pendingSteps = activeRuns.flatMap((r) =>
+    r.steps
+      .filter((s) => s.status === "pending")
+      .map((s) => ({ step: s, run: r })),
+  );
+
+  const overdueSteps = pendingSteps.filter(
+    ({ step }) =>
+      step.due_date !== null && _isoToDate(step.due_date) < todayDate,
+  );
+
+  const completedRuns = sessionApprovalRuns.filter(
+    (r) => r.status === "completed",
+  );
+  const rejectedRuns = sessionApprovalRuns.filter(
+    (r) => r.status === "rejected",
+  );
+  const cancelledRuns = sessionApprovalRuns.filter(
+    (r) => r.status === "cancelled",
+  );
+
+  const completedRecent = completedRuns.filter(
+    (r) =>
+      r.completed_at !== null &&
+      r.completed_at.slice(0, 10) >= cutoff.toISOString().slice(0, 10),
+  );
+  const rejectedRecent = rejectedRuns.filter(
+    (r) =>
+      r.completed_at !== null &&
+      r.completed_at.slice(0, 10) >= cutoff.toISOString().slice(0, 10),
+  );
+
+  const buckets = new Map<
+    string | null,
+    { count: number; overdue_count: number }
+  >();
+  for (const { step } of pendingSteps) {
+    const key = step.assigned_to;
+    const cur = buckets.get(key) ?? { count: 0, overdue_count: 0 };
+    cur.count += 1;
+    if (step.due_date !== null && _isoToDate(step.due_date) < todayDate) {
+      cur.overdue_count += 1;
+    }
+    buckets.set(key, cur);
+  }
+  const pending_by_assignee: DashboardApprovalAssigneeBucket[] = Array.from(
+    buckets.entries(),
+  )
+    .map(([assigned_to, v]) => ({
+      assigned_to,
+      count: v.count,
+      overdue_count: v.overdue_count,
+    }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      const aKey = a.assigned_to ?? "￿";
+      const bKey = b.assigned_to ?? "￿";
+      return aKey.localeCompare(bKey);
+    })
+    .slice(0, 10);
+
+  const oldest_pending_steps: DashboardOldestPendingStep[] = pendingSteps
+    .slice()
+    .sort((a, b) => {
+      const aDue = a.step.due_date;
+      const bDue = b.step.due_date;
+      if (aDue !== null && bDue !== null) {
+        if (aDue !== bDue) return aDue.localeCompare(bDue);
+      } else if (aDue === null && bDue !== null) {
+        return 1;
+      } else if (aDue !== null && bDue === null) {
+        return -1;
+      }
+      if (a.step.created_at !== b.step.created_at) {
+        return a.step.created_at.localeCompare(b.step.created_at);
+      }
+      return a.step.id.localeCompare(b.step.id);
+    })
+    .slice(0, 5)
+    .map(({ step, run }) => ({
+      id: step.id,
+      workflow_run_id: step.workflow_run_id,
+      title: step.title,
+      step_order: step.step_order,
+      assigned_to: step.assigned_to,
+      approver_name: step.approver_name,
+      due_date: step.due_date,
+      created_at: step.created_at,
+      request_id: run.request_id,
+      contract_id: run.contract_id,
+    }));
+
+  return {
+    pending_steps: pendingSteps.length,
+    overdue_steps: overdueSteps.length,
+    active_workflows: activeRuns.length,
+    completed_workflows: completedRuns.length,
+    rejected_workflows: rejectedRuns.length,
+    cancelled_workflows: cancelledRuns.length,
+    workflows_completed_last_30_days: completedRecent.length,
+    workflows_rejected_last_30_days: rejectedRecent.length,
+    pending_by_assignee,
+    oldest_pending_steps,
   };
 }
 
@@ -3176,3 +3431,10 @@ export async function createApprovalPolicy(payload: ApprovalPolicyCreateRequest,
 }
 export async function updateApprovalPolicy(id: string, payload: ApprovalPolicyPatchRequest, options: ApiOptions = {}): Promise<ApprovalPolicy> { await delay(MOCK_LATENCY_MS, options.signal); const row = sessionApprovalPolicies.find((p) => p.id === id); if (!row) throw new ApiError(404, 'Approval policy not found.'); Object.assign(row, payload, { updated_at: isoNow() }); return { ...row }; }
 export async function archiveApprovalPolicy(id: string, options: ApiOptions = {}): Promise<ApprovalPolicy> { return updateApprovalPolicy(id, { status: 'archived' }, options); }
+
+// PR #62 — seed the approval workflow demo fixtures at module load so
+// the dashboard's Approval Analytics block has something to render
+// before the user creates anything by hand. Lives at the bottom of
+// the file so all referenced helpers (DEMO_TODAY, _addDays,
+// MOCK_DEMO_ORG_ID, _buildDemoApprovalRuns) are already initialized.
+sessionApprovalRuns.push(..._buildDemoApprovalRuns());

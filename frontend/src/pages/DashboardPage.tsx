@@ -9,8 +9,11 @@ import {
 } from "../lib/api";
 import { demoPath } from "../lib/routes";
 import type {
+  DashboardApprovalAnalytics,
+  DashboardApprovalAssigneeBucket,
   DashboardContractSummary,
   DashboardInboxSummary,
+  DashboardOldestPendingStep,
   DashboardRequestSummary,
   DashboardSummary,
 } from "../types/dashboard";
@@ -187,7 +190,184 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
           emptyHint="No executed contracts yet."
         />
       </section>
+
+      <ApprovalAnalyticsSection analytics={summary.approval_analytics} />
     </>
+  );
+}
+
+const APPROVAL_ANALYTICS_TILES: {
+  key: keyof Omit<
+    DashboardApprovalAnalytics,
+    "pending_by_assignee" | "oldest_pending_steps"
+  >;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    key: "pending_steps",
+    label: "Pending approvals",
+    hint: "Steps still awaiting a decision on active workflows",
+  },
+  {
+    key: "overdue_steps",
+    label: "Overdue approvals",
+    hint: "Pending steps past their due date",
+  },
+  {
+    key: "active_workflows",
+    label: "Active workflows",
+    hint: "Workflows still moving through their steps",
+  },
+  {
+    key: "workflows_completed_last_30_days",
+    label: "Completed (30d)",
+    hint: "Workflows completed in the last 30 days",
+  },
+  {
+    key: "workflows_rejected_last_30_days",
+    label: "Rejected (30d)",
+    hint: "Workflows rejected in the last 30 days",
+  },
+];
+
+function ApprovalAnalyticsSection({
+  analytics,
+}: {
+  analytics: DashboardApprovalAnalytics;
+}) {
+  return (
+    <section
+      className="space-y-4"
+      data-testid="dashboard-approval-analytics"
+    >
+      <div>
+        <h2 className="text-sm font-medium text-ink">Approval analytics</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          A lightweight aggregate view over approval workflows in this
+          workspace. Reporting / explainability only — not a BI engine.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {APPROVAL_ANALYTICS_TILES.map((tile) => (
+          <div
+            key={tile.key}
+            className="rounded border border-rule p-3"
+            data-testid={`approval-analytics-${tile.key}`}
+          >
+            <p className="text-xs uppercase tracking-wide text-ink-subtle">
+              {tile.label}
+            </p>
+            <p className="mt-2 text-2xl font-semibold text-ink">
+              {analytics[tile.key]}
+            </p>
+            <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <OldestPendingSteps rows={analytics.oldest_pending_steps} />
+        <PendingByAssignee rows={analytics.pending_by_assignee} />
+      </div>
+    </section>
+  );
+}
+
+function OldestPendingSteps({
+  rows,
+}: {
+  rows: DashboardOldestPendingStep[];
+}) {
+  return (
+    <ListSection
+      title="Oldest pending approval steps"
+      testId="oldest-pending-steps"
+      emptyHint="No pending approval steps."
+      isEmpty={rows.length === 0}
+    >
+      {rows.map((row) => (
+        <li
+          key={row.id}
+          className="rounded border border-rule p-2"
+          data-testid="approval-analytics-oldest-row"
+        >
+          <p className="font-medium text-ink">
+            <Link
+              to={demoPath(
+                `/approvals?workflow_id=${encodeURIComponent(row.workflow_run_id)}`,
+              )}
+              className="hover:underline"
+              data-testid="approval-analytics-workflow-link"
+            >
+              {row.title}
+            </Link>
+            <span className="ml-1 text-xs text-ink-subtle">
+              · step {row.step_order}
+            </span>
+          </p>
+          <p className="text-xs text-ink-subtle">
+            {row.approver_name ? `${row.approver_name}` : "Unassigned"}
+            {row.due_date ? ` · due ${row.due_date}` : " · no due date"}
+            {row.request_id ? (
+              <>
+                {" · "}
+                <Link
+                  to={demoPath(
+                    `/requests?request_id=${encodeURIComponent(row.request_id)}`,
+                  )}
+                  className="underline"
+                  data-testid="approval-analytics-request-link"
+                >
+                  request
+                </Link>
+              </>
+            ) : null}
+          </p>
+        </li>
+      ))}
+    </ListSection>
+  );
+}
+
+function PendingByAssignee({
+  rows,
+}: {
+  rows: DashboardApprovalAssigneeBucket[];
+}) {
+  return (
+    <ListSection
+      title="Pending by assignee"
+      testId="pending-by-assignee"
+      emptyHint="No pending approval steps."
+      isEmpty={rows.length === 0}
+    >
+      {rows.map((row) => {
+        const key = row.assigned_to ?? "__unassigned__";
+        return (
+          <li
+            key={key}
+            className="rounded border border-rule p-2"
+            data-testid="approval-analytics-assignee-row"
+          >
+            <p className="font-medium text-ink">
+              {row.assigned_to ? (
+                <code className="text-sm">{row.assigned_to}</code>
+              ) : (
+                "Unassigned"
+              )}
+            </p>
+            <p className="text-xs text-ink-subtle">
+              {row.count} pending
+              {row.overdue_count > 0
+                ? ` · ${row.overdue_count} overdue`
+                : ""}
+            </p>
+          </li>
+        );
+      })}
+    </ListSection>
   );
 }
 

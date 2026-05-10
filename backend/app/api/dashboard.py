@@ -30,7 +30,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.contracts import DbSession, _current_dev_user
@@ -52,9 +52,12 @@ from app.models import (
     InboxItemStatus,
 )
 from app.schemas.dashboard import (
+    DashboardApprovalAnalytics,
+    DashboardApprovalAssigneeBucket,
     DashboardContractSummary,
     DashboardCounts,
     DashboardInboxSummary,
+    DashboardOldestPendingStep,
     DashboardRecentActivity,
     DashboardRequestSummary,
     DashboardSummaryResponse,
@@ -68,6 +71,12 @@ router = APIRouter()
 DEFAULT_LIST_LIMIT = 5
 MAX_LIST_LIMIT = 20
 DUE_SOON_WINDOW_DAYS = 14
+
+# PR #62 — approval analytics tunables. Lists are intentionally tiny;
+# the dashboard is not a reporting engine.
+ANALYTICS_OLDEST_STEPS_LIMIT = 5
+ANALYTICS_BY_ASSIGNEE_LIMIT = 10
+ANALYTICS_RECENT_WINDOW_DAYS = 30
 
 _HIGH_OR_URGENT = {"high", "urgent"}
 
@@ -93,11 +102,13 @@ async def get_dashboard_summary(
     counts = await _build_counts(session, org_id, today)
     upcoming = await _build_upcoming(session, org_id, today, limit)
     recent = await _build_recent(session, org_id, limit)
+    approval_analytics = await _build_approval_analytics(session, org_id, today)
 
     return DashboardSummaryResponse(
         counts=counts,
         upcoming=upcoming,
         recent_activity=recent,
+        approval_analytics=approval_analytics,
     )
 
 
@@ -407,6 +418,215 @@ async def _artifact_flags(
     for contract_id, artifact_type in rows:
         out.setdefault(contract_id, {})[artifact_type] = True
     return out
+
+
+# ---------------------------------------------------------------------------
+# Approval analytics (PR #62)
+#
+# Lightweight aggregate over the existing approval workflow + step rows;
+# no new tables, no new state transitions. Counts are org-scoped, lists
+# are tiny (oldest_pending_steps <= 5, pending_by_assignee <= 10) and
+# carry no approver email / signer PII / storage internals.
+# ---------------------------------------------------------------------------
+
+
+async def _build_approval_analytics(
+    session: AsyncSession, org_id: uuid.UUID, today: date
+) -> DashboardApprovalAnalytics:
+    cutoff = datetime.combine(
+        today - timedelta(days=ANALYTICS_RECENT_WINDOW_DAYS),
+        datetime.min.time(),
+        tzinfo=UTC,
+    )
+
+    # Pending / overdue step counts. We deliberately mirror the
+    # ``DashboardCounts`` definitions (pending step on an *active*
+    # workflow, overdue = pending + due_date < today) so the analytics
+    # block and the headline counter never disagree.
+    pending_step_filter = (
+        ApprovalStep.organization_id == org_id,
+        ApprovalStep.status == ApprovalStepStatus.PENDING.value,
+        ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+    )
+    overdue_step_extra = (
+        ApprovalStep.due_date.is_not(None),
+        ApprovalStep.due_date < today,
+    )
+
+    pending_steps = await _scalar_count(
+        session,
+        select(func.count(ApprovalStep.id))
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(*pending_step_filter),
+    )
+    overdue_steps = await _scalar_count(
+        session,
+        select(func.count(ApprovalStep.id))
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(*pending_step_filter, *overdue_step_extra),
+    )
+
+    # Workflow status counts.
+    active_workflows = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+        ),
+    )
+    completed_workflows = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.COMPLETED.value,
+        ),
+    )
+    rejected_workflows = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.REJECTED.value,
+        ),
+    )
+    cancelled_workflows = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.CANCELLED.value,
+        ),
+    )
+
+    # Recent-window subsets. ``completed_at`` is the timestamp the
+    # workflow flipped into a terminal state for completed/rejected.
+    workflows_completed_recent = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.COMPLETED.value,
+            ApprovalWorkflowRun.completed_at.is_not(None),
+            ApprovalWorkflowRun.completed_at >= cutoff,
+        ),
+    )
+    workflows_rejected_recent = await _scalar_count(
+        session,
+        select(func.count(ApprovalWorkflowRun.id)).where(
+            ApprovalWorkflowRun.organization_id == org_id,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.REJECTED.value,
+            ApprovalWorkflowRun.completed_at.is_not(None),
+            ApprovalWorkflowRun.completed_at >= cutoff,
+        ),
+    )
+
+    pending_by_assignee = await _build_pending_by_assignee(session, org_id, today)
+    oldest_pending_steps = await _build_oldest_pending_steps(session, org_id)
+
+    return DashboardApprovalAnalytics(
+        pending_steps=pending_steps,
+        overdue_steps=overdue_steps,
+        active_workflows=active_workflows,
+        completed_workflows=completed_workflows,
+        rejected_workflows=rejected_workflows,
+        cancelled_workflows=cancelled_workflows,
+        workflows_completed_last_30_days=workflows_completed_recent,
+        workflows_rejected_last_30_days=workflows_rejected_recent,
+        pending_by_assignee=pending_by_assignee,
+        oldest_pending_steps=oldest_pending_steps,
+    )
+
+
+async def _build_pending_by_assignee(
+    session: AsyncSession, org_id: uuid.UUID, today: date
+) -> list[DashboardApprovalAssigneeBucket]:
+    overdue_case = case(
+        (
+            and_(
+                ApprovalStep.due_date.is_not(None),
+                ApprovalStep.due_date < today,
+            ),
+            1,
+        ),
+        else_=0,
+    )
+    stmt = (
+        select(
+            ApprovalStep.assigned_to,
+            func.count(ApprovalStep.id).label("count"),
+            func.coalesce(func.sum(overdue_case), 0).label("overdue_count"),
+        )
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(
+            ApprovalStep.organization_id == org_id,
+            ApprovalStep.status == ApprovalStepStatus.PENDING.value,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+        )
+        .group_by(ApprovalStep.assigned_to)
+        .order_by(
+            func.count(ApprovalStep.id).desc(),
+            ApprovalStep.assigned_to.asc(),
+        )
+        .limit(ANALYTICS_BY_ASSIGNEE_LIMIT)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        DashboardApprovalAssigneeBucket(
+            assigned_to=assigned_to,
+            count=int(count),
+            overdue_count=int(overdue_count or 0),
+        )
+        for assigned_to, count, overdue_count in rows
+    ]
+
+
+async def _build_oldest_pending_steps(
+    session: AsyncSession, org_id: uuid.UUID
+) -> list[DashboardOldestPendingStep]:
+    stmt = (
+        select(
+            ApprovalStep,
+            ApprovalWorkflowRun.request_id,
+            ApprovalWorkflowRun.contract_id,
+        )
+        .join(
+            ApprovalWorkflowRun,
+            ApprovalWorkflowRun.id == ApprovalStep.workflow_run_id,
+        )
+        .where(
+            ApprovalStep.organization_id == org_id,
+            ApprovalStep.status == ApprovalStepStatus.PENDING.value,
+            ApprovalWorkflowRun.status == ApprovalWorkflowRunStatus.ACTIVE.value,
+        )
+        .order_by(
+            ApprovalStep.due_date.asc().nullslast(),
+            ApprovalStep.created_at.asc(),
+            ApprovalStep.id.asc(),
+        )
+        .limit(ANALYTICS_OLDEST_STEPS_LIMIT)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        DashboardOldestPendingStep(
+            id=step.id,
+            workflow_run_id=step.workflow_run_id,
+            title=step.title,
+            step_order=step.step_order,
+            assigned_to=step.assigned_to,
+            approver_name=step.approver_name,
+            due_date=step.due_date,
+            created_at=step.created_at,
+            request_id=request_id,
+            contract_id=contract_id,
+        )
+        for step, request_id, contract_id in rows
+    ]
 
 
 # ---------------------------------------------------------------------------

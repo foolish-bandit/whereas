@@ -394,6 +394,20 @@ async def test_summary_returns_zero_counts_for_empty_org(
     assert body["recent_activity"]["recent_contracts"] == []
     assert body["recent_activity"]["recent_requests"] == []
     assert body["recent_activity"]["recent_signed_contracts"] == []
+    # PR #62 — approval_analytics block defaults to all-zero / empty
+    # for an empty org.
+    assert body["approval_analytics"] == {
+        "pending_steps": 0,
+        "overdue_steps": 0,
+        "active_workflows": 0,
+        "completed_workflows": 0,
+        "rejected_workflows": 0,
+        "cancelled_workflows": 0,
+        "workflows_completed_last_30_days": 0,
+        "workflows_rejected_last_30_days": 0,
+        "pending_by_assignee": [],
+        "oldest_pending_steps": [],
+    }
 
 
 async def test_summary_counts_match_state(
@@ -1024,3 +1038,513 @@ async def test_summary_requires_dev_user(
 ) -> None:
     response = await client.get("/api/dashboard/summary")
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# PR #62 — approval analytics block
+# ---------------------------------------------------------------------------
+
+
+async def _make_approval_workflow_run(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    name: str = "Workflow",
+    status: str | None = None,
+    request_id: uuid.UUID | None = None,
+    contract_id: uuid.UUID | None = None,
+    completed_at: datetime | None = None,
+    created_at: datetime | None = None,
+) -> ApprovalWorkflowRun:
+    """Direct DB insert for analytics tests.
+
+    The public ``/api/approval-workflows`` route only creates ``active``
+    runs; backfilling completed_at + status by hand keeps the test
+    fixtures concise.
+    """
+    run = ApprovalWorkflowRun(
+        organization_id=org_id,
+        name=name,
+        status=status or "active",
+        request_id=request_id,
+        contract_id=contract_id,
+        completed_at=completed_at,
+    )
+    if created_at is not None:
+        run.created_at = created_at
+    session.add(run)
+    await session.commit()
+    return run
+
+
+async def _make_approval_step(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    workflow_run_id: uuid.UUID,
+    title: str,
+    step_order: int,
+    status: str = "pending",
+    assigned_to: uuid.UUID | None = None,
+    approver_name: str | None = None,
+    approver_email: str | None = None,
+    due_date: date | None = None,
+    created_at: datetime | None = None,
+) -> ApprovalStep:
+    step = ApprovalStep(
+        organization_id=org_id,
+        workflow_run_id=workflow_run_id,
+        title=title,
+        step_order=step_order,
+        status=status,
+        assigned_to=assigned_to,
+        approver_name=approver_name,
+        approver_email=approver_email,
+        due_date=due_date,
+    )
+    if created_at is not None:
+        step.created_at = created_at
+    session.add(step)
+    await session.commit()
+    return step
+
+
+async def test_approval_analytics_workflow_status_counts(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """``active``/``completed``/``rejected``/``cancelled`` workflow buckets."""
+    user_org = await _create_user_org(db_session)
+    today = _today()
+    cutoff = datetime.now(UTC) - timedelta(days=29)
+    long_ago = datetime.now(UTC) - timedelta(days=60)
+
+    # 1 active, 2 completed (one in window, one out), 1 rejected (in
+    # window), 1 cancelled.
+    await _make_approval_workflow_run(
+        db_session, org_id=user_org.org.id, status="active", name="active-1"
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="completed",
+        completed_at=cutoff,
+        name="completed-recent",
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="completed",
+        completed_at=long_ago,
+        name="completed-old",
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="rejected",
+        completed_at=cutoff,
+        name="rejected-recent",
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="cancelled",
+        completed_at=cutoff,
+        name="cancelled-recent",
+    )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    analytics = response.json()["approval_analytics"]
+    assert analytics["active_workflows"] == 1
+    assert analytics["completed_workflows"] == 2
+    assert analytics["rejected_workflows"] == 1
+    assert analytics["cancelled_workflows"] == 1
+    # Recent windows count only the in-window completed/rejected.
+    assert analytics["workflows_completed_last_30_days"] == 1
+    assert analytics["workflows_rejected_last_30_days"] == 1
+    # No pending steps were created here.
+    assert analytics["pending_steps"] == 0
+    assert analytics["overdue_steps"] == 0
+    assert analytics["pending_by_assignee"] == []
+    assert analytics["oldest_pending_steps"] == []
+    # Date guard on today (used for overdue) is the same as the rest of
+    # the dashboard. The cutoff itself is asserted via the in-window /
+    # out-of-window completed counts above.
+    _ = today
+
+
+async def test_approval_analytics_pending_and_overdue_step_counts(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Pending / overdue counts cover only steps on active workflows."""
+    user_org = await _create_user_org(db_session)
+    today = _today()
+
+    active_run = await _make_approval_workflow_run(
+        db_session, org_id=user_org.org.id, status="active", name="active-run"
+    )
+    cancelled_run = await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="cancelled",
+        completed_at=datetime.now(UTC),
+        name="cancelled-run",
+    )
+
+    # 2 pending steps on the active run (one overdue, one no due_date).
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=active_run.id,
+        title="Legal",
+        step_order=1,
+        status="pending",
+        due_date=today - timedelta(days=2),
+    )
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=active_run.id,
+        title="Finance",
+        step_order=2,
+        status="pending",
+    )
+    # Approved step on active run — must not contribute.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=active_run.id,
+        title="Already approved",
+        step_order=3,
+        status="approved",
+    )
+    # Pending-on-paper step on a cancelled workflow must NOT count
+    # (mirrors the existing dashboard counter behavior).
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=cancelled_run.id,
+        title="Lingering",
+        step_order=1,
+        status="pending",
+        due_date=today - timedelta(days=10),
+    )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    analytics = response.json()["approval_analytics"]
+    assert analytics["pending_steps"] == 2
+    assert analytics["overdue_steps"] == 1
+
+
+async def test_approval_analytics_pending_by_assignee_groups_and_overdue_subset(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    today = _today()
+
+    user_b = User(
+        id=uuid.uuid4(),
+        organization_id=user_org.org.id,
+        email="b@example.com",
+        password_hash="hash",
+        display_name="B",
+        is_active=True,
+    )
+    db_session.add(user_b)
+    await db_session.commit()
+
+    run = await _make_approval_workflow_run(
+        db_session, org_id=user_org.org.id, status="active"
+    )
+    # Three pending steps for user A; one is overdue.
+    for i, due in enumerate(
+        [today - timedelta(days=1), None, today + timedelta(days=2)], start=1
+    ):
+        await _make_approval_step(
+            db_session,
+            org_id=user_org.org.id,
+            workflow_run_id=run.id,
+            title=f"A step {i}",
+            step_order=i,
+            status="pending",
+            assigned_to=user_org.user.id,
+            due_date=due,
+        )
+    # One pending step for user B, not overdue.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run.id,
+        title="B step",
+        step_order=4,
+        status="pending",
+        assigned_to=user_b.id,
+        due_date=today + timedelta(days=5),
+    )
+    # One unassigned pending step.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run.id,
+        title="Unassigned",
+        step_order=5,
+        status="pending",
+    )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    buckets = response.json()["approval_analytics"]["pending_by_assignee"]
+    by_assignee = {b["assigned_to"]: b for b in buckets}
+    # User A has the most → first bucket.
+    assert buckets[0]["assigned_to"] == str(user_org.user.id)
+    assert by_assignee[str(user_org.user.id)] == {
+        "assigned_to": str(user_org.user.id),
+        "count": 3,
+        "overdue_count": 1,
+    }
+    assert by_assignee[str(user_b.id)] == {
+        "assigned_to": str(user_b.id),
+        "count": 1,
+        "overdue_count": 0,
+    }
+    # Unassigned pending steps surface as a ``null`` bucket.
+    assert by_assignee[None] == {
+        "assigned_to": None,
+        "count": 1,
+        "overdue_count": 0,
+    }
+
+
+async def test_approval_analytics_oldest_pending_steps_ordering_and_limit(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    today = _today()
+
+    request_a = await _make_request(
+        db_session,
+        org_id=user_org.org.id,
+        created_by=user_org.user.id,
+        title="Req A",
+    )
+    contract_b = await _make_contract(
+        db_session,
+        org_id=user_org.org.id,
+        uploaded_by=user_org.user.id,
+        title="Contract B",
+    )
+
+    run_a = await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="active",
+        request_id=request_a.id,
+        name="run-a",
+    )
+    run_b = await _make_approval_workflow_run(
+        db_session,
+        org_id=user_org.org.id,
+        status="active",
+        contract_id=contract_b.id,
+        name="run-b",
+    )
+
+    base_created = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    # Steps with explicit due_dates: oldest first.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run_a.id,
+        title="Earliest due",
+        step_order=1,
+        status="pending",
+        due_date=today - timedelta(days=10),
+        approver_name="Alice",
+        created_at=base_created,
+    )
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run_b.id,
+        title="Mid due",
+        step_order=1,
+        status="pending",
+        due_date=today + timedelta(days=1),
+        approver_name="Bob",
+        approver_email="bob@example.com",
+        created_at=base_created + timedelta(minutes=1),
+    )
+    # No due_date — should sort after the dated rows but before later
+    # dated rows that exceed the limit.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run_a.id,
+        title="No due, older create",
+        step_order=2,
+        status="pending",
+        created_at=base_created + timedelta(minutes=2),
+    )
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run_a.id,
+        title="No due, newer create",
+        step_order=3,
+        status="pending",
+        created_at=base_created + timedelta(minutes=3),
+    )
+    # Approved step should not appear in the oldest_pending_steps list.
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run_a.id,
+        title="Already approved",
+        step_order=4,
+        status="approved",
+        due_date=today - timedelta(days=999),
+    )
+    # Six pending rows with different due dates — exercises the LIMIT 5
+    # cap.
+    for i in range(2):
+        await _make_approval_step(
+            db_session,
+            org_id=user_org.org.id,
+            workflow_run_id=run_b.id,
+            title=f"Padding {i}",
+            step_order=10 + i,
+            status="pending",
+            due_date=today + timedelta(days=20 + i),
+            created_at=base_created + timedelta(minutes=10 + i),
+        )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    oldest = response.json()["approval_analytics"]["oldest_pending_steps"]
+    titles = [r["title"] for r in oldest]
+    # Limit is 5; exactly the five oldest-by-due-then-create-then-id rows
+    # appear.
+    assert len(oldest) == 5
+    # Ordered: earliest due → mid due → padding 0 → padding 1 → first
+    # null-due row (created earliest).
+    assert titles[0] == "Earliest due"
+    assert titles[1] == "Mid due"
+    # The two null-due rows must come AFTER all dated rows (NULLS LAST).
+    null_due_titles = [t for t in titles if t.startswith("No due")]
+    dated_titles = [t for t in titles if not t.startswith("No due")]
+    assert null_due_titles == [t for t in titles if t.startswith("No due")]
+    assert all(
+        titles.index(d) < titles.index(n)
+        for d in dated_titles
+        for n in null_due_titles
+    )
+
+    # Earliest-due row carries the right linked request + step metadata.
+    earliest = oldest[0]
+    assert earliest["title"] == "Earliest due"
+    assert earliest["request_id"] == str(request_a.id)
+    assert earliest["contract_id"] is None
+    assert earliest["approver_name"] == "Alice"
+    assert "approver_email" not in earliest
+
+    # Mid-due row is on a contract-linked workflow.
+    mid = next(r for r in oldest if r["title"] == "Mid due")
+    assert mid["contract_id"] == str(contract_b.id)
+    assert mid["request_id"] is None
+    assert mid["approver_name"] == "Bob"
+    # Approver email is intentionally omitted from this analytics
+    # surface, even when it is set on the step row.
+    assert "approver_email" not in mid
+
+
+async def test_approval_analytics_is_org_scoped(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org_a = await _create_user_org(db_session, email="a@example.com")
+    org_b = await _create_user_org(db_session, email="b@example.com")
+
+    # Stuff every analytics input into org B.
+    run_b = await _make_approval_workflow_run(
+        db_session, org_id=org_b.org.id, status="active"
+    )
+    await _make_approval_step(
+        db_session,
+        org_id=org_b.org.id,
+        workflow_run_id=run_b.id,
+        title="B step",
+        step_order=1,
+        status="pending",
+        assigned_to=org_b.user.id,
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=org_b.org.id,
+        status="completed",
+        completed_at=datetime.now(UTC),
+        name="b-completed",
+    )
+    await _make_approval_workflow_run(
+        db_session,
+        org_id=org_b.org.id,
+        status="rejected",
+        completed_at=datetime.now(UTC),
+        name="b-rejected",
+    )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(org_a.user.id)
+    )
+    analytics = response.json()["approval_analytics"]
+    # Org A sees nothing of org B.
+    assert analytics["pending_steps"] == 0
+    assert analytics["overdue_steps"] == 0
+    assert analytics["active_workflows"] == 0
+    assert analytics["completed_workflows"] == 0
+    assert analytics["rejected_workflows"] == 0
+    assert analytics["cancelled_workflows"] == 0
+    assert analytics["workflows_completed_last_30_days"] == 0
+    assert analytics["workflows_rejected_last_30_days"] == 0
+    assert analytics["pending_by_assignee"] == []
+    assert analytics["oldest_pending_steps"] == []
+
+
+async def test_approval_analytics_does_not_leak_storage_internals_or_email(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    run = await _make_approval_workflow_run(
+        db_session, org_id=user_org.org.id, status="active"
+    )
+    await _make_approval_step(
+        db_session,
+        org_id=user_org.org.id,
+        workflow_run_id=run.id,
+        title="Legal review",
+        step_order=1,
+        status="pending",
+        approver_name="Alice",
+        approver_email="alice@example.com",
+        assigned_to=user_org.user.id,
+    )
+
+    response = await client.get(
+        "/api/dashboard/summary", headers=_headers(user_org.user.id)
+    )
+    text = response.text
+    for forbidden in (
+        "storage_key",
+        "wrapped_dek",
+        "s3_key",
+        "wrapped_master_key",
+        "approver_email",
+        "alice@example.com",
+        "decision_note",
+    ):
+        assert forbidden not in text, (
+            f"{forbidden!r} leaked into approval analytics response"
+        )
