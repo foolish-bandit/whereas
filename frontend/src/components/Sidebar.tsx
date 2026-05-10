@@ -1,20 +1,19 @@
 import { useEffect } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 
 import { demoPath } from "../lib/routes";
 
+// Top-level navigation. Sub-surfaces (Inbox, Agreement Templates,
+// Approval Workflows / Templates / Policies, Upload) are reachable
+// from their respective workspace landings rather than the sidebar
+// so the nav reads as a CLM workspace and not a list of tables.
 const NAV = [
   { to: demoPath("/dashboard"), label: "Dashboard" },
-  { to: demoPath("/inbox"), label: "Inbox" },
+  { to: demoPath("/repository"), label: "Repository" },
   { to: demoPath("/requests"), label: "Requests" },
-  { to: demoPath("/approvals"), label: "Approvals" },
-  { to: demoPath("/approval-templates"), label: "Approval Templates" },
-  { to: demoPath("/approval-policies"), label: "Approval Policies" },
-  { to: demoPath("/contracts"), label: "Contracts" },
-  { to: demoPath("/agreement-templates"), label: "Agreement Templates" },
   { to: demoPath("/playbooks"), label: "Playbooks" },
-  { to: demoPath("/clause-library"), label: "Clause Library" },
-  { to: demoPath("/upload"), label: "Upload" },
+  { to: demoPath("/clause-manager"), label: "Clause Manager" },
+  { to: demoPath("/approvals"), label: "Approvals" },
   { to: demoPath("/settings"), label: "Settings" },
 ];
 
@@ -147,26 +146,56 @@ function MobileDrawer({
   );
 }
 
+// Some top-level entries should stay highlighted even when the user
+// is on a legacy alias or a sub-page that lives under the same
+// workspace. e.g. /demo/contracts is the legacy alias for the
+// Repository workspace; /demo/approval-workflows is a deep-link
+// destination that still belongs under Approvals.
+const NAV_EXTRA_MATCHES: Record<string, string[]> = {
+  [demoPath("/repository")]: [
+    demoPath("/contracts"),
+    demoPath("/upload"),
+  ],
+  [demoPath("/requests")]: [
+    demoPath("/agreement-templates"),
+    demoPath("/requests/templates"),
+  ],
+  [demoPath("/approvals")]: [
+    demoPath("/inbox"),
+    demoPath("/approval-workflows"),
+    demoPath("/approval-templates"),
+    demoPath("/approval-policies"),
+  ],
+  [demoPath("/clause-manager")]: [demoPath("/clause-library")],
+};
+
 function NavList({ onNavigate }: { onNavigate?: () => void } = {}) {
+  const { pathname } = useLocation();
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3 text-sm">
-      {NAV.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            [
-              "rounded px-3 py-2 transition-colors",
-              isActive
-                ? "bg-canvas-muted font-medium text-ink"
-                : "text-ink-muted hover:bg-canvas-muted hover:text-ink",
-            ].join(" ")
-          }
-        >
-          {item.label}
-        </NavLink>
-      ))}
+      {NAV.map((item) => {
+        const extras = NAV_EXTRA_MATCHES[item.to] ?? [];
+        const matchesExtra = extras.some(
+          (p) => pathname === p || pathname.startsWith(`${p}/`),
+        );
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              [
+                "rounded px-3 py-2 transition-colors",
+                isActive || matchesExtra
+                  ? "bg-canvas-muted font-medium text-ink"
+                  : "text-ink-muted hover:bg-canvas-muted hover:text-ink",
+              ].join(" ")
+            }
+          >
+            {item.label}
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

@@ -580,7 +580,7 @@ function ViewerModeToggle({
         aria-pressed={mode === "markdown"}
         onClick={() => onChange("markdown")}
       >
-        Markdown preview
+        Text preview
       </button>
       <button
         type="button"
@@ -717,7 +717,7 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-medium text-ink">Send to DocuSeal</h2>
         <p className="text-xs text-ink-subtle">
-          Whereas hands the latest official artifact to the DocuSeal peer
+          Whereas hands the latest official document to the DocuSeal peer
           service for signature collection.
         </p>
       </div>

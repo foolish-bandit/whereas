@@ -128,7 +128,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     const buttons = group.querySelectorAll("button");
     expect(buttons.length).toBe(2);
     expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
-    expect(buttons[0].textContent).toMatch(/markdown preview/i);
+    expect(buttons[0].textContent).toMatch(/text preview/i);
     expect(buttons[1]).toHaveAttribute("aria-pressed", "false");
     expect(buttons[1].textContent).toMatch(/view original/i);
 

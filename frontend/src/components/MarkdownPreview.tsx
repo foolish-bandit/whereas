@@ -60,7 +60,7 @@ export default function MarkdownPreview({
         }
         setState({
           kind: "error",
-          message: "Could not load the markdown preview.",
+          message: "Could not load the text preview.",
         });
       });
     return () => controller.abort();
@@ -73,10 +73,10 @@ export default function MarkdownPreview({
     >
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rule bg-canvas-subtle px-4 py-2.5">
         <div className="min-w-0">
-          <h2 className="text-sm font-medium text-ink">Markdown preview</h2>
+          <h2 className="text-sm font-medium text-ink">Text preview</h2>
           <p className="mt-0.5 text-xs text-ink-subtle">
-            Lightweight working copy. The original DOCX/PDF remains the
-            official legal artifact.
+            Fast working copy. The original DOCX/PDF remains the official
+            source file.
           </p>
         </div>
         {rightSlot && (
@@ -86,7 +86,7 @@ export default function MarkdownPreview({
 
       {state.kind === "loading" && (
         <div className="px-6 py-6 text-sm text-ink-muted">
-          Loading markdown preview…
+          Loading text preview…
         </div>
       )}
 
@@ -150,12 +150,12 @@ function EmptyPreviewState() {
       className="px-6 py-6 text-sm text-ink-muted"
       data-testid="markdown-empty-state"
     >
-      <p>No markdown preview is available for this contract yet.</p>
+      <p>No text preview is available for this agreement yet.</p>
       <p className="mt-2 text-xs text-ink-subtle">
-        This can happen when the document was uploaded before the
-        markdown pipeline was added, or when conversion did not produce
+        This can happen when the document was uploaded before the text
+        preview pipeline was added, or when conversion did not produce
         usable output. The original file is still downloadable from
-        the contract header.
+        the workspace header.
       </p>
     </div>
   );

@@ -31,8 +31,15 @@ export default function ClauseLibraryPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Clause Library</h1>
+    <div className="space-y-4" data-testid="clause-manager-page">
+      <div>
+        <h1 className="text-lg font-semibold">Clause Manager</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+          Approved clauses, fallback language, and reusable drafting
+          guidance. Browse and curate the language your team can drop into
+          new agreements.
+        </p>
+      </div>
       <div className="grid gap-2 rounded border border-rule p-3">
         <input
           className="w-full rounded border border-rule px-2 py-1.5 text-sm"

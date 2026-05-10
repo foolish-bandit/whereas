@@ -971,4 +971,55 @@ Tracked, intentionally not implemented after PR #58:
 - **Conditional / parallel approvals.** The model is strictly linear. Conditional skip predicates ("skip CFO if amount < $X") and N-of-M parallel groups are deliberate future work.
 - **PowerSync sync rules.** The local-first sync layer hasn't been written; sync rules can lock in once parallel/conditional approval shapes settle.
 
+## Navigation consolidation pass
+
+A UI/UX-only consolidation tightened the sidebar so the app reads as a
+CLM workspace rather than a list of database tables. No backend
+behavior, approval gate semantics, approval state transitions, or
+DocuSeal flow changed.
+
+Top-level navigation is now:
+
+1. Dashboard
+2. Repository (visible label for `Contract` records)
+3. Requests (workspace landing with cards: New request, Start from
+   template, Agreement templates, Request queue)
+4. Playbooks (top-level — review standards and fallback positions)
+5. Clause Manager (top-level — approved clauses and reusable drafting
+   guidance; legacy `/clause-library` still resolves)
+6. Approvals (workspace landing with cards for Tasks, Workflows,
+   Templates, Policies)
+7. Settings
+
+Agreement Templates were removed from the top-level nav and now live
+under Requests. The original `/demo/agreement-templates` route is
+preserved and `/demo/requests/templates` is a sibling alias used by the
+new workspace cards. The Approvals landing page renders at
+`/demo/approvals`; `/demo/approvals?workflow_id=<id>` is forwarded to
+`/demo/approvals/workflows` so the gate-remediation deep links wired in
+PR #60–#61 keep working. `/demo/inbox` / `/demo/approval-workflows` /
+`/demo/approval-templates` / `/demo/approval-policies` continue to
+resolve. The legacy `/demo/contracts[/:id]` URLs continue to render the
+repository workspace.
+
+**Did we adopt shadcn/ui?** No, deferred. The current Tailwind + local
+primitives already match the calm, minimal aesthetic this pass wanted,
+and shadcn carries a meaningful dependency footprint (Radix UI, CVA,
+clsx, tailwind-merge, lucide-react) for a UX-only consolidation PR.
+Local primitives plus the existing components keep the dependency
+surface flat. A deeper design-system pass that introduces shadcn or a
+similar primitive layer is tracked as follow-up work.
+
+User-facing copy was also tightened:
+
+- "Contracts" → "Repository" in headings, breadcrumbs, empty states.
+- "Markdown preview" → "Text preview" in the workspace toggle and
+  preview surfaces.
+- "Original DOCX/PDF artifact" → "Original source file" in surfaces
+  visible to legal end-users (developer/debug surfaces still say
+  "artifact").
+
+Backend models, APIs, and the on-disk artifact taxonomy
+(`original_upload` / `generated_docx` / `signed_pdf`) are unchanged.
+
 These follow-ups are referenced from sections 9 and 11 too; this list is the canonical one for the approval stack.
