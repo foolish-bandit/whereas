@@ -62,6 +62,7 @@ from app.schemas.approval_workflows import (
     ApprovalWorkflowRunListItem,
     ApprovalWorkflowRunResponse,
 )
+from app.services import approval_audit
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +147,15 @@ async def create_workflow(
     )
     first_step.inbox_item_id = inbox.id
     await session.flush()
+
+    # Audit timeline events: ad-hoc workflow created, first step active.
+    # Same transaction — a chain failure rolls the whole create back.
+    await approval_audit.record_workflow_created(
+        session, run=run, actor_user_id=user.id, source="ad_hoc"
+    )
+    await approval_audit.record_step_activated(
+        session, run=run, step=first_step, actor_user_id=user.id
+    )
 
     return await _load_run_response(session, run.id, org_id)
 
@@ -242,6 +252,10 @@ async def cancel_workflow(
                 session, step, InboxItemStatus.DISMISSED.value
             )
 
+    await approval_audit.record_workflow_cancelled(
+        session, run=run, actor_user_id=user.id
+    )
+
     await session.flush()
     return await _load_run_response(session, run.id, run.organization_id)
 
@@ -278,6 +292,14 @@ async def approve_step(
         session, step, InboxItemStatus.COMPLETED.value
     )
 
+    await approval_audit.record_step_approved(
+        session,
+        run=run,
+        step=step,
+        actor_user_id=user.id,
+        decision_note=payload.decision_note,
+    )
+
     next_step = await _next_pending_step(session, run.id, step.step_order)
     if next_step is not None:
         run.current_step_order = next_step.step_order
@@ -285,10 +307,16 @@ async def approve_step(
             session, run=run, step=next_step, user_id=user.id
         )
         next_step.inbox_item_id = inbox.id
+        await approval_audit.record_step_activated(
+            session, run=run, step=next_step, actor_user_id=user.id
+        )
     else:
         run.status = ApprovalWorkflowRunStatus.COMPLETED.value
         run.completed_at = now
         run.current_step_order = step.step_order
+        await approval_audit.record_workflow_completed(
+            session, run=run, actor_user_id=user.id
+        )
 
     await session.flush()
     return await _load_run_response(session, run.id, run.organization_id)
@@ -332,6 +360,21 @@ async def reject_step(
         await _resolve_step_inbox_item(
             session, later, InboxItemStatus.DISMISSED.value
         )
+
+    # Step rejection cascades into a workflow rejection. Skipped steps
+    # don't get individual events — the workflow_rejected event covers
+    # them; the timeline UI infers "remaining steps skipped" from the
+    # workflow status.
+    await approval_audit.record_step_rejected(
+        session,
+        run=run,
+        step=step,
+        actor_user_id=user.id,
+        decision_note=payload.decision_note,
+    )
+    await approval_audit.record_workflow_rejected(
+        session, run=run, actor_user_id=user.id
+    )
 
     await session.flush()
     return await _load_run_response(session, run.id, run.organization_id)

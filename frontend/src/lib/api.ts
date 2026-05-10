@@ -55,6 +55,7 @@ import type {
   ListContractRequestFilters,
 } from "../types/requests";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
+import type { ActivityTimelineResponse } from "../types/activity";
 import type { DashboardSummary } from "../types/dashboard";
 import type {
   InboxItem,
@@ -1238,6 +1239,42 @@ export async function getRequestApprovalStatus(
   if (isDemoMode()) return mockApi.getRequestApprovalStatus(id, options);
   const data = await call<RequestApprovalStatus>(
     `/api/requests/${encodeURIComponent(id)}/approval-status`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Read-only chronological activity feed for a request. Server-rendered
+ * titles + descriptions; the client just lays them out.
+ */
+export async function getRequestActivity(
+  id: string,
+  options: ApiOptions & { limit?: number } = {},
+): Promise<ActivityTimelineResponse> {
+  if (isDemoMode()) return mockApi.getRequestActivity(id, options);
+  const qs = options.limit ? `?limit=${options.limit}` : "";
+  const data = await call<ActivityTimelineResponse>(
+    `/api/requests/${encodeURIComponent(id)}/activity${qs}`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Read-only chronological activity feed for a contract. Server-rendered
+ * titles + descriptions; the client just lays them out.
+ */
+export async function getContractActivity(
+  id: string,
+  options: ApiOptions & { limit?: number } = {},
+): Promise<ActivityTimelineResponse> {
+  if (isDemoMode()) return mockApi.getContractActivity(id, options);
+  const qs = options.limit ? `?limit=${options.limit}` : "";
+  const data = await call<ActivityTimelineResponse>(
+    `/api/contracts/${encodeURIComponent(id)}/activity${qs}`,
     { method: "GET" },
     options,
   );

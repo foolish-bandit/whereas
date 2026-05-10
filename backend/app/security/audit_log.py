@@ -101,6 +101,18 @@ class AuditEventType(StrEnum):
     CONTRACT_SENT_FOR_SIGNATURE = "contract.sent_for_signature"
     CONTRACT_EXECUTED = "contract.executed"
 
+    # Approval workflow events (PR #58 — approval timeline / activity feed).
+    # Emitted by the approval workflows + templates routers on the same
+    # state transitions the API already exposes; payload is intentionally
+    # compact and never carries decision-note text or signer PII.
+    APPROVAL_WORKFLOW_CREATED = "approval.workflow.created"
+    APPROVAL_STEP_ACTIVATED = "approval.step.activated"
+    APPROVAL_STEP_APPROVED = "approval.step.approved"
+    APPROVAL_STEP_REJECTED = "approval.step.rejected"
+    APPROVAL_WORKFLOW_COMPLETED = "approval.workflow.completed"
+    APPROVAL_WORKFLOW_REJECTED = "approval.workflow.rejected"
+    APPROVAL_WORKFLOW_CANCELLED = "approval.workflow.cancelled"
+
     LLM_REMOTE_PROVIDER_ENABLED = "llm.remote_provider.enabled"
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import EmptyState from "../components/EmptyState";
+import ActivityTimeline from "../components/ActivityTimeline";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection, {
   ConvertedContractLink,
@@ -397,7 +398,13 @@ export default function RequestsPage() {
                 </button>
               </div>
               {expandedApprovalIds.has(row.id) && (
-                <RequestApprovalStatusSection requestId={row.id} />
+                <>
+                  <RequestApprovalStatusSection requestId={row.id} />
+                  <div className="mt-3" data-testid="request-activity-section">
+                    <p className="text-xs font-medium text-ink">Activity</p>
+                    <ActivityTimeline kind="request" requestId={row.id} />
+                  </div>
+                </>
               )}
             </li>
           ))}

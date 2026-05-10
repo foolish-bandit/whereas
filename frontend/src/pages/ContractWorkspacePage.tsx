@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import ActivityTimeline from "../components/ActivityTimeline";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import ErrorState from "../components/ErrorState";
@@ -294,6 +295,19 @@ export default function ContractWorkspacePage() {
       />
 
       <SendToDocusealPanel contractId={state.contract.id} />
+
+      <section
+        className="mt-6 rounded border border-rule p-4"
+        data-testid="contract-activity-section"
+      >
+        <h2 className="text-sm font-medium text-ink">Activity</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          Approval and signature events recorded against this contract.
+          Visibility only — the timeline does not change workflow or
+          signature state.
+        </p>
+        <ActivityTimeline kind="contract" contractId={state.contract.id} />
+      </section>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>

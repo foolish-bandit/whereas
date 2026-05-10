@@ -1873,6 +1873,258 @@ const GATE_REASON_TEXT: Record<string, string> = {
     "All attached approval workflows were cancelled without a completed approval.",
 };
 
+// ---------------------------------------------------------------------------
+// Activity timeline (PR #58 — demo mode)
+//
+// Mirrors the backend projection: derives chronological items from
+// ``sessionApprovalRuns`` (workflow_created, step_activated,
+// step_approved/rejected, workflow_completed/rejected/cancelled) plus
+// canned DocuSeal events for the demo NDA contract. No storage
+// internals are ever materialized; the projection only emits scalar
+// identifier fields and a server-shape title/description.
+// ---------------------------------------------------------------------------
+
+function _activityTitle(event_type: string, ctx: {
+  workflowName?: string | null;
+  stepTitle?: string | null;
+  source?: string | null;
+  policyName?: string | null;
+}): string {
+  const wf = ctx.workflowName ?? "workflow";
+  const step = ctx.stepTitle ?? "step";
+  switch (event_type) {
+    case "approval.workflow.created": {
+      let suffix = "";
+      if (ctx.source === "policy") {
+        suffix = ctx.policyName ? ` from policy ${ctx.policyName}` : " from policy";
+      } else if (ctx.source === "template") {
+        suffix = " from template";
+      }
+      return `Approval workflow created${suffix}: ${wf}`;
+    }
+    case "approval.step.activated":
+      return `Step activated: ${step}`;
+    case "approval.step.approved":
+      return `Step approved: ${step}`;
+    case "approval.step.rejected":
+      return `Step rejected: ${step}`;
+    case "approval.workflow.completed":
+      return `Approval workflow completed: ${wf}`;
+    case "approval.workflow.rejected":
+      return `Approval workflow rejected: ${wf}`;
+    case "approval.workflow.cancelled":
+      return `Approval workflow cancelled: ${wf}`;
+    case "contract.sent_for_signature":
+      return "Sent to DocuSeal for signature";
+    case "contract.executed":
+      return "Signed contract received from DocuSeal";
+    default:
+      return event_type;
+  }
+}
+
+function _stepDescription(event_type: string, step_order: number | null): string | null {
+  if (
+    step_order != null &&
+    (event_type === "approval.step.activated" ||
+      event_type === "approval.step.approved" ||
+      event_type === "approval.step.rejected")
+  ) {
+    return `Step ${step_order}`;
+  }
+  return null;
+}
+
+function _eventsForRun(run: ApprovalWorkflowRun): {
+  event_type: string;
+  occurred_at: string;
+  step_order: number | null;
+  step_id: string | null;
+  step_title: string | null;
+}[] {
+  // Synthesize the ordered timeline a real backend would have written.
+  // Only deterministic state is consulted: run.created_at for "created"
+  // and step.decided_at / step.created_at for the per-step events.
+  const out: {
+    event_type: string;
+    occurred_at: string;
+    step_order: number | null;
+    step_id: string | null;
+    step_title: string | null;
+  }[] = [];
+  out.push({
+    event_type: "approval.workflow.created",
+    occurred_at: run.created_at,
+    step_order: null,
+    step_id: null,
+    step_title: null,
+  });
+  // First step always activates at create time; later steps activate
+  // as the prior step's decided_at fires.
+  const sortedSteps = [...run.steps].sort((a, b) => a.step_order - b.step_order);
+  for (const step of sortedSteps) {
+    if (step.step_order === 1) {
+      out.push({
+        event_type: "approval.step.activated",
+        occurred_at: run.created_at,
+        step_order: step.step_order,
+        step_id: step.id,
+        step_title: step.title,
+      });
+    } else {
+      const prev = sortedSteps.find((s) => s.step_order === step.step_order - 1);
+      if (prev?.decided_at && prev.status === "approved") {
+        out.push({
+          event_type: "approval.step.activated",
+          occurred_at: prev.decided_at,
+          step_order: step.step_order,
+          step_id: step.id,
+          step_title: step.title,
+        });
+      }
+    }
+    if (step.status === "approved" && step.decided_at) {
+      out.push({
+        event_type: "approval.step.approved",
+        occurred_at: step.decided_at,
+        step_order: step.step_order,
+        step_id: step.id,
+        step_title: step.title,
+      });
+    }
+    if (step.status === "rejected" && step.decided_at) {
+      out.push({
+        event_type: "approval.step.rejected",
+        occurred_at: step.decided_at,
+        step_order: step.step_order,
+        step_id: step.id,
+        step_title: step.title,
+      });
+    }
+  }
+  if (run.status === "completed" && run.completed_at) {
+    out.push({
+      event_type: "approval.workflow.completed",
+      occurred_at: run.completed_at,
+      step_order: null,
+      step_id: null,
+      step_title: null,
+    });
+  } else if (run.status === "rejected" && run.completed_at) {
+    out.push({
+      event_type: "approval.workflow.rejected",
+      occurred_at: run.completed_at,
+      step_order: null,
+      step_id: null,
+      step_title: null,
+    });
+  } else if (run.status === "cancelled" && run.completed_at) {
+    out.push({
+      event_type: "approval.workflow.cancelled",
+      occurred_at: run.completed_at,
+      step_order: null,
+      step_id: null,
+      step_title: null,
+    });
+  }
+  return out;
+}
+
+function _projectRunEvents(run: ApprovalWorkflowRun): import("../types/activity").ActivityTimelineItem[] {
+  const meta = (run.metadata_json ?? {}) as Record<string, unknown>;
+  const source =
+    typeof meta.source_approval_policy_id === "string"
+      ? "policy"
+      : typeof meta.source_workflow_template_id === "string"
+        ? "template"
+        : "ad_hoc";
+  const policyName =
+    typeof meta.source_approval_policy_name === "string"
+      ? (meta.source_approval_policy_name as string)
+      : null;
+  return _eventsForRun(run).map((ev, idx) => ({
+    id: `${run.id}-act-${idx}`,
+    event_type: ev.event_type,
+    occurred_at: ev.occurred_at,
+    actor_user_id: null,
+    title: _activityTitle(ev.event_type, {
+      workflowName: run.name,
+      stepTitle: ev.step_title,
+      source,
+      policyName,
+    }),
+    description: _stepDescription(ev.event_type, ev.step_order),
+    request_id: run.request_id,
+    contract_id: run.contract_id,
+    workflow_run_id: run.id,
+    approval_step_id: ev.step_id,
+    step_order: ev.step_order,
+    source,
+  }));
+}
+
+function _docusealEventsForContract(
+  contractId: string,
+): import("../types/activity").ActivityTimelineItem[] {
+  // Only the seeded NDA contract has a canned signature timeline in the
+  // demo. Real uploaded contracts have no DocuSeal events until the
+  // user actually sends/receives them.
+  if (contractId !== "11111111-1111-4111-8111-111111111111") return [];
+  return [
+    {
+      id: "docuseal-sent-1",
+      event_type: "contract.sent_for_signature",
+      occurred_at: "2026-05-08T16:30:00Z",
+      actor_user_id: null,
+      title: "Sent to DocuSeal for signature",
+      description: null,
+      request_id: null,
+      contract_id: contractId,
+      workflow_run_id: null,
+      approval_step_id: null,
+      step_order: null,
+      source: null,
+    },
+  ];
+}
+
+export async function getRequestActivity(
+  id: string,
+  options: ApiOptions & { limit?: number } = {},
+): Promise<import("../types/activity").ActivityTimelineResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const request =
+    findSessionRequest(id) ?? MOCK_REQUESTS.find((r) => r.id === id);
+  if (!request) throw new ApiError(404, "Contract request not found.");
+
+  const linkedContractId = request.linked_contract_id;
+  const runs = sessionApprovalRuns.filter(
+    (r) =>
+      r.request_id === request.id ||
+      (linkedContractId != null && r.contract_id === linkedContractId),
+  );
+  let items = runs.flatMap(_projectRunEvents);
+  if (linkedContractId) {
+    items = items.concat(_docusealEventsForContract(linkedContractId));
+  }
+  items.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+  const limit = Math.max(1, Math.min(100, options.limit ?? 25));
+  return { items: items.slice(0, limit) };
+}
+
+export async function getContractActivity(
+  id: string,
+  options: ApiOptions & { limit?: number } = {},
+): Promise<import("../types/activity").ActivityTimelineResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const runs = sessionApprovalRuns.filter((r) => r.contract_id === id);
+  let items = runs.flatMap(_projectRunEvents);
+  items = items.concat(_docusealEventsForContract(id));
+  items.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+  const limit = Math.max(1, Math.min(100, options.limit ?? 25));
+  return { items: items.slice(0, limit) };
+}
+
 export async function listInboxItems(
   filters: ListInboxItemFilters = {},
   options: ApiOptions = {},

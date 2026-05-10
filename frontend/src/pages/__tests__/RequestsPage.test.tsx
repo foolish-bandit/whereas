@@ -355,6 +355,10 @@ describe("RequestsPage", () => {
 
   it("shows the approval status section on toggle and renders matching policy", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(
           approvalStatus({
@@ -400,6 +404,10 @@ describe("RequestsPage", () => {
 
   it("renders an active workflow with the current step", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(
           approvalStatus({
@@ -465,6 +473,10 @@ describe("RequestsPage", () => {
   it("renders a ready-for-signature badge when the gate allows", async () => {
     const linked = { ...SAMPLE_REQUEST, linked_contract_id: "contract-1" };
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(
           approvalStatus({
@@ -513,6 +525,10 @@ describe("RequestsPage", () => {
 
   it("renders a rejected/blocked badge with the gate reason text", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(
           approvalStatus({
@@ -562,6 +578,10 @@ describe("RequestsPage", () => {
 
   it("shows a no-approval-required state when nothing applies", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(approvalStatus());
       }
@@ -584,6 +604,10 @@ describe("RequestsPage", () => {
 
   it("renders a safe error state when the approval-status fetch fails", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse({ detail: "boom" }, 500);
       }
@@ -603,6 +627,10 @@ describe("RequestsPage", () => {
 
   it("does not render storage internals when approval status renders", async () => {
     fetchMock.mockImplementation(async (url: string) => {
+      // PR #58: expanding the approval section also fires
+      // GET /api/requests/{id}/activity. Stub it out so these older
+      // tests don't fall through to the 500 default.
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
       if (url.endsWith("/api/requests/req-1/approval-status")) {
         return jsonResponse(
           approvalStatus({

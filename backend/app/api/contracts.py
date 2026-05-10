@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ from app.models import (
     PlaybookReviewRun,
     User,
 )
+from app.schemas.activity import ActivityTimelineResponse
 from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import (
     ClauseResponse,
@@ -297,6 +298,55 @@ async def get_contract(
         load_clauses=True,
     )
     return _detail_response(contract)
+
+
+@router.get(
+    "/{contract_id}/activity",
+    response_model=ActivityTimelineResponse,
+)
+async def get_contract_activity(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Max number of timeline items to return. Default 25, hard-capped at 100.",
+    ),
+) -> ActivityTimelineResponse:
+    """Chronological activity feed for a contract (PR #58).
+
+    Visibility-only: assembled from existing ``AuditEvent`` rows. Cross-org
+    access returns 404 (via ``_get_contract_for_org``). Storage internals
+    cannot leak — the projection only allowlists scalar identifier fields.
+
+    Surfaces:
+      * Approval events (workflow created / step activated / step
+        approved-or-rejected / workflow completed-rejected-cancelled)
+        for any ``ApprovalWorkflowRun`` directly attached to this
+        contract via ``workflow_run.contract_id``.
+      * DocuSeal send + completion events that target this contract
+        (``CONTRACT_SENT_FOR_SIGNATURE`` from PR #44, ``CONTRACT_EXECUTED``
+        from PR #45).
+
+    Approval workflow runs that are only attached via a related
+    ``ContractRequest`` (``workflow_run.request_id`` set, no
+    ``contract_id``) are deliberately not pulled in here — that's the
+    request endpoint's job. The request timeline already aggregates both.
+    """
+    from app.services import activity_timeline as _timeline
+
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    items = await _timeline.load_contract_activity(
+        session, contract, limit=limit
+    )
+    return ActivityTimelineResponse(items=items)
 
 
 @router.get("/{contract_id}/clauses", response_model=list[ClauseResponse])

@@ -56,6 +56,7 @@ from app.schemas.approval_workflow_templates import (
     CreateApprovalWorkflowFromTemplateRequest,
 )
 from app.schemas.approval_workflows import ApprovalWorkflowRunResponse
+from app.services import approval_audit
 
 log = logging.getLogger(__name__)
 
@@ -485,6 +486,19 @@ async def instantiate_workflow_template(
     )
     first_step.inbox_item_id = inbox.id
     await session.flush()
+
+    # Audit timeline: workflow created (source inferred from
+    # metadata_json — "policy" if the policy service wrapped the
+    # instantiate call with ``source_approval_policy_id``, otherwise
+    # "template") + first step active. Same transaction as the run/step
+    # writes; a chain failure rolls everything back.
+    await approval_audit.record_workflow_created(
+        session, run=run, actor_user_id=user.id
+    )
+    await approval_audit.record_step_activated(
+        session, run=run, step=first_step, actor_user_id=user.id
+    )
+
     return await _load_run_response(session, run.id, org_id)
 
 
