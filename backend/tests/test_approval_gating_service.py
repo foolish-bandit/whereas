@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 
+import app.services.approval_gating as gating
 from app.models import ApprovalWorkflowRunStatus
 from app.services.approval_gating import can_send_contract_to_docuseal
 
@@ -22,6 +23,7 @@ class DummyRequest:
 class DummyWorkflow:
     id: uuid.UUID
     status: str
+    metadata_json: dict | None = None
 
 
 class FakeResult:
@@ -58,6 +60,11 @@ def run(coro):
 
 def make_workflow(status: str) -> DummyWorkflow:
     return DummyWorkflow(id=uuid.uuid4(), status=status)
+
+
+@dataclass
+class DummyPolicy:
+    id: uuid.UUID
 
 
 def test_no_linked_request_allowed():
@@ -125,3 +132,47 @@ def test_queries_are_org_scoped_and_safe_dict_has_no_storage_fields():
     safe = _.to_safe_dict()
     assert "storage_key" not in safe
     assert "wrapped_dek" not in safe
+
+
+def test_required_policy_unmet_blocks_and_ids_reported(monkeypatch):
+    policy_id = uuid.uuid4()
+
+    async def fake_match(*_args, **_kwargs):
+        return [DummyPolicy(id=policy_id)]
+
+    monkeypatch.setattr(gating, "find_matching_approval_policies", fake_match)
+    req = DummyRequest(id=uuid.uuid4())
+    db = FakeSession(request_obj=req, workflows=[])
+    res = run(can_send_contract_to_docuseal(db, DummyContract(uuid.uuid4()), uuid.uuid4()))
+    assert res.allowed is False
+    assert res.code == "required_approval_policy_unmet"
+    assert res.required_policy_ids == [policy_id]
+    assert res.missing_policy_ids == [policy_id]
+
+
+def test_completed_policy_workflow_satisfies_but_unrelated_completed_does_not(monkeypatch):
+    policy_id = uuid.uuid4()
+
+    async def fake_match(*_args, **_kwargs):
+        return [DummyPolicy(id=policy_id)]
+
+    monkeypatch.setattr(gating, "find_matching_approval_policies", fake_match)
+
+    unrelated = DummyWorkflow(
+        id=uuid.uuid4(),
+        status=ApprovalWorkflowRunStatus.COMPLETED.value,
+        metadata_json={"source_approval_policy_id": str(uuid.uuid4())},
+    )
+    db = FakeSession(request_obj=DummyRequest(id=uuid.uuid4()), workflows=[unrelated])
+    blocked = run(can_send_contract_to_docuseal(db, DummyContract(uuid.uuid4()), uuid.uuid4()))
+    assert blocked.code == "required_approval_policy_unmet"
+
+    matched = DummyWorkflow(
+        id=uuid.uuid4(),
+        status=ApprovalWorkflowRunStatus.COMPLETED.value,
+        metadata_json={"source_approval_policy_id": str(policy_id)},
+    )
+    db2 = FakeSession(request_obj=DummyRequest(id=uuid.uuid4()), workflows=[matched])
+    allowed = run(can_send_contract_to_docuseal(db2, DummyContract(uuid.uuid4()), uuid.uuid4()))
+    assert allowed.allowed is True
+    assert allowed.code == "approvals_completed"
