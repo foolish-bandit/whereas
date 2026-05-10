@@ -57,6 +57,7 @@ import type {
   SetupStatus,
 } from "../types/setup";
 import type {
+  ContractApprovalGate,
   SendContractToDocuSealRequest,
   SendContractToDocuSealResponse,
 } from "../types/docuseal";
@@ -255,6 +256,38 @@ export async function uploadContract(
   return { ...item, extracted_fields: [], clauses: [], message: null };
 }
 
+
+export async function getContractApprovalGate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractApprovalGate> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (id.includes("blocked")) {
+    return {
+      allowed: false,
+      code: "active_approval_workflows",
+      request_id: "demo-request-1",
+      blocking_workflow_ids: ["demo-wf-1"],
+      completed_workflow_ids: [],
+      active_count: 1,
+      rejected_count: 0,
+      cancelled_count: 0,
+      completed_count: 0,
+    };
+  }
+  return {
+    allowed: true,
+    code: "no_linked_request",
+    request_id: null,
+    blocking_workflow_ids: [],
+    completed_workflow_ids: [],
+    active_count: 0,
+    rejected_count: 0,
+    cancelled_count: 0,
+    completed_count: 0,
+  };
+}
+
 export async function sendContractToDocuseal(
   id: string,
   payload: SendContractToDocuSealRequest,
@@ -267,6 +300,16 @@ export async function sendContractToDocuseal(
   }
   if (!payload.signers || payload.signers.length === 0) {
     throw new ApiError(400, "At least one signer is required.");
+  }
+  const gate = await getContractApprovalGate(id, options);
+  if (!gate.allowed && !payload.approval_override) {
+    throw new ApiError(
+      409,
+      "Contract cannot be sent to DocuSeal until approvals are completed.",
+    );
+  }
+  if (!gate.allowed && !payload.approval_override_reason?.trim()) {
+    throw new ApiError(422, "approval_override_reason is required when override is enabled.");
   }
   const submissionId = `demo-submission-${Date.now().toString(36)}`;
   return {

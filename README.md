@@ -229,3 +229,15 @@ Whereas builds on the work of:
 - [CUAD](https://www.atticusprojectai.org/cuad) for the contract clause taxonomy and dataset
 - [LiteLLM](https://github.com/BerriAI/litellm) for provider-agnostic LLM access
 - [pgvector](https://github.com/pgvector/pgvector) for embedding storage
+
+
+### Request → DocuSeal approval gating
+
+For `POST /api/contracts/{id}/send-to-docuseal`, Whereas now checks approval readiness for request-linked contracts:
+- If no linked `ContractRequest`, send is allowed (standalone/uploaded contracts keep previous behavior).
+- If linked request has no approval workflows, send is currently allowed.
+- Active or rejected workflows block send.
+- At least one completed workflow (with no active/rejected) allows send.
+- Cancelled-only workflows block send.
+
+An override escape hatch exists for now (`approval_override=true`) and requires `approval_override_reason`; override details are audit logged. RBAC-limited override permissions are future work.

@@ -37,6 +37,7 @@ import type {
   AgreementTemplateVariableUpdateRequest,
 } from "../types/agreementTemplates";
 import type {
+  ContractApprovalGate,
   SendContractToDocuSealRequest,
   SendContractToDocuSealResponse,
 } from "../types/docuseal";
@@ -394,6 +395,20 @@ const FILENAME_RE = /filename="([^"]+)"/i;
  * submission id and any embed URL the upstream returned; storage
  * internals are scrubbed.
  */
+
+export async function getContractApprovalGate(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractApprovalGate> {
+  if (isDemoMode()) return mockApi.getContractApprovalGate(id, options);
+  const data = await call<ContractApprovalGate>(
+    `/api/contracts/${encodeURIComponent(id)}/approval-gate`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
 export async function sendContractToDocuseal(
   id: string,
   payload: SendContractToDocuSealRequest,

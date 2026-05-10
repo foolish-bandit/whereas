@@ -797,3 +797,8 @@ Read these before starting any new feature work.
 - Telemetry stays off by default. No phone-home, no anonymous stats, no "just a heartbeat."
 
 When in doubt about an architectural choice, ask before coding. A short clarifying question is always cheaper than ripping out a wrong design.
+
+
+## DocuSeal send gate (PR #52)
+
+Request-linked contracts are gated before DocuSeal send. Rules: no linked request -> allow; linked request with no workflows -> allow for now; active/rejected -> block; completed (with no active/rejected) -> allow; cancelled-only -> block. Override exists with required reason and audit trail; RBAC for override and request-type required-workflow policies are follow-up work.
