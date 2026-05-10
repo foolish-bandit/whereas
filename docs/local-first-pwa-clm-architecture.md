@@ -671,7 +671,7 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 Tracked, intentionally not implemented. See **section 14.8** for the canonical, scoped list of approval-system gaps; the bullet here is a pointer.
 
-- **Approval system gaps** — see section 14.8 for the full list (policy names in gate response, request approval timeline, approval analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy precedence/conflicts, policy reconciliation/removal, conditional/parallel approvals).
+- **Approval system gaps** — see section 14.8 for the full list (richer gate remediation links, request approval timeline backfill, approval analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy precedence/conflicts, policy reconciliation/removal, conditional/parallel approvals).
 - Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
 - Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).

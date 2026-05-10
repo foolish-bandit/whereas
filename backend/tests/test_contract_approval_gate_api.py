@@ -491,3 +491,32 @@ async def test_pr59_does_not_change_allow_block_codes(
     )
     assert r2.json()["allowed"] is False
     assert r2.json()["code"] == "required_approval_policy_unmet"
+
+
+async def test_cross_org_access_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    # An org-A user must not be able to read the gate of an org-B
+    # contract — the endpoint resolves the contract through
+    # _get_contract_for_org, which scopes by organization_id and
+    # returns 404 (not 403, so the endpoint can't be used to probe
+    # for the existence of a contract id).
+    org_a = await _create_user_org(db_session)
+    org_b = await _create_user_org(db_session)
+    contract = Contract(
+        organization_id=org_b.org.id,
+        uploaded_by=org_b.user.id,
+        title="Org B contract",
+        status="ready",
+        s3_key="dummy/key",
+        mime_type="application/pdf",
+        file_hash_sha256="0" * 64,
+    )
+    db_session.add(contract)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract.id}/approval-gate",
+        headers=_headers(org_a.user),
+    )
+    assert response.status_code == 404
