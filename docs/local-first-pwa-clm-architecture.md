@@ -804,3 +804,8 @@ When in doubt about an architectural choice, ask before coding. A short clarifyi
 ## DocuSeal send gate (PR #52)
 
 Request-linked contracts are gated before DocuSeal send. Rules: no linked request -> allow; linked request with no workflows -> allow for now; active/rejected -> block; completed (with no active/rejected) -> allow; cancelled-only -> block. Override exists with required reason and audit trail; RBAC for override and request-type required-workflow policies are follow-up work.
+
+## Approval Policies UI (PR #54)
+Approval Policies are now manageable from the frontend UI. Users can create, view, and archive policies that match request_type, contract_type, priority, and linked AgreementTemplate, with blank criteria interpreted as wildcard/Any. Matching active auto-attach policies apply Approval Workflow Templates, and approval-policy gates can block DocuSeal send until requirements are met.
+
+Future work: richer policy builder, policy precedence/conflicts, reconciliation/removal when requests stop matching, RBAC for policy/override actions, policy names in gate responses, dashboard readiness metrics, and PowerSync sync rules.

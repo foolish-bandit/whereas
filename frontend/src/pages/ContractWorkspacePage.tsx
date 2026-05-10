@@ -693,7 +693,11 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
           {gate && !gate.allowed && (
             <div className="rounded border border-warning bg-warning/10 p-2 text-xs" data-testid="docuseal-gate-blocked">
               <p className="font-medium">Approvals required before sending.</p>
-              <p>Reason: {gate.code}. Active: {gate.active_count}, Rejected: {gate.rejected_count}, Cancelled: {gate.cancelled_count}, Completed: {gate.completed_count}</p>
+              {(gate.code as string) === "required_approval_policy_unmet" ? (
+                <p>A required approval policy has not been satisfied. {Array.isArray((gate as any).missing_policy_ids) && (gate as any).missing_policy_ids.length > 0 ? `Missing policy IDs: ${(gate as any).missing_policy_ids.join(", ")}` : ""}</p>
+              ) : (
+                <p>Reason: {gate.code}. Active: {gate.active_count}, Rejected: {gate.rejected_count}, Cancelled: {gate.cancelled_count}, Completed: {gate.completed_count}</p>
+              )}
               <label className="mt-2 flex items-center gap-2">
                 <input type="checkbox" checked={approvalOverride} onChange={(e) => setApprovalOverride(e.target.checked)} />
                 Override approval gate

@@ -243,3 +243,8 @@ For `POST /api/contracts/{id}/send-to-docuseal`, Whereas now checks approval rea
 - Cancelled-only workflows block send.
 
 An override escape hatch exists for now (`approval_override=true`) and requires `approval_override_reason`; override details are audit logged. RBAC-limited override permissions are future work.
+
+- Added Approval Policies UI (list/create/archive) under Demo app.
+- Policies match request_type, contract_type, priority, and Agreement Template; blank criteria act as wildcard/Any.
+- Archived policies are hidden by default and can be included with a toggle.
+- Policy gate can block DocuSeal send when required approvals are unmet.

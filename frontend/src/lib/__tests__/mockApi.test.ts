@@ -24,6 +24,10 @@ import {
   createApprovalWorkflowTemplate,
   instantiateApprovalWorkflowTemplate,
   listApprovalWorkflowTemplates,
+  listApprovalPolicies,
+  createApprovalPolicy,
+  updateApprovalPolicy,
+  archiveApprovalPolicy,
   listInboxItems,
   listRequests,
   uploadContract,
@@ -396,4 +400,43 @@ describe("mockApi", () => {
       ).rejects.toMatchObject({ status: 409 });
     });
   });
+
+  describe("approval policies (demo)", () => {
+    it("excludes archived by default and includes them when requested", async () => {
+      const activeOnly = await listApprovalPolicies();
+      expect(activeOnly.some((p) => p.status === "archived")).toBe(false);
+
+      const withArchived = await listApprovalPolicies({ include_archived: true });
+      expect(withArchived.some((p) => p.status === "archived")).toBe(true);
+    });
+
+    it("creates, updates, and archives a policy", async () => {
+      const created = await createApprovalPolicy({
+        name: "Demo policy",
+        workflow_template_id: "wftpl-legal-review",
+        request_type: "",
+        contract_type: "",
+        priority: "",
+        agreement_template_id: "",
+      });
+      expect(created.request_type).toBeNull();
+      expect(created.contract_type).toBeNull();
+      expect(created.priority).toBeNull();
+      expect(created.agreement_template_id).toBeNull();
+
+      const patched = await updateApprovalPolicy(created.id, { description: "Updated" });
+      expect(patched.description).toBe("Updated");
+
+      const archived = await archiveApprovalPolicy(created.id);
+      expect(archived.status).toBe("archived");
+    });
+
+    it("returns ApiError(409) for duplicate active names", async () => {
+      await expect(createApprovalPolicy({
+        name: "NDA Legal Review policy",
+        workflow_template_id: "wftpl-legal-review",
+      })).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
 });
