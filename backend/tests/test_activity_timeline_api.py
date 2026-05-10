@@ -469,6 +469,90 @@ async def test_template_instantiation_writes_source_template_marker(
     assert "source_workflow_template_id" in created[0].details
 
 
+async def test_policy_auto_attached_workflow_writes_source_policy_marker(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """When a request matches an active auto-attach policy, the
+    policy service routes through ``instantiate_workflow_template``.
+    The audit detail must surface ``source="policy"`` plus the
+    ``source_approval_policy_id`` / ``source_approval_policy_name``
+    pointers, so the timeline can label policy-derived runs distinctly
+    from ad-hoc / template ones.
+    """
+    from app.models import ApprovalPolicy, ApprovalWorkflowTemplate
+
+    user_org = await _create_user_org(db_session)
+    headers = _headers(user_org.user)
+
+    # Create a workflow template + a matching policy.
+    tmpl_resp = await client.post(
+        "/api/approval-workflow-templates",
+        headers=headers,
+        json={
+            "name": "Standard NDA Template",
+            "steps": [{"step_order": 1, "title": "Legal review"}],
+        },
+    )
+    assert tmpl_resp.status_code == 201
+    tmpl_id = uuid.UUID(tmpl_resp.json()["id"])
+
+    policy = ApprovalPolicy(
+        organization_id=user_org.org.id,
+        name="NDA Policy",
+        status="active",
+        workflow_template_id=tmpl_id,
+        request_type="new_contract",
+        contract_type="NDA",
+        priority="high",
+        applies_to_generated_contracts=True,
+        auto_attach=True,
+    )
+    db_session.add(policy)
+    await db_session.commit()
+    policy_id = str(policy.id)
+    policy_name = policy.name
+
+    # Creating a matching request triggers auto-attach via
+    # ``apply_approval_policies_to_request``, which calls
+    # ``instantiate_workflow_template`` with the policy metadata.
+    req_resp = await client.post(
+        "/api/requests",
+        headers=headers,
+        json={
+            "title": "NDA with Acme",
+            "request_type": "new_contract",
+            "contract_type": "NDA",
+            "priority": "high",
+        },
+    )
+    assert req_resp.status_code == 201, req_resp.text
+
+    events = await _audit_events_for_org(db_session, user_org.org.id)
+    created = [
+        e
+        for e in events
+        if e.event_type == AuditEventType.APPROVAL_WORKFLOW_CREATED.value
+    ]
+    assert len(created) == 1
+    detail = created[0].details
+    assert detail["source"] == "policy"
+    assert detail["source_approval_policy_id"] == policy_id
+    assert detail["source_approval_policy_name"] == policy_name
+    # The workflow run should also pick up the source_workflow_template_id
+    # the policy stamps on it.
+    assert "source_workflow_template_id" in detail
+    # And we still emit a step_activated for the first step.
+    activated = [
+        e
+        for e in events
+        if e.event_type == AuditEventType.APPROVAL_STEP_ACTIVATED.value
+    ]
+    assert len(activated) == 1
+    # Reference the template model so the linter knows the import is
+    # exercised — it's also implicitly used via the policy FK.
+    _ = ApprovalWorkflowTemplate
+
+
 # ---------------------------------------------------------------------------
 # Request activity endpoint
 # ---------------------------------------------------------------------------

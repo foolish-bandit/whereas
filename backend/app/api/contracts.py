@@ -65,6 +65,7 @@ from app.security.encryption import (
     load_instance_key,
     load_org_master_key,
 )
+from app.services import activity_timeline as activity_timeline_module
 from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.contract_artifacts import (
@@ -309,10 +310,16 @@ async def get_contract_activity(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
     limit: int = Query(
-        default=25,
+        # Canonical default + cap come from the timeline service so the
+        # request and contract endpoints can't drift apart on the bounds.
+        default=activity_timeline_module.DEFAULT_LIMIT,
         ge=1,
-        le=100,
-        description="Max number of timeline items to return. Default 25, hard-capped at 100.",
+        le=activity_timeline_module.MAX_LIMIT,
+        description=(
+            "Max number of timeline items to return. Default "
+            f"{activity_timeline_module.DEFAULT_LIMIT}, hard-capped at "
+            f"{activity_timeline_module.MAX_LIMIT}."
+        ),
     ),
 ) -> ActivityTimelineResponse:
     """Chronological activity feed for a contract (PR #58).
@@ -335,15 +342,13 @@ async def get_contract_activity(
     ``contract_id``) are deliberately not pulled in here — that's the
     request endpoint's job. The request timeline already aggregates both.
     """
-    from app.services import activity_timeline as _timeline
-
     user = await _current_dev_user(session, x_whereas_dev_user)
     contract = await _get_contract_for_org(
         session,
         contract_id=contract_id,
         organization_id=user.organization_id,
     )
-    items = await _timeline.load_contract_activity(
+    items = await activity_timeline_module.load_contract_activity(
         session, contract, limit=limit
     )
     return ActivityTimelineResponse(items=items)
