@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility checkpoint as of PR #56** (the place to read first if you only have time for one), and section 11 for the next PR.
 
 ---
 
@@ -669,9 +669,9 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 ## 9. Known Gaps / Follow-ups
 
-Tracked, intentionally not implemented:
+Tracked, intentionally not implemented. See **section 14.7** for the canonical, scoped list of approval-system gaps; the bullet here is a pointer.
 
-- Approval workflow expansion on top of the PRs #50 / #51 foundation: parallel approvals, conditional branching (e.g. "skip CFO if amount < $X"), SLA / calendar reminders, approval analytics, request-to-DocuSeal gating, and a richer template builder (drag-reorder, copy-from-existing, clone-and-edit). The current model is linear and explicit; templates ship reusable blueprints but no conditional logic.
+- **Approval system gaps** — see section 14.7 for the full list (policy names in gate response, request approval timeline, approval analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy precedence/conflicts, policy reconciliation/removal, conditional/parallel approvals).
 - Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
 - Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
@@ -705,43 +705,42 @@ PR #53 adds a backend-only **approval policies** layer: `ApprovalPolicy` rows at
 
 ---
 
-## 11. Recommended Next PR: PR #52 — Approval workflow expansion or upload-file request conversion
+## 11. Recommended Next PR: Approval Timeline / Activity Feed
 
-With the approval foundation + templates in place, two complementary directions are now unblocked.
+With approval workflows (PR #50), templates (PR #51), the DocuSeal gate (PR #52), policies (PR #53), the policies UI (PR #54), and the visibility surface (PR #56) all in place, users can now answer **"what's the current state?"** for a request. They cannot yet answer **"how did we get here?"** — that's the next focused PR.
 
-### 11a. Approval workflow expansion
+### 11a. Goal
 
-**Goal:** layer the next step of approval semantics on top of the linear template foundation.
+Add a chronological approval activity feed for a request (and, transitively, its linked contract). The feed should surface, in time order:
 
-Candidates, each its own focused PR:
-- **Conditional approvals.** A step can be skipped based on a predicate against the linked request (e.g. `request.contract_type == "MSA" AND request.contract_value >= 100000`). Predicate language stays narrow — no full DSL.
-- **Parallel approvals.** A "step group" where several approvers are notified in parallel and the step completes when N of M (or all) approve.
-- **Approval analytics.** Cycle time per template, average days-pending, top blocked approvers — once enough runs exist to be meaningful.
-- **Request → DocuSeal gating.** Auto-send a generated agreement to DocuSeal only after a named approval template completes successfully; today the user has to click send manually.
+- workflow created (ad-hoc create or policy-derived auto-attach)
+- step activated (became the current step + opened its inbox item)
+- step approved / rejected / skipped
+- workflow completed / rejected / cancelled
+- DocuSeal sent (`contract.sent_for_signature` audit event)
+- signed PDF received (`contract.executed` audit event from the verified DocuSeal webhook)
 
-### 11b. Upload-file request conversion
+### 11b. Suggested minimum scope
 
-**Goal:** a request without a linked template should still be convertible by uploading a counterparty-supplied DOCX/PDF. Today that flow exists separately on `/api/contracts/upload`; merging it into the request-convert path saves a step and keeps the request's `linked_contract_id` populated.
+- **Backend: a single read-only endpoint.** `GET /api/requests/{request_id}/approval-timeline` returning a flat, time-sorted list of `TimelineEvent` rows assembled from existing tables — `ApprovalWorkflowRun.started_at` / `completed_at`, `ApprovalStep.decided_at`, `ContractRequest.created_at`, and the existing `AuditEvent` rows for DocuSeal send / webhook. **Do not add a new audit table** — derive the timeline from what's already there. If a state transition isn't observable from existing fields (e.g. step "activated" timestamps), either add a single nullable `activated_at` column on `ApprovalStep` or derive it from the prior step's `decided_at`. Pick one and document.
+- **Compact event schema.** `event_type`, `occurred_at`, `actor_user_id` (if known), `workflow_run_id` (if applicable), `step_id` (if applicable), `payload` (a small allowlist — never raw audit metadata). No storage internals; same `extra="forbid"` discipline as the visibility surface.
+- **Frontend: render the timeline inline on the Requests page** under the existing approval-status section, behind the same lazy-load toggle. A vertical list with a one-line description per event and a relative-time stamp is enough; no charts, no filters in v1.
+- **Mock/demo mode parity.** Fold the event derivation over `sessionApprovalRuns` + `sessionApprovalPolicies` so demo behavior matches the backend.
 
-Suggested minimum scope:
-- Extend the convert endpoint to accept a multipart form with a file (no `variable_values`); the request must NOT have a linked template in this branch.
-- Reuse the existing `/api/contracts/upload` validation + storage path; do not duplicate it.
-- Same request/inbox transition semantics as the template path.
+### 11c. Out of scope for the timeline PR
 
-### Out of scope for the next PR (either direction)
+- No new state-machine transitions.
+- No new audit events; reuse the existing `AuditEvent` table.
+- No charts, cycle-time math, or per-assignee breakdowns. Those belong in a later analytics PR.
+- No PowerSync sync rules.
+- No RBAC / Clerk / Nango / calendar.
+- No conditional / parallel approvals.
 
-- **Do not implement PowerSync yet.** The approval semantics are stable for the linear case + templates; sync rules can lock in once parallel/conditional shapes settle.
-- Calendar / Nango / reminders.
-- Clerk integration.
-- Local vault mode.
-- Rich DocuSeal status dashboard.
-- A workflow-builder GUI with drag-reorder / copy-from-existing — the current page is intentionally a CRUD form.
+### 11d. Architecture asks (raise before coding)
 
-### Architecture asks (raise these before coding)
-
-- Should approval workflow templates be auto-attached to requests of certain shape (e.g. `contract_type == "MSA"` always picks the "MSA approval" template), or should every workflow be a manual instantiate? Manual first, auto-attach later behind a feature flag.
-- Should approving the final step of a workflow attached to a request mark the request `completed`? PRs #50/#51 deliberately do NOT do this; revisit once the workflow-template UX has run in production and the field-level coupling is clear.
-- For upload-file conversion: should the "no linked template" check be a hard gate, or should an uploaded file override a linked template? Probably hard gate — a request that asked for "NDA via template" shouldn't quietly accept a counterparty paper instead.
+- Should the timeline include events for the **linked contract** as well as the request (e.g. `contract.uploaded`, signed_pdf), or should those live on a separate contract-timeline endpoint? Recommendation: include them on the request timeline since users land on the request page first.
+- Should "step activated" be a derived event (from the prior step's `decided_at`) or stored explicitly (new column)? Derived is simpler; explicit is more honest. Pick one and pin it in tests.
+- Should the timeline be paginated? Probably not in v1 — a request has at most a handful of workflows, each with a handful of steps. Cap the response size and revisit.
 
 ---
 
@@ -801,28 +800,126 @@ Read these before starting any new feature work.
 When in doubt about an architectural choice, ask before coding. A short clarifying question is always cheaper than ripping out a wrong design.
 
 
-## DocuSeal send gate (PR #52)
+## 14. Approval system checkpoint (after PR #56)
 
-Request-linked contracts are gated before DocuSeal send. Rules: no linked request -> allow; linked request with no workflows -> allow for now; active/rejected -> block; completed (with no active/rejected) -> allow; cancelled-only -> block. Override exists with required reason and audit trail; RBAC for override and request-type required-workflow policies are follow-up work.
+This is the single canonical description of the approval / policy / gate / visibility stack as it stands on `main` today. Read it first if you're new to the codebase or returning to it. Sections 7.z (PR #50) and 7.aa (PR #51), and the PR-by-PR notes in section 10, remain useful for archaeology, but **this section is the load-bearing one** — if any of them disagrees with this checkpoint, this checkpoint wins.
 
-## Approval Policies UI (PR #54)
-Approval Policies are now manageable from the frontend UI. Users can create, view, and archive policies that match request_type, contract_type, priority, and linked AgreementTemplate, with blank criteria interpreted as wildcard/Any. Matching active auto-attach policies apply Approval Workflow Templates, and approval-policy gates can block DocuSeal send until requirements are met.
+The pieces, in dependency order:
 
-## Request Approval Visibility (PR #56)
+1. `ApprovalWorkflowRun` + `ApprovalStep` — the concrete in-flight process.
+2. `ApprovalWorkflowTemplate` + `ApprovalWorkflowTemplateStep` — reusable blueprints.
+3. `ApprovalPolicy` — match-and-auto-attach rules between requests and workflow templates.
+4. DocuSeal send gate — what blocks `POST /api/contracts/{id}/send-to-docuseal`.
+5. Request approval visibility — explainability surface that stitches the above together.
 
-Read-only visibility surface for the approval state of a single request. The endpoint `GET /api/requests/{request_id}/approval-status` stitches together matching `ApprovalPolicy` rows, the `ApprovalWorkflowRun`s attached to the request (and, when present, its linked contract), and a summary that mirrors the DocuSeal send gate's allow/block decision.
+The whole thing is intentionally linear and explicit: **no parallel approvals, no conditional branching, no auto-send, no automatic mutation of request/contract status, no RBAC, no calendar, no PowerSync.** Those are tracked in section 14.7.
 
-Response shape (compact, per-field allowlist; storage internals excluded by `extra="forbid"`):
+### 14.1 Approval Workflow Runs
 
-* `request_id`, `linked_contract_id`
-* `matching_policy_ids`, `matching_policies` — every policy that matches the request as it stands today, including non-required ones (so a user can see, for example, an internal-only policy that's auto-attaching a workflow even though it doesn't gate signature)
-* `workflow_runs` — each run's status, current step pointer, started/completed timestamps, and step list (id / order / title / status / assignee / approver / due / decided_at). Each run also carries `source_approval_policy_id` and `source_approval_policy_name`, lifted from `metadata_json` so the UI can label policy-derived runs vs ad-hoc ones.
-* `summary` — `has_required_policies`, `has_active_workflows`, `has_rejected_workflows`, `has_completed_workflows`, `all_required_policy_workflows_completed`, `ready_for_signature` (null when no contract is linked), `blocking_reason` (gate code), `blocking_reason_text` (server-rendered plain English).
+A `ApprovalWorkflowRun` is a concrete approval process attached to a `ContractRequest` and/or a `Contract`. It carries an ordered list of `ApprovalStep` rows — only one of which is "current" at a time — and a status (`active`, `completed`, `rejected`, `cancelled`).
 
-Logic reuse: the endpoint imports `find_matching_approval_policies` and, when a contract is linked, calls `can_send_contract_to_docuseal` directly, so the visibility surface cannot drift away from the live gate. When there is no linked contract, the gate isn't run and `ready_for_signature` is null; a lightweight derivation still surfaces a `blocking_reason` for active/rejected/required-unmet states so the UI can render the right badge.
+- The current pending step opens an `InboxItem` with `item_type='approval'`. That row is the assignee's work signal.
+- Approving the current step (`POST /api/approval-workflows/{id}/steps/{step_id}/approve`) closes its inbox item and either opens the next pending step's inbox item or marks the workflow `completed`.
+- Rejecting (`/reject`) marks the workflow `rejected`, marks remaining pending steps `skipped`, and dismisses any pending inbox items on those steps.
+- Cancelling the workflow (`PATCH /api/approval-workflows/{id}/cancel`) marks it `cancelled`, dismisses open approval inbox items, and skips remaining pending steps. Cancelling a terminal workflow returns 409.
+- Pending-step PATCH allows a small allowlist of edits (title / approver / due date) and mirrors them onto the open inbox item so the work-queue surface stays in sync.
+- Approval workflow completion does **not** mutate the linked request/contract status. Those transitions remain manual.
 
-Frontend: the Requests page renders an inline, lazy-loaded approval-status section per row (`RequestApprovalStatusSection`), so list-render does not fan out into N approval-status fetches. Badges (`Approval pending` / `Ready for signature` / `Approval rejected` / `Approval blocked` / `Approval completed` / `No approval required`) and blocking copy come straight from the server's `summary`. When a contract is linked, the section also renders a link into the contract workspace.
+**Inbox guardrail.** The generic `PATCH /api/inbox-items/{id}` (status / linkage edits) and `DELETE /api/inbox-items/{id}` return 409 when the row has `item_type='approval'`. The approval workflow router owns those rows; mutations have to flow through `/approve|reject|cancel` so an `ApprovalStep` cannot decouple from its inbox row. Cosmetic edits (priority, description, manual due-date / assignee tweaks) on an approval inbox row are still allowed.
 
-Out of scope by design (and tracked as follow-ups): policy names in the gate response itself, request approval timeline / cycle-time analytics, SLA / calendar reminders, RBAC for policy management and overrides, policy reconciliation/removal when requests stop matching, and PowerSync sync rules.
+**Idempotency / 409 guards.** Approving or rejecting an already-decided step, a non-current pending step, or any step on a non-active workflow returns 409. Frontend buttons gate accordingly so a single user clicking through the UI doesn't surface 409s; the guards exist for the multi-tab / API-direct case.
 
-Future work: richer policy builder, policy precedence/conflicts, reconciliation/removal when requests stop matching, RBAC for policy/override actions, policy names in gate responses, request approval timeline, approval analytics, SLA / calendar reminders, and PowerSync sync rules.
+### 14.2 Approval Workflow Templates
+
+An `ApprovalWorkflowTemplate` is a **reusable blueprint**, distinct from a concrete `ApprovalWorkflowRun`. The two-table split (`approval_workflow_templates`, `approval_workflow_template_steps`) is what makes "edit a template without disturbing in-flight runs" possible.
+
+- Instantiation (`POST /api/approval-workflow-templates/{id}/instantiate`) copies template step definitions into fresh `ApprovalStep` rows on a new `ApprovalWorkflowRun`. Steps are copies, not references; **template edits never propagate to existing runs**.
+- Each concrete step's `due_date` is computed at instantiation time as `today + due_in_days` if the template step has a `due_in_days`, otherwise `null`.
+- Only the first concrete step gets an `InboxItem` — exactly the same surface as an ad-hoc workflow create. The instantiate handler delegates to the same private helpers (`_validate_links`, `_validate_user_in_org`, `_create_inbox_item_for_step`, `_load_run_response`) the ad-hoc create endpoint uses, so the run shape is identical regardless of entry point.
+- The new run carries `metadata_json.source_workflow_template_id` and `source_workflow_template_name` so a reader can trace back to the blueprint.
+- Archived templates cannot be instantiated; the route returns 409.
+- A template must keep at least one step (`DELETE` on the last step returns 409); otherwise it would not be instantiable.
+
+**Naming caution.** `AgreementTemplate` (a document blueprint, used to generate DOCX agreements) is a separate concept from `ApprovalWorkflowTemplate`. The instantiate request takes the AgreementTemplate id under `agreement_template_id` to keep the two from colliding on the wire.
+
+### 14.3 Approval Policies
+
+An `ApprovalPolicy` row matches a `ContractRequest` by `request_type`, `contract_type`, `priority`, and an optional linked `AgreementTemplate`. **Null criteria are wildcards** (a policy with `priority=null` matches every priority). Matching is org-scoped and deterministic — the same request always produces the same matching set.
+
+- Active matching policies with `auto_attach=true` instantiate their `workflow_template_id` against the request on request create or update.
+- Auto-attach is **idempotent via run metadata**: a non-cancelled run with `metadata_json.source_approval_policy_id` equal to the policy's id is treated as already-attached, so re-applying the same policy on an update does not duplicate runs.
+- A **cancelled** policy-derived run does NOT block reattach: if an admin cancels the auto-attached workflow and the request is then re-saved, the policy will reattach. (Soft skip filters on `status != cancelled`.)
+- `auto_attach=false` policies still surface in the matching set and in the visibility surface; they're simply not auto-instantiated. A user can still pick one up manually.
+- Archiving a policy (`status='archived'`) immediately drops it from the matching set. Existing policy-derived runs on requests are not retroactively touched — that's tracked as policy reconciliation/removal in 14.7.
+- Frontend management UI ships under `Approval Policies` in the demo sidebar (list / create / archive, archived hidden by default with an include-archived toggle). **There is no RBAC** on policy management today — anyone with API access to the org can create / archive policies. Tracked in 14.7.
+
+### 14.4 DocuSeal Approval Gate
+
+`POST /api/contracts/{id}/send-to-docuseal` runs the gate (`can_send_contract_to_docuseal`) before any DocuSeal call. The gate's resolution rules, in order:
+
+| Situation | Result | Code |
+| --- | --- | --- |
+| Contract has no linked `ContractRequest` | allow | `no_linked_request` |
+| Linked request, no workflows + no required policies | allow | `no_workflows_required` |
+| Any active workflow on the request/contract | block | `active_approval_workflows` |
+| Any rejected workflow | block | `rejected_approval_workflows` |
+| Required matching policy with no completed policy-derived workflow | block | `required_approval_policy_unmet` |
+| At least one completed workflow + nothing active/rejected/missing | allow | `approvals_completed` |
+| Cancelled-only workflows + no completed | block | `cancelled_without_completed_approval` |
+
+"Required" means policies with `applies_to_generated_contracts=true` that match the request. Manual completed workflows do **not** satisfy a required policy — only a completed run carrying `metadata_json.source_approval_policy_id` for that policy does. (Pinned by tests in `test_request_approval_status_api.py` and `test_approval_gating_service.py`.)
+
+**Override.** An escape hatch exists: `approval_override=true` plus a required `approval_override_reason` lets an authorized caller bypass the gate. Override usage is recorded in the audit log with compact metadata (no signer PII, no storage internals). RBAC-limited override permissions are future work.
+
+The gate **does not mutate workflows**, never auto-sends, never auto-creates or removes runs, and never changes the linked request's status.
+
+### 14.5 Request Approval Visibility (PR #56)
+
+`GET /api/requests/{request_id}/approval-status` is a read-only stitch of:
+
+- the matching policies (every match, including non-required ones, so the UI can label internal-only policies separately),
+- the workflow runs attached to the request and (when applicable) its linked contract — same predicate the gate uses, so the two cannot disagree on which runs are "relevant",
+- a `summary` block that aligns with the gate.
+
+Response shape (compact, per-field allowlist; storage internals excluded by `extra="forbid"` on every nested model):
+
+- `request_id`, `linked_contract_id`
+- `matching_policy_ids`, `matching_policies` — `id`, `name`, `workflow_template_id`, `auto_attach`, `applies_to_generated_contracts`, criteria.
+- `workflow_runs[]` — each carries `id`, `name`, `status`, `current_step_order`, `started_at`, `completed_at`, `source_approval_policy_id`, `source_approval_policy_name`, plus a step list (`id`, `step_order`, `title`, `status`, `assigned_to`, `approver_name`, `approver_email`, `due_date`, `decided_at`).
+- `summary` — `has_required_policies`, `has_active_workflows`, `has_rejected_workflows`, `has_completed_workflows`, `all_required_policy_workflows_completed`, `ready_for_signature` (null when no contract is linked), `blocking_reason` (gate code), `blocking_reason_text` (server-rendered plain English).
+
+Logic reuse:
+
+- `find_matching_approval_policies` is imported directly from the policy service.
+- When `linked_contract_id` is non-null, `can_send_contract_to_docuseal` is called directly so `ready_for_signature` and `blocking_reason` come from the live gate.
+- When there is no linked contract the gate isn't run; `ready_for_signature` is `null` and a soft `blocking_reason` is derived from active/rejected/required-unmet states so the UI can still render the right badge.
+
+Frontend: the Requests page renders an inline, lazy-loaded approval-status section per row (`RequestApprovalStatusSection`). The fetch only happens when a user toggles "View approval status" — list render does not fan out into N approval-status fetches. Badges (`Approval pending` / `Ready for signature` / `Approval rejected` / `Approval blocked` / `Approval completed` / `No approval required`) and blocking copy come straight from the server's `summary`; there is no client-side derivation. When a contract is linked, the section renders a link into the contract workspace.
+
+Visibility is **explainability only**. It does not change workflow or gate semantics, does not auto-create or remove runs, and never mutates request/contract state.
+
+### 14.6 Security / privacy rules (approval system)
+
+The cross-cutting rules in section 8 still apply; restated for the approval surfaces specifically:
+
+- No `storage_key`, `wrapped_dek`, `s3_key`, raw document bytes, presigned URLs, signer PII, or DocuSeal secrets in any approval / policy / gate / visibility response. Every nested response model uses `extra="forbid"` and a scalar allowlist.
+- The frontend `scrubSecrets` defense scrubs the same key set defensively on every response.
+- Gate / audit metadata is intentionally compact: `contract_id`, `submission_id`, `event_id`, `signed_at`, override reason. No `variable_values`, no signer PII.
+- The service worker does not cache `/api/*` (NavigationRoute denylist `[/^\/api\//]`); approval / policy / gate / visibility responses are never precached.
+- Cross-org access on every approval / policy / template / visibility endpoint returns 404; linked entity (`request_id`, `contract_id`, `agreement_template_id`) cross-org references return 422.
+
+### 14.7 Known gaps in the approval system
+
+Tracked, intentionally not implemented after PR #56:
+
+- **Policy names in gate response.** The gate returns policy ids in `missing_policy_ids`; the UI has to look them up. A future change should include policy names so the gate response is self-describing.
+- **Request approval timeline.** Today users see "what's the current state?" but not "how did we get here?" — a chronological feed of workflow created / step activated / step decided / DocuSeal sent / signed_pdf received is the recommended next PR. See section 11.
+- **Approval analytics.** Cycle time per template, average days-pending, top blocked approvers — once enough runs exist to be meaningful.
+- **SLA / calendar reminders.** Pending-step due dates exist but nothing notifies anyone; calendar / Nango integration is the eventual home.
+- **RBAC for policy management and gate overrides.** Today any caller in the org can create / archive policies or use `approval_override`. Override usage is audit-logged but not gated.
+- **Policy precedence / conflicts.** Two matching policies that point at different workflow templates both auto-attach today; first-match precedence or explicit ordering is future work.
+- **Policy reconciliation / removal.** If a request's fields change so that a previously-matching policy no longer matches, the policy-derived workflow is **not** removed. Reconciliation logic is future work.
+- **Conditional / parallel approvals.** The model is strictly linear. Conditional skip predicates ("skip CFO if amount < $X") and N-of-M parallel groups are deliberate future work.
+- **PowerSync sync rules.** The local-first sync layer hasn't been written; sync rules can lock in once parallel/conditional approval shapes settle.
+
+These follow-ups are referenced from sections 9 and 11 too; this list is the canonical one for the approval stack.

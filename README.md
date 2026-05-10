@@ -205,7 +205,7 @@ contracts; it does not replace human review.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#51 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer added in PR #47, the request → contract conversion route added in PR #48, the dashboard analytics foundation added in PR #49, the approval workflow foundation added in PR #50, and the reusable approval workflow templates added in PR #51 — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Whereas is community-driven; PRs welcome. Read [the design principles](docs/design-principles.md) before proposing significant changes. For an architecture/status handoff covering PRs #32–#56 — including the end-to-end CLM loop (template generation → DocuSeal send → verified webhook → signed PDF → executed contract), the Requests + Inbox intake/work-queue layer (PR #47), the request → contract conversion route (PR #48), the dashboard analytics foundation (PR #49), the approval workflow foundation (PR #50), reusable approval workflow templates (PR #51), the DocuSeal approval gate (PR #52), backend approval policies (PR #53) and their management UI (PR #54), and the request approval visibility surface (PR #56) — see [docs/local-first-pwa-clm-architecture.md](docs/local-first-pwa-clm-architecture.md). The consolidated approval-system checkpoint is in **section 14** of that doc.
 
 Whereas tracks two layers of work:
 
