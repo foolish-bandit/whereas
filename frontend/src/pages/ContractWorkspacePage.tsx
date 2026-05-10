@@ -580,7 +580,7 @@ function ViewerModeToggle({
         aria-pressed={mode === "markdown"}
         onClick={() => onChange("markdown")}
       >
-        Markdown preview
+        Text preview
       </button>
       <button
         type="button"

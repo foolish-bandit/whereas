@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import ActivityTimeline from "../components/ActivityTimeline";
@@ -7,6 +7,7 @@ import RequestApprovalStatusSection from "../components/RequestApprovalStatusSec
 import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
+import { demoPath } from "../lib/routes";
 import {
   ApiError,
   MissingDevUserError,
@@ -232,8 +233,9 @@ export default function RequestsPage() {
         <div>
           <h1 className="text-lg font-semibold text-ink">Requests</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Intake records for contract work. Creating a request adds a
-            matching item to the Inbox queue.
+            The natural place to start work. Create a new request, generate
+            an agreement from a reusable template, or triage the request
+            queue.
           </p>
         </div>
         <label className="flex items-center gap-2 text-xs text-ink-subtle">
@@ -246,7 +248,11 @@ export default function RequestsPage() {
         </label>
       </div>
 
+      <RequestsWorkspaceCards />
+
+
       <section
+        id="new-request"
         className="grid gap-2 rounded border border-rule p-3"
         data-testid="requests-create"
       >
@@ -343,7 +349,11 @@ export default function RequestsPage() {
         />
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (
-        <ul className="space-y-2" data-testid="requests-list">
+        <ul
+          id="queue"
+          className="space-y-2"
+          data-testid="requests-list"
+        >
           {state.rows.map((row) => {
             const isDeepLinkTarget = row.id === deepLinkRequestId;
             return (
@@ -471,5 +481,97 @@ export default function RequestsPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+interface WorkspaceCard {
+  to: string;
+  title: string;
+  description: string;
+  testId: string;
+  variant: "primary" | "default";
+}
+
+const WORKSPACE_CARDS: WorkspaceCard[] = [
+  {
+    to: demoPath("/requests#new-request"),
+    title: "New request",
+    description:
+      "Ask legal or commercial to review or create an agreement. The request lands in the queue below.",
+    testId: "requests-card-new",
+    variant: "primary",
+  },
+  {
+    to: demoPath("/requests/templates"),
+    title: "Start from template",
+    description:
+      "Generate a draft agreement from an approved template. Templates fill counterparty, dates, and other variables for you.",
+    testId: "requests-card-start-from-template",
+    variant: "primary",
+  },
+  {
+    to: demoPath("/requests/templates"),
+    title: "Agreement templates",
+    description:
+      "Manage reusable agreement templates and their variables.",
+    testId: "requests-card-manage-templates",
+    variant: "default",
+  },
+  {
+    to: demoPath("/requests#queue"),
+    title: "Request queue",
+    description:
+      "Track open and completed intake requests in the list below.",
+    testId: "requests-card-queue",
+    variant: "default",
+  },
+];
+
+function RequestsWorkspaceCards() {
+  return (
+    <section
+      className="grid gap-3 sm:grid-cols-2"
+      data-testid="requests-workspace-cards"
+      aria-label="Requests workspace"
+    >
+      {WORKSPACE_CARDS.map((card) => {
+        const isAnchor = card.to.includes("#");
+        const className = [
+          "group rounded border p-4 transition-colors",
+          card.variant === "primary"
+            ? "border-rule bg-canvas hover:border-rule-strong hover:bg-canvas-subtle"
+            : "border-rule bg-canvas-subtle hover:border-rule-strong hover:bg-canvas",
+        ].join(" ");
+        const body = (
+          <>
+            <p className="text-sm font-medium text-ink">{card.title}</p>
+            <p className="mt-1 text-xs text-ink-muted">{card.description}</p>
+          </>
+        );
+        if (isAnchor) {
+          const hash = card.to.split("#")[1];
+          return (
+            <a
+              key={card.testId}
+              href={`#${hash}`}
+              data-testid={card.testId}
+              className={className}
+            >
+              {body}
+            </a>
+          );
+        }
+        return (
+          <Link
+            key={card.testId}
+            to={card.to}
+            data-testid={card.testId}
+            className={className}
+          >
+            {body}
+          </Link>
+        );
+      })}
+    </section>
   );
 }

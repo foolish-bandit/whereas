@@ -51,7 +51,7 @@ describe("MarkdownPreview", () => {
     render(<MarkdownPreview contractId={CONTRACT_ID} />);
 
     expect(
-      screen.getByRole("heading", { name: /markdown preview/i, level: 2 }),
+      screen.getByRole("heading", { name: /text preview/i, level: 2 }),
     ).toBeInTheDocument();
 
     const heading = await screen.findByRole("heading", {
@@ -83,7 +83,7 @@ describe("MarkdownPreview", () => {
     render(<MarkdownPreview contractId={CONTRACT_ID} />);
 
     const empty = await screen.findByTestId("markdown-empty-state");
-    expect(empty.textContent).toMatch(/no markdown preview is available/i);
+    expect(empty.textContent).toMatch(/no text preview is available/i);
     // It also tells the user the original is still downloadable.
     expect(empty.textContent).toMatch(/original file.*downloadable/i);
     expect(screen.queryByTestId("markdown-body")).toBeNull();

@@ -13,35 +13,44 @@ describe("Sidebar", () => {
     );
   }
 
-  it("includes a Dashboard nav entry pointing to the demo dashboard route", () => {
+  function linksFor(label: string): HTMLElement[] {
+    return screen.queryAllByRole("link", { name: label });
+  }
+
+  it("renders the consolidated top-level navigation", () => {
     renderSidebar();
-    const dashboardLinks = screen
-      .getAllByRole("link", { name: "Dashboard" })
-      .filter((el) => el.getAttribute("href") === "/demo/dashboard");
-    expect(dashboardLinks.length).toBeGreaterThan(0);
+    const expected: { label: string; href: string }[] = [
+      { label: "Dashboard", href: "/demo/dashboard" },
+      { label: "Repository", href: "/demo/repository" },
+      { label: "Requests", href: "/demo/requests" },
+      { label: "Playbooks", href: "/demo/playbooks" },
+      { label: "Clause Manager", href: "/demo/clause-manager" },
+      { label: "Approvals", href: "/demo/approvals" },
+      { label: "Settings", href: "/demo/settings" },
+    ];
+    for (const { label, href } of expected) {
+      const matching = linksFor(label).filter(
+        (el) => el.getAttribute("href") === href,
+      );
+      expect(matching.length, `expected sidebar link ${label} -> ${href}`).toBeGreaterThan(0);
+    }
   });
 
-  it("includes an Approvals nav entry pointing to the demo approvals route", () => {
+  it("does not surface former sub-surfaces as top-level entries", () => {
     renderSidebar();
-    const approvalLinks = screen
-      .getAllByRole("link", { name: "Approvals" })
-      .filter((el) => el.getAttribute("href") === "/demo/approvals");
-    expect(approvalLinks.length).toBeGreaterThan(0);
-  });
-
-  it("includes an Approval Templates nav entry pointing to the demo approval-templates route", () => {
-    renderSidebar();
-    const links = screen
-      .getAllByRole("link", { name: "Approval Templates" })
-      .filter((el) => el.getAttribute("href") === "/demo/approval-templates");
-    expect(links.length).toBeGreaterThan(0);
-  });
-
-  it("includes an Approval Policies nav entry pointing to the demo route", () => {
-    renderSidebar();
-    const links = screen
-      .getAllByRole("link", { name: "Approval Policies" })
-      .filter((el) => el.getAttribute("href") === "/demo/approval-policies");
-    expect(links.length).toBeGreaterThan(0);
+    // These used to be top-level sidebar items. They now live under
+    // their respective workspaces (Requests, Approvals, Repository).
+    for (const label of [
+      "Contracts",
+      "Agreement Templates",
+      "Approval Workflows",
+      "Approval Templates",
+      "Approval Policies",
+      "Inbox",
+      "Upload",
+      "Clause Library",
+    ]) {
+      expect(linksFor(label)).toHaveLength(0);
+    }
   });
 });

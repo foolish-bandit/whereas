@@ -109,10 +109,11 @@ export default function PlaybooksPage() {
         <div>
           <h1 className="font-serif text-xl text-ink sm:text-2xl">Playbooks</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            YAML-defined libraries of your firm's review positions. Open a
-            contract and use the Review tab to run a playbook against its
-            segmented clauses. Whereas surfaces information about contracts;
-            it does not provide legal advice.
+            Review standards, fallback positions, and deviation rules for
+            contract review. Open an agreement from the Repository and use
+            the Review tab to run a playbook against its segmented clauses.
+            Whereas surfaces information about agreements; it does not
+            provide legal advice.
           </p>
         </div>
         <button

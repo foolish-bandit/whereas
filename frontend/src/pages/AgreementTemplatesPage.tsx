@@ -8,6 +8,7 @@ import {
   createAgreementTemplate,
   listAgreementTemplates,
 } from "../lib/api";
+import { demoPath } from "../lib/routes";
 import type { AgreementTemplate } from "../types/agreementTemplates";
 
 type LoadState =
@@ -73,12 +74,24 @@ export default function AgreementTemplatesPage() {
 
   return (
     <div className="space-y-5" data-testid="agreement-templates-page">
+      <nav className="text-xs text-ink-subtle" aria-label="Breadcrumb">
+        <Link
+          to={demoPath("/requests")}
+          className="hover:text-ink"
+          data-testid="agreement-templates-breadcrumb-requests"
+        >
+          Requests
+        </Link>
+        <span className="mx-1">/</span>
+        <span className="text-ink-muted">Agreement Templates</span>
+      </nav>
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-ink">Agreement Templates</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Uploaded template originals are the official artifact. Markdown
-            snapshots are the lightweight working preview.
+            Reusable agreement templates used to start and generate requests.
+            Uploaded template originals are the official source file; a text
+            preview is the lightweight working copy.
           </p>
         </div>
         <label className="flex items-center gap-2 text-xs text-ink-subtle">
@@ -136,7 +149,7 @@ export default function AgreementTemplatesPage() {
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
           title="No templates yet"
-          description="Create a template above, then upload its DOCX or PDF original. The Markdown preview will appear once conversion succeeds."
+          description="Create a template above, then upload its DOCX or PDF original. The text preview will appear once conversion succeeds."
         />
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (

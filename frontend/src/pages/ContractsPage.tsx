@@ -40,21 +40,21 @@ export default function ContractsPage() {
             kind: "error",
             title: "No development user ID configured",
             description:
-              "Set a development user ID in Settings before listing contracts.",
+              "Set a development user ID in Settings before opening the repository.",
           });
           return;
         }
         if (err instanceof ApiError) {
           setState({
             kind: "error",
-            title: "Could not load contracts",
+            title: "Could not load repository",
             description: err.message,
           });
           return;
         }
         setState({
           kind: "error",
-          title: "Could not load contracts",
+          title: "Could not load repository",
           description: "An unexpected error occurred.",
         });
       });
@@ -82,20 +82,21 @@ export default function ContractsPage() {
   }, [state, search, statusFilter, typeFilter]);
 
   return (
-    <div>
+    <div data-testid="repository-page">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-xl text-ink sm:text-2xl">Contracts</h1>
+          <h1 className="font-serif text-xl text-ink sm:text-2xl">Repository</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Whereas is an open-source contract repository. Extracted metadata is
-            machine-generated and must be reviewed before relying on it.
+            All agreements, drafts, signed documents, and contract records.
+            Extracted metadata is machine-generated and must be reviewed before
+            relying on it.
           </p>
         </div>
         <Link
           to="/demo/upload"
           className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
         >
-          Upload contract
+          Upload to repository
         </Link>
       </div>
 
@@ -155,14 +156,14 @@ export default function ContractsPage() {
 
       {state.kind === "loaded" && state.contracts.length === 0 && (
         <EmptyState
-          title="No contracts yet."
-          description="Upload your first PDF or DOCX to populate the repository."
+          title="The repository is empty."
+          description="Upload your first PDF or DOCX to start your agreement repository."
           action={
             <Link
               to="/demo/upload"
               className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
             >
-              Upload contract
+              Upload to repository
             </Link>
           }
         />
@@ -172,11 +173,11 @@ export default function ContractsPage() {
         <>
           <ContractTable contracts={filtered} />
           <p className="mt-3 text-xs text-ink-subtle">
-            {filtered.length} of {state.contracts.length} contracts shown.
+            {filtered.length} of {state.contracts.length} agreements shown.
           </p>
           {filtered.length === 0 && (
             <p className="mt-2 text-sm text-ink-muted">
-              No contracts match the current filters.
+              Nothing in the repository matches the current filters.
             </p>
           )}
         </>

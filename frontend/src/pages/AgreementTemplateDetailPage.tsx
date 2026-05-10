@@ -191,8 +191,8 @@ export default function AgreementTemplateDetailPage() {
         <h2 className="text-sm font-medium text-ink">Original template file</h2>
         <p className="mt-1 text-xs text-ink-subtle">
           Upload the DOCX or PDF that operators distribute. The original is
-          the official legal artifact; a Markdown preview is generated for
-          fast skimming.
+          the official source file; a text preview is generated for fast
+          skimming.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <input
@@ -230,9 +230,10 @@ export default function AgreementTemplateDetailPage() {
         data-testid="agreement-template-markdown"
       >
         <header className="border-b border-rule bg-canvas-subtle px-4 py-2.5">
-          <h2 className="text-sm font-medium text-ink">Markdown preview</h2>
+          <h2 className="text-sm font-medium text-ink">Text preview</h2>
           <p className="mt-0.5 text-xs text-ink-subtle">
-            Working copy. The original DOCX/PDF remains the official artifact.
+            Working copy. The original DOCX/PDF remains the official source
+            file.
           </p>
         </header>
         {state.markdown ? (
@@ -247,8 +248,8 @@ export default function AgreementTemplateDetailPage() {
             className="px-4 py-5 text-sm text-ink-muted sm:px-6 sm:py-6"
             data-testid="agreement-template-markdown-empty"
           >
-            No markdown preview yet. Upload an original DOCX or PDF to
-            generate one.
+            No text preview yet. Upload an original DOCX or PDF to generate
+            one.
           </div>
         )}
       </section>

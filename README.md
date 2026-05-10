@@ -117,6 +117,36 @@ there is sent anywhere.
 - [ ] Permissioning model
 - [ ] First tagged release (v0.1)
 
+## Navigation (UI)
+
+The web UI is organized as a CLM workspace, not a database-table list.
+Top-level navigation:
+
+- **Dashboard** — at-a-glance counts and recent activity.
+- **Repository** — all agreements, drafts, signed documents, and contract
+  records. Backed by the same backend `Contract` APIs; the legacy
+  `/demo/contracts` route is preserved as an alias of `/demo/repository`.
+- **Requests** — the natural place to start work. The Requests workspace
+  surfaces cards for *New request*, *Start from template*, *Agreement
+  templates* (template management lives here, reachable at
+  `/demo/requests/templates` and the legacy `/demo/agreement-templates`),
+  and the *Request queue*.
+- **Playbooks** — review standards, fallback positions, and deviation
+  rules for contract review.
+- **Clause Manager** — approved clauses, fallback language, and reusable
+  drafting guidance. Legacy `/demo/clause-library` still resolves.
+- **Approvals** — landing page with cards for *Approval tasks*, *Approval
+  workflows*, *Approval templates*, and *Approval policies*. The legacy
+  `/demo/approval-workflows`, `/demo/approval-templates`,
+  `/demo/approval-policies`, and `/demo/inbox` routes still resolve, and
+  the `/demo/approvals?workflow_id=<id>` deep links wired in PR #60–#61
+  forward to `/demo/approvals/workflows`.
+- **Settings**.
+
+Nothing about the backend Contract / Approval / Template models or their
+HTTP endpoints changed in this consolidation pass — only how they're
+labelled, grouped, and routed in the web UI.
+
 ### Clause segmentation (v1)
 
 Uploaded contracts are now segmented into clause-level units via a
