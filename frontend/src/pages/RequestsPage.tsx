@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import ActivityTimeline from "../components/ActivityTimeline";
@@ -14,6 +15,10 @@ import {
   listRequests,
   updateRequest,
 } from "../lib/api";
+import {
+  DEEP_LINK_HIGHLIGHT_CLASS,
+  scrollDeepLinkIntoView,
+} from "../lib/deepLinkHighlight";
 import type {
   ContractRequest,
   ConvertRequestToContractResponse,
@@ -42,6 +47,14 @@ export default function RequestsPage() {
   const [expandedApprovalIds, setExpandedApprovalIds] = useState<Set<string>>(
     () => new Set(),
   );
+  // PR #61: ?request_id=<id> is the remediation deep-link target.
+  // When present, we auto-expand the row's approval status, scroll
+  // it into view, and apply a subtle highlight. If the id isn't in
+  // the current list/filter, we surface a notice so the user isn't
+  // silently dropped on the floor.
+  const [searchParams] = useSearchParams();
+  const deepLinkRequestId = searchParams.get("request_id");
+  const deepLinkRowRef = useRef<HTMLLIElement | null>(null);
 
   const [title, setTitle] = useState("");
   const [counterparty, setCounterparty] = useState("");
@@ -172,6 +185,31 @@ export default function RequestsPage() {
     });
   }
 
+  // Auto-expand the deep-link target's approval status as soon as the
+  // matching row resolves in the loaded list. We don't pre-emptively
+  // open it before load — that would race the row render — and we
+  // don't *collapse* it after the user has interacted.
+  const deepLinkRowFound =
+    deepLinkRequestId !== null &&
+    state.kind === "loaded" &&
+    state.rows.some((r) => r.id === deepLinkRequestId);
+  useEffect(() => {
+    if (!deepLinkRequestId) return;
+    if (!deepLinkRowFound) return;
+    setExpandedApprovalIds((prev) => {
+      if (prev.has(deepLinkRequestId)) return prev;
+      const next = new Set(prev);
+      next.add(deepLinkRequestId);
+      return next;
+    });
+  }, [deepLinkRequestId, deepLinkRowFound]);
+
+  useEffect(() => {
+    if (!deepLinkRequestId) return;
+    if (!deepLinkRowFound) return;
+    scrollDeepLinkIntoView(deepLinkRowRef.current);
+  }, [deepLinkRequestId, deepLinkRowFound]);
+
   function onConverted(response: ConvertRequestToContractResponse) {
     // The backend has already linked + completed the request and
     // resolved the inbox item. Mirror that locally so the row's status
@@ -288,6 +326,16 @@ export default function RequestsPage() {
       {state.kind === "error" && (
         <p className="text-sm text-danger">{state.message}</p>
       )}
+      {state.kind === "loaded" && deepLinkRequestId && !deepLinkRowFound && (
+        <p
+          className="rounded border border-warning bg-warning/10 px-3 py-2 text-xs text-ink"
+          data-testid="requests-deep-link-not-found"
+        >
+          The linked request <code>{deepLinkRequestId}</code> was not found in
+          the current view. Toggle “Show cancelled” if it may have been
+          cancelled, or check the request id.
+        </p>
+      )}
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
           title="No requests yet"
@@ -296,11 +344,22 @@ export default function RequestsPage() {
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (
         <ul className="space-y-2" data-testid="requests-list">
-          {state.rows.map((row) => (
+          {state.rows.map((row) => {
+            const isDeepLinkTarget = row.id === deepLinkRequestId;
+            return (
             <li
               key={row.id}
-              className="rounded border border-rule p-3 text-sm"
+              ref={isDeepLinkTarget ? deepLinkRowRef : undefined}
+              className={`rounded border p-3 text-sm ${
+                isDeepLinkTarget
+                  ? DEEP_LINK_HIGHLIGHT_CLASS
+                  : "border-rule"
+              }`}
               data-testid="requests-row"
+              data-deep-link-target={isDeepLinkTarget ? "true" : undefined}
+              aria-label={
+                isDeepLinkTarget ? "Linked request from approval gate" : undefined
+              }
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div>
@@ -407,7 +466,8 @@ export default function RequestsPage() {
                 </>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

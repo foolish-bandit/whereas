@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import {
@@ -11,6 +12,10 @@ import {
   listApprovalWorkflows,
   rejectApprovalStep,
 } from "../lib/api";
+import {
+  DEEP_LINK_HIGHLIGHT_CLASS,
+  scrollDeepLinkIntoView,
+} from "../lib/deepLinkHighlight";
 import type {
   ApprovalStepCreate,
   ApprovalWorkflowRun,
@@ -51,6 +56,17 @@ export default function ApprovalWorkflowsPage() {
     Record<string, ApprovalWorkflowRun>
   >({});
   const [detailError, setDetailError] = useState<string | null>(null);
+
+  // PR #61: ?workflow_id=<id> is the gate-remediation deep-link
+  // target. We auto-expand the matching row on first load and scroll
+  // it into view; if the id isn't in the current list we surface a
+  // notice instead of silently doing nothing.
+  const [searchParams] = useSearchParams();
+  const deepLinkWorkflowId = searchParams.get("workflow_id");
+  const deepLinkRowRef = useRef<HTMLLIElement | null>(null);
+  // Guard so we only auto-expand once per deep-link arrival; if the
+  // user later collapses the row by hand we don't keep re-opening it.
+  const autoExpandedRef = useRef<string | null>(null);
 
   useEffect(() => {
     let aborted = false;
@@ -105,6 +121,29 @@ export default function ApprovalWorkflowsPage() {
       await loadDetail(id);
     }
   }
+
+  const deepLinkRowFound =
+    deepLinkWorkflowId !== null &&
+    state.kind === "loaded" &&
+    state.rows.some((r) => r.id === deepLinkWorkflowId);
+
+  useEffect(() => {
+    if (!deepLinkWorkflowId) return;
+    if (!deepLinkRowFound) return;
+    if (autoExpandedRef.current === deepLinkWorkflowId) return;
+    autoExpandedRef.current = deepLinkWorkflowId;
+    setExpandedId(deepLinkWorkflowId);
+    if (!detailById[deepLinkWorkflowId]) {
+      loadDetail(deepLinkWorkflowId);
+    }
+    // Scroll on the next paint, after the row + detail mount.
+    requestAnimationFrame(() =>
+      scrollDeepLinkIntoView(deepLinkRowRef.current),
+    );
+    // detailById / loadDetail are stable enough for our intent here:
+    // we just want to fire the expand once per deep-link arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkWorkflowId, deepLinkRowFound]);
 
   function onAddStep() {
     setSteps((prev) => [...prev, emptyStep()]);
@@ -367,6 +406,16 @@ export default function ApprovalWorkflowsPage() {
           {state.message}
         </p>
       )}
+      {state.kind === "loaded" && deepLinkWorkflowId && !deepLinkRowFound && (
+        <p
+          className="rounded border border-warning bg-warning/10 px-3 py-2 text-xs text-ink"
+          data-testid="approvals-deep-link-not-found"
+        >
+          The linked approval workflow <code>{deepLinkWorkflowId}</code> was
+          not found in the current view. Toggle “Show completed / rejected /
+          cancelled” if it may have terminated, or check the workflow id.
+        </p>
+      )}
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
           title="No approval workflows yet"
@@ -375,11 +424,24 @@ export default function ApprovalWorkflowsPage() {
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (
         <ul className="space-y-2" data-testid="approvals-list">
-          {state.rows.map((row) => (
+          {state.rows.map((row) => {
+            const isDeepLinkTarget = row.id === deepLinkWorkflowId;
+            return (
             <li
               key={row.id}
-              className="rounded border border-rule p-3 text-sm"
+              ref={isDeepLinkTarget ? deepLinkRowRef : undefined}
+              className={`rounded border p-3 text-sm ${
+                isDeepLinkTarget
+                  ? DEEP_LINK_HIGHLIGHT_CLASS
+                  : "border-rule"
+              }`}
               data-testid="approvals-row"
+              data-deep-link-target={isDeepLinkTarget ? "true" : undefined}
+              aria-label={
+                isDeepLinkTarget
+                  ? "Linked approval workflow from approval gate"
+                  : undefined
+              }
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div>
@@ -429,7 +491,8 @@ export default function ApprovalWorkflowsPage() {
                 />
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

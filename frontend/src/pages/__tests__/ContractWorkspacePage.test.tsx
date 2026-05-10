@@ -490,13 +490,14 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(remediation).toHaveTextContent(
       /complete the active approval workflow before sending/i,
     );
+    // PR #61: links now deep-link with the relevant id.
     expect(screen.getByTestId("remediation-request-link")).toHaveAttribute(
       "href",
-      "/demo/requests",
+      "/demo/requests?request_id=req-blocked",
     );
-    expect(screen.getByTestId("remediation-approvals-link")).toHaveAttribute(
+    expect(screen.getByTestId("remediation-workflow-link")).toHaveAttribute(
       "href",
-      "/demo/approvals",
+      "/demo/approvals?workflow_id=wf-blocked",
     );
     expect(screen.getByTestId("remediation-blocking-workflows")).toHaveTextContent(
       "wf-blocked",

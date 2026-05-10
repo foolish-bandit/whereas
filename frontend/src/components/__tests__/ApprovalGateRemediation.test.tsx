@@ -53,7 +53,7 @@ describe("ApprovalGateRemediation", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders active-approval guidance for active_approval_workflows", () => {
+  it("renders active-approval guidance with deep-link URLs", () => {
     renderRemediation(
       gateBase({
         code: "active_approval_workflows",
@@ -67,22 +67,26 @@ describe("ApprovalGateRemediation", () => {
     ).toHaveTextContent(
       /complete the active approval workflow before sending/i,
     );
-    // Request approvals link uses the demo Requests route.
+    // PR #61: the Requests link now carries ?request_id=<id> so the
+    // destination page can scroll/highlight that specific row.
     const reqLink = screen.getByTestId("remediation-request-link");
-    expect(reqLink).toHaveAttribute("href", "/demo/requests");
+    expect(reqLink).toHaveAttribute(
+      "href",
+      "/demo/requests?request_id=req-1",
+    );
     expect(
       screen.getByTestId("remediation-request-link-wrapper"),
     ).toHaveTextContent("req-1");
-    // Blocking workflow ids are surfaced as copy + an Approvals link.
-    const block = screen.getByTestId("remediation-blocking-workflows");
-    expect(block).toHaveTextContent("wf-1");
-    expect(block).toHaveTextContent("wf-2");
-    expect(
-      screen.getByTestId("remediation-approvals-link"),
-    ).toHaveAttribute("href", "/demo/approvals");
+    // Each blocking workflow id is now its own deep-link.
+    const workflowLinks = screen.getAllByTestId("remediation-workflow-link");
+    const hrefs = workflowLinks.map((el) => el.getAttribute("href"));
+    expect(hrefs).toEqual([
+      "/demo/approvals?workflow_id=wf-1",
+      "/demo/approvals?workflow_id=wf-2",
+    ]);
   });
 
-  it("renders rejection guidance for rejected_approval_workflows", () => {
+  it("renders rejection guidance with workflow deep-links", () => {
     renderRemediation(
       gateBase({
         code: "rejected_approval_workflows",
@@ -96,15 +100,16 @@ describe("ApprovalGateRemediation", () => {
     ).toHaveTextContent(
       /an approval workflow was rejected\. resolve or restart the approval process/i,
     );
-    expect(screen.getByTestId("remediation-blocking-workflows")).toHaveTextContent(
-      "wf-rejected",
+    expect(screen.getByTestId("remediation-workflow-link")).toHaveAttribute(
+      "href",
+      "/demo/approvals?workflow_id=wf-rejected",
     );
     expect(
       screen.getByTestId("remediation-request-link"),
-    ).toHaveAttribute("href", "/demo/requests");
+    ).toHaveAttribute("href", "/demo/requests?request_id=req-2");
   });
 
-  it("renders missing policy names and link for required_approval_policy_unmet", () => {
+  it("renders missing policy names with policy deep-links", () => {
     renderRemediation(
       gateBase({
         code: "required_approval_policy_unmet",
@@ -129,18 +134,18 @@ describe("ApprovalGateRemediation", () => {
     const list = screen.getByTestId("remediation-missing-policies");
     expect(list).toHaveTextContent("Standard Legal Review");
     expect(list).toHaveTextContent("Executive Approval");
-    // Names should be preferred over opaque ids.
-    expect(list).not.toHaveTextContent("apol-1");
-    expect(list).not.toHaveTextContent("apol-2");
-    expect(
-      screen.getByTestId("remediation-approval-policies-link"),
-    ).toHaveAttribute("href", "/demo/approval-policies");
+    const policyLinks = screen.getAllByTestId("remediation-policy-link");
+    const hrefs = policyLinks.map((el) => el.getAttribute("href"));
+    expect(hrefs).toEqual([
+      "/demo/approval-policies?policy_id=apol-1",
+      "/demo/approval-policies?policy_id=apol-2",
+    ]);
     expect(
       screen.getByTestId("remediation-request-link"),
-    ).toHaveAttribute("href", "/demo/requests");
+    ).toHaveAttribute("href", "/demo/requests?request_id=req-3");
   });
 
-  it("falls back to missing policy IDs when names are absent", () => {
+  it("falls back to missing policy IDs when names are absent (still deep-linked)", () => {
     renderRemediation(
       gateBase({
         code: "required_approval_policy_unmet",
@@ -150,9 +155,14 @@ describe("ApprovalGateRemediation", () => {
     const list = screen.getByTestId("remediation-missing-policies");
     expect(list).toHaveTextContent("apol-legacy-1");
     expect(list).toHaveTextContent("apol-legacy-2");
+    const policyLinks = screen.getAllByTestId("remediation-policy-link");
+    expect(policyLinks.map((el) => el.getAttribute("href"))).toEqual([
+      "/demo/approval-policies?policy_id=apol-legacy-1",
+      "/demo/approval-policies?policy_id=apol-legacy-2",
+    ]);
   });
 
-  it("renders cancellation guidance for cancelled_without_completed_approval", () => {
+  it("renders cancellation guidance with the request deep-link and a list-page link", () => {
     renderRemediation(
       gateBase({
         code: "cancelled_without_completed_approval",
@@ -167,8 +177,9 @@ describe("ApprovalGateRemediation", () => {
     );
     expect(
       screen.getByTestId("remediation-request-link"),
-    ).toHaveAttribute("href", "/demo/requests");
-    // Link to the Approvals page so the user can start a fresh workflow.
+    ).toHaveAttribute("href", "/demo/requests?request_id=req-4");
+    // Cancelled doesn't carry a specific workflow id to deep-link to,
+    // so we keep the bare /demo/approvals destination here.
     expect(
       screen.getByTestId("remediation-approvals-link"),
     ).toHaveAttribute("href", "/demo/approvals");
@@ -186,10 +197,11 @@ describe("ApprovalGateRemediation", () => {
     expect(
       screen.queryByTestId("remediation-request-link"),
     ).not.toBeInTheDocument();
-    // Blocking workflow guidance should still render.
-    expect(
-      screen.getByTestId("remediation-blocking-workflows"),
-    ).toHaveTextContent("wf-only");
+    // Blocking workflow guidance should still render with a deep-link.
+    expect(screen.getByTestId("remediation-workflow-link")).toHaveAttribute(
+      "href",
+      "/demo/approvals?workflow_id=wf-only",
+    );
   });
 
   it("omits the blocking workflows block when no ids are present", () => {
@@ -206,11 +218,25 @@ describe("ApprovalGateRemediation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("encodes special characters in deep-link ids", () => {
+    renderRemediation(
+      gateBase({
+        code: "required_approval_policy_unmet",
+        missing_policy_ids: ["pol/with space"],
+      }),
+    );
+    expect(
+      screen.getByTestId("remediation-policy-link"),
+    ).toHaveAttribute(
+      "href",
+      "/demo/approval-policies?policy_id=pol%2Fwith%20space",
+    );
+  });
+
   it("renders nothing for unknown gate codes", () => {
     const { container } = renderRemediation(
       gateBase({ code: "no_linked_request" }),
     );
-    // Container holds a wrapper div with the heading; the body is empty.
     expect(
       screen.queryByTestId("remediation-active-approval-workflows"),
     ).not.toBeInTheDocument();
@@ -223,7 +249,6 @@ describe("ApprovalGateRemediation", () => {
     expect(
       screen.queryByTestId("remediation-cancelled-without-completed-approval"),
     ).not.toBeInTheDocument();
-    // Wrapper itself still renders (heading is fine even if body empty).
     expect(container.querySelector('[data-testid="docuseal-gate-remediation"]')).not.toBeNull();
   });
 

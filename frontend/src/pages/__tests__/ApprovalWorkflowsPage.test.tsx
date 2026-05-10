@@ -66,9 +66,9 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/approvals") {
   render(
-    <MemoryRouter initialEntries={["/approvals"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/approvals" element={<ApprovalWorkflowsPage />} />
       </Routes>
@@ -271,6 +271,40 @@ describe("ApprovalWorkflowsPage", () => {
     expect(
       await screen.findByTestId("approvals-error"),
     ).toHaveTextContent(/boom|server failed/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #61 — workflow_id deep-link
+  // -------------------------------------------------------------------------
+
+  it("auto-expands and highlights the deep-linked workflow_id row", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/approval-workflows/wf-1") && init?.method !== "POST") {
+        return jsonResponse(SAMPLE_RUN_DETAIL);
+      }
+      if (url.includes("/api/approval-workflows")) {
+        return jsonResponse([SAMPLE_RUN_LIST_ITEM]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage("/approvals?workflow_id=wf-1");
+    await screen.findByText("Legal approval");
+    // The detail panel mounted without a toggle click.
+    await waitFor(() => {
+      expect(screen.getByTestId("approvals-step-list")).toBeInTheDocument();
+    });
+    const row = screen.getByTestId("approvals-row");
+    expect(row).toHaveAttribute("data-deep-link-target", "true");
+    expect(row).toHaveAttribute("aria-label", expect.stringMatching(/linked approval workflow/i));
+  });
+
+  it("shows a not-found notice when the deep-linked workflow is missing", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_RUN_LIST_ITEM]));
+    renderPage("/approvals?workflow_id=wf-missing");
+    await screen.findByText("Legal approval");
+    expect(
+      await screen.findByTestId("approvals-deep-link-not-found"),
+    ).toHaveTextContent("wf-missing");
   });
 
   it("does not render storage internals in the DOM", async () => {

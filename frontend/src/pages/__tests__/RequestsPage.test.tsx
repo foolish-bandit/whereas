@@ -36,9 +36,9 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/requests") {
   render(
-    <MemoryRouter initialEntries={["/requests"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/requests" element={<RequestsPage />} />
       </Routes>
@@ -600,6 +600,58 @@ describe("RequestsPage", () => {
     expect(
       screen.getByTestId("request-approval-none"),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #61 — gate remediation deep-link
+  // -------------------------------------------------------------------------
+
+  it("auto-expands and highlights the deep-linked request_id row", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(approvalStatus());
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage("/requests?request_id=req-1");
+    // Approval status is auto-expanded by the deep link (no toggle click).
+    await screen.findByTestId("request-approval-status");
+    const row = screen.getByTestId("requests-row");
+    expect(row).toHaveAttribute("data-deep-link-target", "true");
+    expect(row).toHaveAttribute("aria-label", expect.stringMatching(/linked request/i));
+  });
+
+  it("shows a not-found notice when the deep-linked request is missing", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage("/requests?request_id=req-missing");
+    await screen.findByText("NDA with Acme");
+    const notice = await screen.findByTestId("requests-deep-link-not-found");
+    expect(notice).toHaveTextContent("req-missing");
+    // No row should be highlighted.
+    expect(
+      screen.queryByTestId("requests-row")?.getAttribute("data-deep-link-target"),
+    ).toBeFalsy();
+  });
+
+  it("does not surface storage internals on the deep-linked row", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/activity")) return jsonResponse({ items: [] });
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(approvalStatus());
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage("/requests?request_id=req-1");
+    await screen.findByTestId("request-approval-status");
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
   });
 
   it("renders a safe error state when the approval-status fetch fails", async () => {
