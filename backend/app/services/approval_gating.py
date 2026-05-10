@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ApprovalWorkflowRun, ApprovalWorkflowRunStatus, Contract, ContractRequest
+from app.services.approval_policies import find_matching_approval_policies
 
 
 @dataclass
@@ -20,6 +21,8 @@ class ApprovalGateResult:
     rejected_count: int
     cancelled_count: int
     completed_count: int
+    required_policy_ids: list[uuid.UUID]
+    missing_policy_ids: list[uuid.UUID]
 
     def to_safe_dict(self) -> dict[str, object]:
         return {
@@ -32,6 +35,8 @@ class ApprovalGateResult:
             "rejected_count": self.rejected_count,
             "cancelled_count": self.cancelled_count,
             "completed_count": self.completed_count,
+            "required_policy_ids": [str(i) for i in self.required_policy_ids],
+            "missing_policy_ids": [str(i) for i in self.missing_policy_ids],
         }
 
 
@@ -49,7 +54,7 @@ async def can_send_contract_to_docuseal(
         )
     ).scalar_one_or_none()
     if req is None:
-        return ApprovalGateResult(True, "no_linked_request", None, [], [], 0, 0, 0, 0)
+        return ApprovalGateResult(True, "no_linked_request", None, [], [], 0, 0, 0, 0, [], [])
 
     workflows = (
         await db.execute(
@@ -62,8 +67,10 @@ async def can_send_contract_to_docuseal(
             )
         )
     ).scalars().all()
-    if not workflows:
-        return ApprovalGateResult(True, "no_workflows_required", req.id, [], [], 0, 0, 0, 0)
+    required_policies = await find_matching_approval_policies(db, req, applies_to_generated_contracts=True)
+    required_policy_ids = [p.id for p in required_policies]
+    if not workflows and not required_policies:
+        return ApprovalGateResult(True, "no_workflows_required", req.id, [], [], 0, 0, 0, 0, [], [])
 
     active = [w for w in workflows if w.status == ApprovalWorkflowRunStatus.ACTIVE.value]
     rejected = [w for w in workflows if w.status == ApprovalWorkflowRunStatus.REJECTED.value]
@@ -71,9 +78,13 @@ async def can_send_contract_to_docuseal(
     completed = [w for w in workflows if w.status == ApprovalWorkflowRunStatus.COMPLETED.value]
 
     if active:
-        return ApprovalGateResult(False, "active_approval_workflows", req.id, [w.id for w in active], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed))
+        return ApprovalGateResult(False, "active_approval_workflows", req.id, [w.id for w in active], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed), required_policy_ids, [])
     if rejected:
-        return ApprovalGateResult(False, "rejected_approval_workflows", req.id, [w.id for w in rejected], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed))
+        return ApprovalGateResult(False, "rejected_approval_workflows", req.id, [w.id for w in rejected], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed), required_policy_ids, [])
+    completed_policy_ids = {str((getattr(w, "metadata_json", None) or {}).get("source_approval_policy_id")) for w in completed}
+    missing_policy_ids = [p.id for p in required_policies if str(p.id) not in completed_policy_ids]
+    if missing_policy_ids:
+        return ApprovalGateResult(False, "required_approval_policy_unmet", req.id, [w.id for w in cancelled], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed), required_policy_ids, missing_policy_ids)
     if completed:
-        return ApprovalGateResult(True, "approvals_completed", req.id, [], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed))
-    return ApprovalGateResult(False, "cancelled_without_completed_approval", req.id, [w.id for w in cancelled], [], len(active), len(rejected), len(cancelled), len(completed))
+        return ApprovalGateResult(True, "approvals_completed", req.id, [], [w.id for w in completed], len(active), len(rejected), len(cancelled), len(completed), required_policy_ids, [])
+    return ApprovalGateResult(False, "cancelled_without_completed_approval", req.id, [w.id for w in cancelled], [], len(active), len(rejected), len(cancelled), len(completed), required_policy_ids, required_policy_ids)

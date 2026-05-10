@@ -15,6 +15,7 @@ from enum import StrEnum
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -1305,6 +1306,37 @@ class ApprovalStep(Base):
 # ---------------------------------------------------------------------------
 
 
+
+
+class ApprovalPolicyStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class ApprovalPolicy(Base):
+    __tablename__ = "approval_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default=ApprovalPolicyStatus.ACTIVE.value, nullable=False, index=True)
+    workflow_template_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("approval_workflow_templates.id"), nullable=False, index=True)
+    request_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    contract_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    priority: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    agreement_template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agreement_templates.id"), nullable=True, index=True)
+    applies_to_generated_contracts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auto_attach: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_approval_policies_org_name"),
+        Index("ix_approval_policies_org_status_request_contract", "organization_id", "status", "request_type", "contract_type"),
+    )
 class ApprovalWorkflowTemplateStatus(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"

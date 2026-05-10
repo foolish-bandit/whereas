@@ -54,6 +54,7 @@ from app.schemas.requests import (
     ConvertRequestToContractRequest,
     ConvertRequestToContractResponse,
 )
+from app.services.approval_policies import apply_approval_policies_to_request
 from app.services.storage import DocumentStorage
 from app.services.template_generation import (
     TemplateGenerationError,
@@ -121,6 +122,7 @@ async def create_request(
     )
     session.add(inbox_item)
     await session.flush()
+    await apply_approval_policies_to_request(session, request, user.id)
     await session.refresh(request)
 
     return ContractRequestResponse.model_validate(request)
@@ -224,6 +226,10 @@ async def update_request(
         setattr(request, key, value)
 
     await session.flush()
+
+    policy_fields = {"request_type", "contract_type", "priority", "linked_template_id"}
+    if any(k in data for k in policy_fields):
+        await apply_approval_policies_to_request(session, request, user.id)
 
     # If this update transitions the request to a terminal state, mark
     # any open ``request_review`` inbox items pointing at it as
