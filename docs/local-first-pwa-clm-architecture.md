@@ -2,7 +2,7 @@
 
 This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, and section 11 for the next PR.
 
 ---
 
@@ -115,15 +115,16 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 ### Backend
 
 - FastAPI (`backend/app`).
-- SQLAlchemy 2.0 async, Alembic migrations under `backend/alembic/versions/` (latest: `0011_contract_artifact_wrapped_dek.py`).
+- SQLAlchemy 2.0 async, Alembic migrations under `backend/alembic/versions/` (latest: `0013_approval_workflows.py`).
 - Postgres 16 with pgvector.
 - MinIO / S3-compatible object storage via `app.services.storage.DocumentStorage`.
 - Per-org wrapped DEK encryption for documents (`app.security.encryption`); per-artifact DEKs for `signed_pdf` rows from PR #45 onward.
-- Existing routers: contracts, playbooks, clause templates, QA, DocuSeal bridge, setup, agreement templates, **requests, inbox-items**.
+- Existing routers: contracts, playbooks, clause templates, QA, DocuSeal bridge, setup, agreement templates, **requests, inbox-items, approval-workflows**.
 - DocuSeal bridge router (`app/api/docuseal_bridge.py`) exposes a verified `POST /webhook` endpoint that materializes `signed_pdf` artifacts and flips contract status to `EXECUTED`.
 - PR #47 added the CLM intake / work-queue layer: `ContractRequest` and `InboxItem` tables with full CRUD endpoints, plus an automatic `request_review` inbox item created in the same transaction as every new request. See section 7.
 - PR #48 closed the loop between intake and template generation: a request carrying a `linked_template_id` can now be converted to a draft `Contract` via `POST /api/requests/{request_id}/convert-to-contract`. The endpoint reuses the same `generate_docx_from_template()` service the agreement-templates surface uses, links the new contract back onto the request, marks the request `completed`, and resolves the open `request_review` inbox item — all in one transaction. Approval workflows, upload-file conversion, and a one-click convert-and-send remain future work.
 - PR #49 added a **dashboard analytics foundation**: a single read-only endpoint `GET /api/dashboard/summary` plus a Dashboard page. It returns counts (open / in-progress / urgent-or-high-priority requests; open / overdue inbox items; total / sent-for-signature / executed contracts; active templates), small lists of requests and inbox items due in the next 14 days, and the most recent contracts / requests / signed contracts. Org-scoped. No new tables, no caching layer, no charts — every query is a `COUNT(*)` or `ORDER BY ... LIMIT 5` over existing indexes. Compact projections (`Dashboard*Summary`) are explicit allowlists so storage internals can't accidentally end up on the surface.
+- PR #50 added a **narrow approval workflow foundation**: `ApprovalWorkflowRun` + `ApprovalStep` tables, a router at `/api/approval-workflows`, and a frontend page. Workflows attach to a request and/or contract; steps are sequential; the active step's assignee finds it via an `approval`-typed `InboxItem`. Approving advances to the next step (or completes the workflow); rejecting ends the workflow and skips remaining steps; cancelling dismisses open approval inbox items and skips pending steps. The dashboard now also reports `active_approval_workflows`, `pending_approval_steps`, and `overdue_approval_steps`. See section 7.z. No parallel approvals, no conditional logic, no auto-send to DocuSeal — those are explicitly out of scope.
 - Existing background concerns: extraction, clause segmentation, deviation findings, playbook review runs, audit log.
 
 ### Frontend
@@ -132,8 +133,8 @@ The render layer lives behind a seam (`backend/app/services/template_generation.
 - PWA app shell with service worker / manifest. **No** API or sensitive-route runtime caching.
 - Markdown preview UI for contracts and templates.
 - Agreement Templates list + detail page with **Generate Agreement** and **Send to DocuSeal** controls.
-- **Requests** and **Inbox** pages added in PR #47, with sidebar entries for both.
-- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, signed-state surfaces, and seed Requests + Inbox items.
+- **Requests**, **Inbox**, and **Approvals** (PR #50) pages, with sidebar entries for each.
+- Demo/mock mode (`isDemoMode()` + `mockApi.ts`) covers generation, send, signed-state surfaces, seed Requests + Inbox items, and the approval workflow flows (create, approve, reject, cancel) so UI tests can run end-to-end without a backend.
 - Defensive scrub of `storage_key`/`s3_key`/`wrapped_dek`/etc. on every API response.
 
 ---
@@ -593,11 +594,28 @@ All routes are org-scoped through the same dev-user header pattern (`X-Whereas-D
 ### Dashboard summary (PR #49)
 
 - `GET /api/dashboard/summary?limit=N` — read-only aggregate of CLM activity for the caller's org. ``limit`` defaults to 5 and is hard-capped at 20 by FastAPI's ``Query(le=20)``.
-- Counts: `open_requests`, `in_progress_requests`, `urgent_or_high_priority_requests` (open or in-progress, priority urgent or high), `open_inbox_items`, `overdue_inbox_items` (open + due_date < today), `contracts_total`, `contracts_sent_for_signature`, `contracts_executed`, `templates_active`.
+- Counts: `open_requests`, `in_progress_requests`, `urgent_or_high_priority_requests` (open or in-progress, priority urgent or high), `open_inbox_items`, `overdue_inbox_items` (open + due_date < today), `contracts_total`, `contracts_sent_for_signature`, `contracts_executed`, `templates_active`. PR #50 adds `active_approval_workflows`, `pending_approval_steps` (pending steps on active workflows), and `overdue_approval_steps` (pending steps on active workflows whose `due_date` is in the past).
 - Upcoming lists: requests and inbox items with ``due_date`` in `[today, today + 14 days]` (inclusive). Requests filter to open/in_progress; inbox items filter to open. Cancelled requests and dismissed/completed inbox items never appear.
 - Recent activity: top-N contracts (by `created_at`), top-N requests (by `created_at`, cancelled excluded), top-N executed contracts (by `updated_at`).
 - Compact projections (`DashboardRequestSummary`, `DashboardInboxSummary`, `DashboardContractSummary`) — *not* the full detail responses. Contract summaries carry `has_generated_docx` / `has_signed_pdf` booleans assembled from a single `contract_artifacts` metadata-only lookup; storage / encryption columns and `full_text` are deliberately excluded.
 - All queries filter on `organization_id`. There is no cross-org query parameter.
+
+### Approval workflows (PR #50)
+
+A workflow run is a concrete approval process attached to a request and/or contract. Each run has an ordered list of `ApprovalStep` rows, only one of which is "current" at a time. The current step's assignee finds it via a linked `InboxItem` with `item_type='approval'`.
+
+State transitions:
+
+- **Create** (`POST /api/approval-workflows`) creates the run, creates step rows `1..n`, and creates an `approval` inbox item for step 1 only. `current_step_order = 1`.
+- **Approve** (`POST /api/approval-workflows/{id}/steps/{step_id}/approve`) marks the step `approved`, completes its inbox item, and either (a) opens an inbox item for the next pending step and updates `current_step_order`, or (b) marks the workflow `completed` if there is no next step. The approval does NOT mutate the linked `ContractRequest` / `Contract` status — those transitions remain manual. The endpoint will not auto-send to DocuSeal.
+- **Reject** (`POST /api/approval-workflows/{id}/steps/{step_id}/reject`) marks the step `rejected`, completes its inbox item, marks the workflow `rejected`, sets `completed_at`, and marks all later pending steps `skipped` (their inbox items, if any, are dismissed). Does not mutate the linked request/contract.
+- **Cancel** (`PATCH /api/approval-workflows/{id}/cancel`) marks the workflow `cancelled`, sets `completed_at`, dismisses any open approval inbox items linked to the run, and marks remaining pending steps `skipped`. Cancelling a terminal workflow returns 409.
+- **Update** (`PATCH /api/approval-workflows/{id}/steps/{step_id}`) edits a small allowlist (title / approver / due date) while the step is still pending. Mirrors title / assignee / due date onto the open inbox item.
+- **List + detail** are org-scoped; `?status=`, `?request_id=`, `?contract_id=`, and `?include_terminal=false` filters are supported. Cross-org access returns 404 across every endpoint.
+
+Idempotency / 409 guards: approving or rejecting an already-decided step (or any non-current pending step), or operating on a non-active workflow, returns 409. The frontend page (`ApprovalWorkflowsPage.tsx`) gates buttons accordingly so a single user clicking through the UI doesn't surface 409s — the guards exist for the multi-tab / API-direct case.
+
+Out of scope by design: parallel approvals, conditional branching, workflow templates, SLA reminders, automatic DocuSeal send on completion, automatic request/contract status mutation. Future PRs land those on top.
 
 ---
 
@@ -623,7 +641,7 @@ These rules are non-negotiable. Reviewers should reject changes that violate the
 
 Tracked, intentionally not implemented:
 
-- Approval workflow engine on top of `ContractRequest` (multi-stage approvals, gating rules).
+- Approval workflow expansion on top of the PR #50 foundation: workflow templates (predefined step lists), parallel approvals, conditional branching (e.g. "skip CFO if amount < $X"), SLA / calendar reminders, approval analytics, and request-to-DocuSeal gating. The current PR keeps the model linear and explicit.
 - Upload-file request conversion: the convert endpoint only handles requests linked to an `AgreementTemplate`. A request with a counterparty-supplied DOCX (no template) still has to be converted by uploading the file through the `/api/contracts/upload` flow; merging that into the convert path is future work.
 - Convert-then-send shortcut: the convert endpoint deliberately stops at "draft Contract." Sending to DocuSeal is a separate explicit action so legal can review the draft before signature.
 - Calendar / integration layer (DocuSign-style reminders, deadline tracking, etc.).
@@ -649,24 +667,25 @@ PR #48 closed the loop between intake and template generation: the conversion ro
 
 PR #49 added the **dashboard analytics foundation**: a single read-only `GET /api/dashboard/summary` endpoint plus a Dashboard page that lands on `/demo/dashboard`. It is intentionally narrow — counts, two due-soon lists, three recent-activity lists — and reuses no infrastructure. No materialized views, no caching layer, no charts, no cycle-time math. Compact `Dashboard*Summary` schemas (separate from the existing detail responses) keep storage internals off the surface by construction. The contract summary's `has_generated_docx` / `has_signed_pdf` booleans come from a single bulk artifact-existence query, so the dashboard doesn't fan out into N artifact lookups.
 
-The recommended next PR (#50) builds on top of these.
+PR #50 added the **narrow approval workflow foundation**: `ApprovalWorkflowRun` + `ApprovalStep` tables, a router at `/api/approval-workflows` (create / list / detail / cancel / approve / reject / step update), and an `Approvals` page in the frontend. The pending step's assignee finds it through an `approval`-typed `InboxItem`; approval / rejection / cancellation drive the inbox state in the same transaction. Three new dashboard counts (`active_approval_workflows`, `pending_approval_steps`, `overdue_approval_steps`) surface workload. The model is deliberately linear: no parallel approvals, no conditional branching, no SLA reminders, no auto-send to DocuSeal, no automatic mutation of the linked request/contract status.
+
+The recommended next PR (#51) builds on top of these.
 
 ---
 
-## 11. Recommended Next PR: PR #50 — Approval workflow scaffold (or: Upload-file request conversion)
+## 11. Recommended Next PR: PR #51 — Approval workflow templates (or: Upload-file request conversion)
 
-Two complementary directions, both blocked on the same domain question: does an "approval" mean "another inbox item" or does it warrant its own table and lifecycle?
+Two complementary directions, both unblocked now that the approval foundation has shipped.
 
-### 11a. Approval workflow scaffold
+### 11a. Approval workflow templates
 
-**Goal:** let an org configure that a `ContractRequest` of certain types (or above a dollar threshold, or with certain counterparties) requires explicit approval before `convert-to-contract` is allowed.
+**Goal:** make creating an approval workflow a single-click action driven by a saved template ("NDA approval", "MSA over $100k approval"), instead of redefining steps every time.
 
 Suggested minimum scope:
-- A small `ApprovalRule` table (org-scoped, free-form predicate string for now — keep the matcher trivial in v1).
-- A `RequestApproval` row per gated request, with `status: pending | approved | rejected` and `approver_user_id`.
-- Convert-to-contract returns 403 (or 409) until at least one matching approval is `approved`.
-- A new `request_approval` `InboxItem` type so approvers see the queue.
-- Frontend: an "Approvals" tab on the request detail surface, plus a new `pending_approvals` count on the dashboard.
+- A small `ApprovalWorkflowTemplate` table (org-scoped) with a name and an ordered list of `ApprovalWorkflowTemplateStep` rows (title, approver hint, optional due-date offset in days).
+- A "create from template" route on the existing approval-workflows surface.
+- Frontend: a CRUD page for templates plus a "use template" picker on the create form.
+- No conditional branching, no parallel approvals — those wait for a separate domain conversation.
 
 ### 11b. Upload-file request conversion
 
@@ -677,19 +696,19 @@ Suggested minimum scope:
 - Reuse the existing `/api/contracts/upload` validation + storage path; do not duplicate it.
 - Same request/inbox transition semantics as the template path.
 
-### Out of scope for PR #50 (either direction)
+### Out of scope for PR #51 (either direction)
 
-- **Do not implement PowerSync yet.** The conversion semantics are now stable, but the approval shape isn't. Sync rules can lock in once approvals settle.
+- **Do not implement PowerSync yet.** The approval semantics are now stable for the linear case; sync rules can lock in once parallel/conditional shapes settle.
 - Calendar / Nango / reminders.
 - Clerk integration.
 - Local vault mode.
 - Rich DocuSeal status dashboard.
-- Charts, cycle-time metrics, workload-by-assignee on the dashboard — those are their own PR once the model decisions for approvals and assignments stabilize.
+- Parallel approvals, conditional branching — those are their own PRs once the workflow-template UX stabilizes.
 
 ### Architecture asks (raise these before coding)
 
-- Should approval rules be predicate-based (free-form expressions evaluated server-side) or list-based (explicit "this request type + this contract type → these approvers")? Predicates are more flexible but require a sandbox. List-based first, predicate later.
-- Should approvals supersede on request edits (e.g. counterparty change resets approval)? Probably yes for material fields; confirm scope.
+- Should approval workflows be auto-attached to requests of certain shape (e.g. contract_type=MSA, priority=urgent), or should every workflow be a manual create? Manual first, auto-attach later behind a feature flag.
+- Should approving the final step of a workflow attached to a request mark the request `completed`? PR #50 deliberately does NOT do this; revisit once the approval-template UX exists and the field-level coupling is clear.
 - For upload-file conversion: should the "no linked template" check be a hard gate, or should an uploaded file override a linked template? Probably hard gate — a request that asked for "NDA via template" shouldn't quietly accept a counterparty paper instead.
 
 ---
@@ -721,7 +740,7 @@ npm run build
 After `npm run build`, sanity-check the generated service worker:
 
 ```
-grep -E "/api|api/contracts|api/agreement-templates|api/docuseal-bridge|api/requests|api/inbox-items" frontend/dist/sw.js || echo "no API routes precached"
+grep -E "/api|api/contracts|api/agreement-templates|api/docuseal-bridge|api/requests|api/inbox-items|api/approval-workflows" frontend/dist/sw.js || echo "no API routes precached"
 ```
 
 The service worker must not include API routes in its precache or runtime cache rules.

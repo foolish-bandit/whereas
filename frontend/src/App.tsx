@@ -13,6 +13,7 @@ import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
 import RequestsPage from "./pages/RequestsPage";
 import InboxPage from "./pages/InboxPage";
+import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import LandingPage from "./pages/marketing/LandingPage";
 
 export default function App() {
@@ -49,6 +50,7 @@ function DemoApp() {
         />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="inbox" element={<InboxPage />} />
+        <Route path="approvals" element={<ApprovalWorkflowsPage />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </AppShell>

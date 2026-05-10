@@ -17,6 +17,10 @@ export interface DashboardCounts {
   contracts_sent_for_signature: number;
   contracts_executed: number;
   templates_active: number;
+  /** PR #50 — narrow approval workflow surface. */
+  active_approval_workflows: number;
+  pending_approval_steps: number;
+  overdue_approval_steps: number;
 }
 
 export interface DashboardRequestSummary {

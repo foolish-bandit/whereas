@@ -81,6 +81,14 @@ import type {
   InboxItemUpdateRequest,
   ListInboxItemFilters,
 } from "../types/inboxItems";
+import type {
+  ApprovalStep,
+  ApprovalStepDecisionRequest,
+  ApprovalWorkflowRun,
+  ApprovalWorkflowRunCreateRequest,
+  ApprovalWorkflowRunListItem,
+  ListApprovalWorkflowFilters,
+} from "../types/approvalWorkflows";
 import {
   MOCK_DEMO_ORG_ID,
   MOCK_INBOX_ITEMS,
@@ -1700,6 +1708,297 @@ export async function dismissInboxItem(
 }
 
 // ---------------------------------------------------------------------------
+// Approval workflows (PR #50 — narrow approval foundation, demo mode)
+//
+// Mirrors the backend behavior closely enough for UI tests:
+//  * creating a workflow seeds an approval inbox item for step 1 only
+//  * approving the current step closes its inbox item and either opens
+//    the next step's inbox item or completes the workflow
+//  * rejecting the current step rejects the workflow and skips the rest
+//  * cancelling dismisses any open approval inbox items and skips
+//    pending steps
+// No storage internals are ever materialized here.
+// ---------------------------------------------------------------------------
+
+const sessionApprovalRuns: ApprovalWorkflowRun[] = [];
+
+function _toRunListItem(
+  run: ApprovalWorkflowRun,
+): ApprovalWorkflowRunListItem {
+  return {
+    id: run.id,
+    organization_id: run.organization_id,
+    name: run.name,
+    status: run.status,
+    request_id: run.request_id,
+    contract_id: run.contract_id,
+    template_id: run.template_id,
+    current_step_order: run.current_step_order,
+    started_at: run.started_at,
+    completed_at: run.completed_at,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+  };
+}
+
+function _findRun(id: string): ApprovalWorkflowRun | undefined {
+  return sessionApprovalRuns.find((r) => r.id === id);
+}
+
+function _emitApprovalInbox(run: ApprovalWorkflowRun, step: ApprovalStep): InboxItem {
+  const now = isoNow();
+  const item: InboxItem = {
+    id: nextId("inbox"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: `Approval needed: ${step.title}`,
+    description: `Workflow: ${run.name}`,
+    item_type: "approval",
+    status: "open",
+    priority: null,
+    assigned_to: step.assigned_to,
+    due_date: step.due_date,
+    request_id: run.request_id,
+    contract_id: run.contract_id,
+    template_id: run.template_id,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: {
+      workflow_run_id: run.id,
+      approval_step_id: step.id,
+    },
+  };
+  sessionInboxItems.unshift(item);
+  return item;
+}
+
+function _resolveApprovalInbox(
+  inboxItemId: string | null,
+  newStatus: "completed" | "dismissed",
+): void {
+  if (!inboxItemId) return;
+  const item = sessionInboxItems.find((i) => i.id === inboxItemId);
+  if (item && item.status === "open") {
+    item.status = newStatus;
+    item.updated_at = isoNow();
+  }
+}
+
+export async function listApprovalWorkflows(
+  filters: ListApprovalWorkflowFilters = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRunListItem[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return sessionApprovalRuns
+    .filter((run) => {
+      if (filters.status && run.status !== filters.status) return false;
+      if (filters.include_terminal === false && run.status !== "active") {
+        return false;
+      }
+      if (filters.request_id && run.request_id !== filters.request_id) {
+        return false;
+      }
+      if (filters.contract_id && run.contract_id !== filters.contract_id) {
+        return false;
+      }
+      return true;
+    })
+    .map(_toRunListItem);
+}
+
+export async function getApprovalWorkflow(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const run = _findRun(id);
+  if (!run) throw new ApiError(404, "Approval workflow not found.");
+  return run;
+}
+
+export async function createApprovalWorkflow(
+  payload: ApprovalWorkflowRunCreateRequest,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (!payload.request_id && !payload.contract_id) {
+    throw new ApiError(
+      422,
+      "At least one of request_id or contract_id is required.",
+    );
+  }
+  if (!payload.steps || payload.steps.length === 0) {
+    throw new ApiError(422, "At least one step is required.");
+  }
+  const now = isoNow();
+  const runId = nextId("wf");
+  const steps: ApprovalStep[] = payload.steps.map((step, index) => ({
+    id: nextId("step"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    workflow_run_id: runId,
+    step_order: index + 1,
+    title: step.title,
+    description: step.description ?? null,
+    approver_name: step.approver_name ?? null,
+    approver_email: step.approver_email ?? null,
+    assigned_to: step.assigned_to ?? null,
+    status: "pending",
+    decision_note: null,
+    decided_at: null,
+    due_date: step.due_date ?? null,
+    inbox_item_id: null,
+    created_at: now,
+    updated_at: now,
+    metadata_json: step.metadata_json ?? null,
+  }));
+  const run: ApprovalWorkflowRun = {
+    id: runId,
+    organization_id: MOCK_DEMO_ORG_ID,
+    name: payload.name,
+    status: "active",
+    request_id: payload.request_id ?? null,
+    contract_id: payload.contract_id ?? null,
+    template_id: payload.template_id ?? null,
+    current_step_order: 1,
+    started_at: now,
+    completed_at: null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+    metadata_json: payload.metadata_json ?? null,
+    steps,
+  };
+  // Inbox item only for the first step.
+  const inbox = _emitApprovalInbox(run, steps[0]);
+  steps[0].inbox_item_id = inbox.id;
+  sessionApprovalRuns.unshift(run);
+  return run;
+}
+
+function _ensureDecidable(
+  run: ApprovalWorkflowRun,
+  step: ApprovalStep,
+): void {
+  if (run.status !== "active") {
+    throw new ApiError(
+      409,
+      `Workflow is ${run.status}; no further decisions allowed.`,
+    );
+  }
+  if (step.status !== "pending") {
+    throw new ApiError(409, `Step is already ${step.status}.`);
+  }
+  if (
+    run.current_step_order !== null &&
+    step.step_order !== run.current_step_order
+  ) {
+    throw new ApiError(
+      409,
+      "Only the current pending step can be decided.",
+    );
+  }
+}
+
+export async function approveApprovalStep(
+  workflowId: string,
+  stepId: string,
+  payload: ApprovalStepDecisionRequest = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const run = _findRun(workflowId);
+  if (!run) throw new ApiError(404, "Approval workflow not found.");
+  const step = run.steps.find((s) => s.id === stepId);
+  if (!step) throw new ApiError(404, "Approval step not found.");
+  _ensureDecidable(run, step);
+
+  const now = isoNow();
+  step.status = "approved";
+  step.decided_at = now;
+  if (payload.decision_note != null) step.decision_note = payload.decision_note;
+  step.updated_at = now;
+  _resolveApprovalInbox(step.inbox_item_id, "completed");
+
+  const next = run.steps.find(
+    (s) => s.step_order > step.step_order && s.status === "pending",
+  );
+  if (next) {
+    run.current_step_order = next.step_order;
+    const inbox = _emitApprovalInbox(run, next);
+    next.inbox_item_id = inbox.id;
+  } else {
+    run.status = "completed";
+    run.completed_at = now;
+    run.current_step_order = step.step_order;
+  }
+  run.updated_at = now;
+  return run;
+}
+
+export async function rejectApprovalStep(
+  workflowId: string,
+  stepId: string,
+  payload: ApprovalStepDecisionRequest = {},
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const run = _findRun(workflowId);
+  if (!run) throw new ApiError(404, "Approval workflow not found.");
+  const step = run.steps.find((s) => s.id === stepId);
+  if (!step) throw new ApiError(404, "Approval step not found.");
+  _ensureDecidable(run, step);
+
+  const now = isoNow();
+  step.status = "rejected";
+  step.decided_at = now;
+  if (payload.decision_note != null) step.decision_note = payload.decision_note;
+  step.updated_at = now;
+  _resolveApprovalInbox(step.inbox_item_id, "completed");
+
+  for (const later of run.steps) {
+    if (later.step_order > step.step_order && later.status === "pending") {
+      later.status = "skipped";
+      later.decided_at = now;
+      later.updated_at = now;
+      _resolveApprovalInbox(later.inbox_item_id, "dismissed");
+    }
+  }
+  run.status = "rejected";
+  run.completed_at = now;
+  run.current_step_order = step.step_order;
+  run.updated_at = now;
+  return run;
+}
+
+export async function cancelApprovalWorkflow(
+  workflowId: string,
+  options: ApiOptions = {},
+): Promise<ApprovalWorkflowRun> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const run = _findRun(workflowId);
+  if (!run) throw new ApiError(404, "Approval workflow not found.");
+  if (run.status !== "active") {
+    throw new ApiError(
+      409,
+      `Workflow is already ${run.status}; cannot cancel a terminal workflow.`,
+    );
+  }
+  const now = isoNow();
+  run.status = "cancelled";
+  run.completed_at = now;
+  run.updated_at = now;
+  for (const step of run.steps) {
+    if (step.status === "pending") {
+      step.status = "skipped";
+      step.decided_at = now;
+      step.updated_at = now;
+      _resolveApprovalInbox(step.inbox_item_id, "dismissed");
+    }
+  }
+  return run;
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard summary (demo mode)
 //
 // Derives counts and lists from the in-process mock state — same demo
@@ -1810,6 +2109,35 @@ function _buildDashboardCounts(): DashboardCounts {
     (t) => t.status === "active",
   ).length;
 
+  // PR #50 — narrow approval workflow counts. The session-scoped
+  // ``sessionApprovalRuns`` array is the only state we mutate at
+  // demo runtime; cancelled / completed / rejected runs drop out of
+  // the active count, and pending/overdue counts only consider runs
+  // that are still active.
+  const active_approval_workflows = sessionApprovalRuns.filter(
+    (r) => r.status === "active",
+  ).length;
+  const pending_approval_steps = sessionApprovalRuns
+    .filter((r) => r.status === "active")
+    .reduce(
+      (acc, r) =>
+        acc + r.steps.filter((s) => s.status === "pending").length,
+      0,
+    );
+  const overdue_approval_steps = sessionApprovalRuns
+    .filter((r) => r.status === "active")
+    .reduce(
+      (acc, r) =>
+        acc +
+        r.steps.filter(
+          (s) =>
+            s.status === "pending" &&
+            s.due_date !== null &&
+            _isoToDate(s.due_date) < todayDate,
+        ).length,
+      0,
+    );
+
   return {
     open_requests,
     in_progress_requests,
@@ -1820,6 +2148,9 @@ function _buildDashboardCounts(): DashboardCounts {
     contracts_sent_for_signature,
     contracts_executed,
     templates_active,
+    active_approval_workflows,
+    pending_approval_steps,
+    overdue_approval_steps,
   };
 }
 
