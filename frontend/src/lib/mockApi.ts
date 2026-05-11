@@ -774,6 +774,82 @@ export async function compareContractArtifacts(
   };
 }
 
+/**
+ * Demo-mode counterpart for the PR #90 redline export. The mock
+ * synthesizes a small, valid-looking text blob and returns it as a
+ * Blob so the browser still triggers a real download flow in demo
+ * mode. The blob is plain-text rather than a real DOCX — the
+ * comparison-report rendering is server-only — but it carries enough
+ * structure (title, disclaimer, version metadata, diff) that the demo
+ * shows the "this is a comparison preview, not an official Word
+ * redline" framing.
+ */
+export async function exportContractArtifactsCompare(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const compare = await compareContractArtifacts(
+    contractId,
+    baseArtifactId,
+    compareArtifactId,
+    options,
+  );
+  const detail =
+    sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  const contractTitle = detail?.title ?? "comparison-report";
+  const lines: string[] = [
+    `Comparison report — ${contractTitle}`,
+    "",
+    "This is a text comparison preview, not an official Word redline.",
+    "Differences are highlighted as a working aid; the underlying",
+    "official documents remain authoritative.",
+    "",
+    `Left version:  ${compare.base.label}` +
+      (compare.base.filename ? ` — ${compare.base.filename}` : ""),
+    `Right version: ${compare.compare.label}` +
+      (compare.compare.filename ? ` — ${compare.compare.filename}` : ""),
+    "",
+    `Summary: added ${compare.summary.added_lines}, ` +
+      `removed ${compare.summary.removed_lines}, ` +
+      `changed blocks ${compare.summary.changed_blocks}, ` +
+      `unchanged ${compare.summary.unchanged_lines}`,
+    "",
+    "Differences:",
+  ];
+  for (const block of compare.diff_blocks) {
+    if (block.type === "context") {
+      lines.push(
+        `… ${block.lines.length} unchanged line${
+          block.lines.length === 1 ? "" : "s"
+        } …`,
+      );
+      continue;
+    }
+    for (const line of block.lines) {
+      const prefix =
+        line.type === "removed" ? "- " : line.type === "added" ? "+ " : "  ";
+      lines.push(prefix + line.text);
+    }
+  }
+  const body = lines.join("\n");
+  const blob = new Blob([body], {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  const safe = (contractTitle || "comparison-report")
+    .replace(/[^A-Za-z0-9 _-]/g, "_")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 80) || "comparison-report";
+  return {
+    blob,
+    filename: `${safe}-comparison-report.docx`,
+    mimeType: blob.type,
+  };
+}
+
 function _demoLabel(artifactType: string): string {
   switch (artifactType) {
     case "original_upload":

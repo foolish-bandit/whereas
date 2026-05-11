@@ -106,6 +106,14 @@ class AuditEventType(StrEnum):
     # wrapped_dek), raw bytes, raw extracted text, and signer PII are
     # NEVER recorded.
     CONTRACT_ARTIFACTS_COMPARED = "contract.artifacts_compared"
+    # PR #90 — on-demand DOCX comparison-report export from the
+    # Document History view. Emitted on a successful export. Payload
+    # mirrors CONTRACT_ARTIFACTS_COMPARED (contract + two artifact ids
+    # + type labels + summary line counts) so operators can see a
+    # redline left the system without recording any of its content.
+    # Storage internals (storage_key, wrapped_dek), raw bytes, the
+    # extracted/diff text, and signer PII are NEVER recorded.
+    CONTRACT_ARTIFACTS_COMPARE_EXPORTED = "contract.artifacts_compare_exported"
     CONTRACT_ARTIFACT_PREVIEWED = "contract.artifact_previewed"
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"

@@ -93,6 +93,11 @@ from app.services.artifact_compare import (
     extract_comparable_text,
 )
 from app.services.clause_segmentation import segment_and_persist_clauses
+from app.services.compare_report_docx import (
+    CompareSideMetadata,
+    build_export_filename,
+    render_compare_report_docx,
+)
 from app.services.contract_artifacts import (
     get_latest_official_downloadable_artifact,
     get_latest_official_signable_artifact,
@@ -1719,6 +1724,168 @@ async def compare_contract_artifacts(
             for block in diff.diff_blocks
         ],
         warnings=warnings,
+    )
+
+
+@router.post(
+    "/{contract_id}/artifacts/compare/export",
+    responses={
+        200: {
+            "content": {_DOCX_MIME: {}},
+            "description": "Comparison report as DOCX bytes.",
+        },
+        404: {"description": "Contract or artifact not found in this org."},
+        409: {"description": "Selected artifact has no retrievable storage metadata."},
+        422: {"description": "Either side could not be converted to comparable text."},
+    },
+)
+async def export_contract_artifacts_compare(
+    contract_id: uuid.UUID,
+    payload: ArtifactCompareRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """On-demand redline-style export of a comparison report DOCX (PR #90).
+
+    This is the export counterpart to ``compare_contract_artifacts``.
+    Same resolution rules, same scoping invariants, same extraction
+    fallback semantics; the difference is the wire format: instead of
+    a JSON diff structure we render the diff as a downloadable
+    comparison-report DOCX.
+
+    Important user-visible framing: this is NOT a Word tracked-changes
+    file. Generating a true ``w:ins``/``w:del`` redline from arbitrary
+    text input is error-prone, so PR #90 ships a clearly labelled
+    *comparison report* instead. The first paragraph of the rendered
+    DOCX makes that explicit.
+
+    Nothing is persisted. The DOCX bytes are returned to the caller
+    and forgotten — no ``ContractArtifact`` row is created, no
+    download priority changes. A safe
+    ``contract.artifacts_compare_exported`` audit event records that
+    the export happened (allowlisted fields only — never the diff
+    text, the extracted text, storage internals, or signer PII).
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    base_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.base_artifact_id,
+        organization_id=user.organization_id,
+    )
+    compare_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.compare_artifact_id,
+        organization_id=user.organization_id,
+    )
+
+    base_bytes, base_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=base_artifact,
+        allow_legacy_fallback=False,
+    )
+    compare_bytes, compare_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=compare_artifact,
+        allow_legacy_fallback=False,
+    )
+
+    try:
+        base_extracted = extract_comparable_text(
+            file_bytes=base_bytes,
+            mime_type=base_mime,
+            filename=base_artifact.filename,
+            side="base",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The base version could not be converted to comparable text."
+            ),
+        ) from exc
+    try:
+        compare_extracted = extract_comparable_text(
+            file_bytes=compare_bytes,
+            mime_type=compare_mime,
+            filename=compare_artifact.filename,
+            side="compare",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The compare version could not be converted to comparable text."
+            ),
+        ) from exc
+
+    # Drop the decrypted bytes references before we render — the
+    # rendered DOCX only needs the extracted text strings from here on.
+    del base_bytes, compare_bytes
+
+    diff = compute_text_diff(base_extracted.text, compare_extracted.text)
+    diff.warnings.extend(base_extracted.warnings)
+    diff.warnings.extend(compare_extracted.warnings)
+
+    base_label = artifact_compare_label(
+        base_artifact.artifact_type, base_artifact.source
+    )
+    compare_label = artifact_compare_label(
+        compare_artifact.artifact_type, compare_artifact.source
+    )
+    docx_bytes = render_compare_report_docx(
+        diff=diff,
+        base=CompareSideMetadata(
+            label=base_label,
+            filename=base_artifact.filename,
+            created_at=base_artifact.created_at,
+        ),
+        compare=CompareSideMetadata(
+            label=compare_label,
+            filename=compare_artifact.filename,
+            created_at=compare_artifact.created_at,
+        ),
+        contract_title=contract.title,
+    )
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_ARTIFACTS_COMPARE_EXPORTED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "base_artifact_id": str(base_artifact.id),
+            "compare_artifact_id": str(compare_artifact.id),
+            "base_artifact_type": base_artifact.artifact_type,
+            "compare_artifact_type": compare_artifact.artifact_type,
+            "added_lines": diff.summary.added_lines,
+            "removed_lines": diff.summary.removed_lines,
+            "changed_blocks": diff.summary.changed_blocks,
+            "format": "docx",
+            "byte_count": len(docx_bytes),
+        },
+    )
+
+    filename = build_export_filename(contract.title)
+    return Response(
+        content=docx_bytes,
+        media_type=_DOCX_MIME,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
     )
 
 
