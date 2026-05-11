@@ -12,6 +12,7 @@ import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";
 import RightPanelTabs from "../components/RightPanelTabs";
 import StatusBadge from "../components/StatusBadge";
+import UploadReviewPanel from "../components/UploadReviewPanel";
 import {
   ApiError,
   MissingDevUserError,
@@ -19,11 +20,21 @@ import {
   getContract,
   getContractArtifacts,
   getContractApprovalGate,
+  getContractMetadata,
   sendContractToDocuseal,
 } from "../lib/api";
+import {
+  artifactDisplayLabel,
+  artifactOriginCopy,
+  artifactSourceChip,
+  pickCurrentDocumentLabel,
+  pickPrimaryOriginCopy,
+  type LifecycleSlot,
+} from "../lib/artifacts";
 import { clauseHasValidSpan } from "../lib/clauses";
 import { fieldKey } from "../lib/fields";
 import {
+  formatBytes,
   formatDate,
   formatDateTime,
   mimeExtension,
@@ -36,6 +47,7 @@ import type {
   ContractDetail,
   ExtractedField,
 } from "../types/contracts";
+import type { ContractMetadataView } from "../types/contractIntake";
 import type { ReviewRunDetail } from "../types/findings";
 import type {
   DocuSealSigner,
@@ -54,6 +66,11 @@ type DownloadState =
   | { kind: "error"; message: string };
 
 type SidebarTab = "metadata" | "clauses" | "review";
+
+type ArtifactsState =
+  | { kind: "loading" }
+  | { kind: "loaded"; artifacts: ContractArtifact[] }
+  | { kind: "error" };
 
 /**
  * The contract workspace defaults to the lightweight Markdown
@@ -75,22 +92,15 @@ export default function ContractWorkspacePage() {
     kind: "idle",
   });
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
-  // Three meaningful states for the artifact strip:
-  //   - "loading"  → request in flight, render nothing yet
-  //   - "loaded"   → request resolved; ``artifact`` is the official
-  //                  original_upload row, or ``null`` if the contract
-  //                  predates the artifact model and has not been
-  //                  backfilled. ``null`` lets the UI surface a
-  //                  legacy fallback hint without pretending an
-  //                  artifact exists.
-  //   - "error"    → request failed; treated like loading from the
-  //                  user's perspective (no strip), so the download
-  //                  button stays the only thing that matters.
-  const [artifactState, setArtifactState] = useState<
-    | { kind: "loading" }
-    | { kind: "loaded"; artifact: ContractArtifact | null }
-    | { kind: "error" }
-  >({ kind: "loading" });
+  // Full artifact list drives the lifecycle strip, the Files section,
+  // the Current-document label, and the Details origin copy. Mirrors
+  // the priority used by the backend's download endpoint.
+  const [artifactsState, setArtifactsState] = useState<ArtifactsState>({
+    kind: "loading",
+  });
+  const [metadataView, setMetadataView] = useState<ContractMetadataView | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!id) return;
@@ -135,25 +145,11 @@ export default function ContractWorkspacePage() {
   useEffect(() => {
     if (!id) return;
     const controller = new AbortController();
-    setArtifactState({ kind: "loading" });
+    setArtifactsState({ kind: "loading" });
     getContractArtifacts(id, { signal: controller.signal })
       .then((rows) => {
         if (controller.signal.aborted) return;
-        // Strip prefers the signed PDF if present (executed contract),
-        // falling back to the original upload. The listing endpoint
-        // returns rows newest-first; ``find`` picks the freshest of
-        // each type. Generated DOCX intentionally does NOT surface
-        // here because the existing strip is the "official artifact"
-        // affordance, and the official record is the signed PDF or
-        // the source upload, not the draft.
-        const signed =
-          rows.find((a) => a.artifact_type === "signed_pdf") ?? null;
-        const original =
-          rows.find((a) => a.artifact_type === "original_upload") ?? null;
-        setArtifactState({
-          kind: "loaded",
-          artifact: signed ?? original,
-        });
+        setArtifactsState({ kind: "loaded", artifacts: rows });
       })
       .catch(() => {
         // Artifact metadata is a hint, not load-bearing — the contract
@@ -161,7 +157,28 @@ export default function ContractWorkspacePage() {
         // fails or the user lacks access. Swallow here; primary errors
         // are surfaced via the contract load above.
         if (controller.signal.aborted) return;
-        setArtifactState({ kind: "error" });
+        setArtifactsState({ kind: "error" });
+      });
+    return () => controller.abort();
+  }, [id]);
+
+  // The metadata view is the merged "Repository details" projection
+  // PR #67 added: title from the Contract row, counterparty / contract
+  // type / effective date from the latest original_upload artifact's
+  // metadata_json. Failure is silent — Details just falls back to the
+  // raw Contract row's title and skips the optional fields.
+  useEffect(() => {
+    if (!id) return;
+    const controller = new AbortController();
+    setMetadataView(null);
+    getContractMetadata(id, { signal: controller.signal })
+      .then((view) => {
+        if (controller.signal.aborted) return;
+        setMetadataView(view);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setMetadataView(null);
       });
     return () => controller.abort();
   }, [id]);
@@ -248,10 +265,10 @@ export default function ContractWorkspacePage() {
     return (
       <div>
         <Link
-          to="/demo/contracts"
+          to="/demo/repository"
           className="text-sm text-ink-muted hover:text-ink"
         >
-          ← Back to contracts
+          ← Back to Repository
         </Link>
         <div className="mt-4">
           <LoadingSkeleton rows={4} />
@@ -264,10 +281,10 @@ export default function ContractWorkspacePage() {
     return (
       <div>
         <Link
-          to="/demo/contracts"
+          to="/demo/repository"
           className="text-sm text-ink-muted hover:text-ink"
         >
-          ← Back to contracts
+          ← Back to Repository
         </Link>
         <div className="mt-4">
           <ErrorState
@@ -279,23 +296,94 @@ export default function ContractWorkspacePage() {
     );
   }
 
+  const artifacts =
+    artifactsState.kind === "loaded" ? artifactsState.artifacts : [];
+
   return (
     <div>
       <Link
-        to="/demo/contracts"
+        to="/demo/repository"
         className="text-sm text-ink-muted hover:text-ink"
       >
-        ← Back to contracts
+        ← Back to Repository
       </Link>
 
-      <ContractHeader
+      <RepositoryHeader
         contract={state.contract}
+        metadata={metadataView}
+        artifactsState={artifactsState}
         downloadState={downloadState}
         onDownload={onDownload}
-        artifactState={artifactState}
+      />
+
+      <DocumentLifecycleStrip
+        contract={state.contract}
+        state={artifactsState}
       />
 
       <SendToDocusealPanel contractId={state.contract.id} />
+
+      <section
+        className="mt-6 rounded border border-rule p-4"
+        data-testid="contract-preview-section"
+      >
+        <h2 className="text-sm font-medium text-ink">Preview</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          Text preview is a fast working representation. The current
+          official document is what the Download action returns.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+          <div>
+            {viewerMode === "markdown" ? (
+              <MarkdownPreview
+                contractId={state.contract.id}
+                rightSlot={
+                  <ViewerModeToggle
+                    mode={viewerMode}
+                    onChange={setViewerMode}
+                  />
+                }
+              />
+            ) : (
+              <DocumentViewer
+                fullText={state.contract.full_text}
+                selectedSpan={selectedSpan}
+                selectionToken={selectedKey}
+                rightSlot={
+                  <ViewerModeToggle
+                    mode={viewerMode}
+                    onChange={setViewerMode}
+                  />
+                }
+              />
+            )}
+          </div>
+          <Sidebar
+            contract={state.contract}
+            activeTab={activeTab}
+            onTabChange={(tab) => {
+              setActiveTab(tab);
+              setSelectedKey(null);
+            }}
+            selectedKey={selectedKey}
+            onSelect={(key) => {
+              setSelectedKey(key);
+              // The Markdown preview doesn't render span highlights;
+              // auto-switch to the original text viewer when the user
+              // picks a clause/field/finding so the citation is visible.
+              if (key !== null) setViewerMode("original");
+            }}
+            onReviewRunChange={setActiveRun}
+          />
+        </div>
+      </section>
+
+      <DetailsSection
+        contract={state.contract}
+        metadata={metadataView}
+        onMetadataSaved={setMetadataView}
+        artifacts={artifacts}
+      />
 
       <section
         className="mt-6 rounded border border-rule p-4"
@@ -310,50 +398,7 @@ export default function ContractWorkspacePage() {
         <ActivityTimeline kind="contract" contractId={state.contract.id} />
       </section>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <div>
-          {viewerMode === "markdown" ? (
-            <MarkdownPreview
-              contractId={state.contract.id}
-              rightSlot={
-                <ViewerModeToggle
-                  mode={viewerMode}
-                  onChange={setViewerMode}
-                />
-              }
-            />
-          ) : (
-            <DocumentViewer
-              fullText={state.contract.full_text}
-              selectedSpan={selectedSpan}
-              selectionToken={selectedKey}
-              rightSlot={
-                <ViewerModeToggle
-                  mode={viewerMode}
-                  onChange={setViewerMode}
-                />
-              }
-            />
-          )}
-        </div>
-        <Sidebar
-          contract={state.contract}
-          activeTab={activeTab}
-          onTabChange={(tab) => {
-            setActiveTab(tab);
-            setSelectedKey(null);
-          }}
-          selectedKey={selectedKey}
-          onSelect={(key) => {
-            setSelectedKey(key);
-            // The Markdown preview doesn't render span highlights;
-            // auto-switch to the original text viewer when the user
-            // picks a clause/field/finding so the citation is visible.
-            if (key !== null) setViewerMode("original");
-          }}
-          onReviewRunChange={setActiveRun}
-        />
-      </div>
+      <FilesSection state={artifactsState} />
     </div>
   );
 }
@@ -425,43 +470,69 @@ function Sidebar({
   );
 }
 
-type ArtifactStripState =
-  | { kind: "loading" }
-  | { kind: "loaded"; artifact: ContractArtifact | null }
-  | { kind: "error" };
-
-interface ContractHeaderProps {
+interface RepositoryHeaderProps {
   contract: ContractDetail;
+  metadata: ContractMetadataView | null;
+  artifactsState: ArtifactsState;
   downloadState: DownloadState;
   onDownload: () => void;
-  artifactState: ArtifactStripState;
 }
 
-function ContractHeader({
+function RepositoryHeader({
   contract,
+  metadata,
+  artifactsState,
   downloadState,
   onDownload,
-  artifactState,
-}: ContractHeaderProps) {
+}: RepositoryHeaderProps) {
+  const artifacts =
+    artifactsState.kind === "loaded" ? artifactsState.artifacts : [];
+  const currentDocument = pickCurrentDocumentLabel(artifacts);
   return (
-    <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+    <div
+      className="mt-2 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between"
+      data-testid="repository-detail-header"
+    >
       <div className="min-w-0 flex-1">
         <h1 className="break-words font-serif text-xl text-ink sm:text-2xl">
-          {contract.title}
+          {metadata?.title ?? contract.title}
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
           <StatusBadge status={contract.status} />
+          {metadata?.contract_type && (
+            <span data-testid="repository-detail-contract-type">
+              {metadata.contract_type}
+            </span>
+          )}
+          {metadata?.counterparty_name && (
+            <span data-testid="repository-detail-counterparty">
+              {metadata.counterparty_name}
+            </span>
+          )}
           <span>{mimeLabel(contract.mime_type)}</span>
           {contract.page_count != null && (
             <span>{contract.page_count} pages</span>
           )}
-          <span>Uploaded {formatDate(contract.created_at)}</span>
-          <span>Updated {formatDateTime(contract.updated_at)}</span>
+          <span>Added {formatDate(contract.created_at)}</span>
         </div>
-        <OriginalArtifactStrip
-          state={artifactState}
-          contract={contract}
-        />
+        {currentDocument && (
+          <p
+            className="mt-2 text-xs text-ink-muted"
+            data-testid="repository-current-document"
+          >
+            <span className="font-medium text-ink">Current document:</span>{" "}
+            {currentDocument.label}
+          </p>
+        )}
+        {artifactsState.kind === "loaded" && !currentDocument && (
+          <p
+            className="mt-2 text-xs text-ink-subtle"
+            data-testid="repository-current-document-legacy"
+          >
+            Legacy original — uploaded before artifact tracking. Download
+            still resolves from the contract record.
+          </p>
+        )}
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
         <button
@@ -484,70 +555,326 @@ function ContractHeader({
   );
 }
 
-function OriginalArtifactStrip({
-  state,
-  contract,
-}: {
-  state: ArtifactStripState;
+interface LifecycleStripProps {
   contract: ContractDetail;
-}) {
-  // Whereas tracks the DOCX/PDF as the official legal artifact and the
-  // Markdown snapshot as the working representation. This strip is the
-  // small affordance in the workspace that makes the official artifact
-  // visible without redesigning the page.
-  //
-  // Cases:
-  //   1. a ``signed_pdf`` artifact exists (DocuSeal completion) →
-  //      label as "Signed artifact"; this is the contract's executed
-  //      record.
-  //   2. an ``original_upload`` artifact exists → label as "Original
-  //      artifact" with the "Official" badge.
-  //   3. the artifacts list resolved but is empty → the contract
-  //      predates the artifact model and has not been backfilled yet.
-  //      Surface a quiet "Legacy original" hint so users know the
-  //      Download original button still works against the contract row.
-  //   4. loading or error → render nothing. The Download original
-  //      button stays the load-bearing affordance.
+  state: ArtifactsState;
+}
+
+interface LifecycleSlotDescriptor {
+  slot: LifecycleSlot;
+  label: string;
+  // Either the artifact backing this slot (if any) or a synthetic
+  // descriptor for the Text preview slot (which is not a stored
+  // artifact row).
+  artifact: ContractArtifact | null;
+  hasContent: boolean;
+  createdAt: string | null;
+  mimeHint: string | null;
+}
+
+function DocumentLifecycleStrip({ contract, state }: LifecycleStripProps) {
+  // While loading or on a hard error we just hide the strip. The
+  // header's Download original button is the load-bearing affordance.
   if (state.kind !== "loaded") return null;
-  if (state.artifact) {
-    const artifact = state.artifact;
-    const isSigned = artifact.artifact_type === "signed_pdf";
-    return (
-      <div
-        className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
-        data-testid={
-          isSigned ? "signed-artifact-strip" : "original-artifact-strip"
-        }
-      >
-        <span className="font-medium text-ink">
-          {isSigned ? "Signed artifact" : "Original artifact"}
-        </span>
-        {artifact.is_official && (
-          <span className="rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-canvas">
-            {isSigned ? "Signed" : "Official"}
-          </span>
-        )}
-        {artifact.filename && (
-          <span className="truncate" title={artifact.filename}>
-            {artifact.filename}
-          </span>
-        )}
-        {artifact.mime_type && <span>{mimeLabel(artifact.mime_type)}</span>}
-      </div>
-    );
-  }
+  const { artifacts } = state;
+
+  const signed =
+    artifacts.find((a) => a.artifact_type === "signed_pdf") ?? null;
+  const generated =
+    artifacts.find((a) => a.artifact_type === "generated_docx") ?? null;
+  const original =
+    artifacts.find((a) => a.artifact_type === "original_upload") ?? null;
+
+  const slots: LifecycleSlotDescriptor[] = [
+    {
+      slot: "original_upload",
+      label: original
+        ? artifactDisplayLabel("original_upload", original.source)
+        : "Source file",
+      artifact: original,
+      hasContent: original !== null,
+      createdAt: original?.created_at ?? null,
+      mimeHint: original?.mime_type ?? null,
+    },
+    {
+      slot: "generated_docx",
+      label: artifactDisplayLabel("generated_docx"),
+      artifact: generated,
+      hasContent: generated !== null,
+      createdAt: generated?.created_at ?? null,
+      mimeHint: generated?.mime_type ?? null,
+    },
+    {
+      slot: "signed_pdf",
+      label: artifactDisplayLabel("signed_pdf"),
+      artifact: signed,
+      hasContent: signed !== null,
+      createdAt: signed?.created_at ?? null,
+      mimeHint: signed?.mime_type ?? null,
+    },
+    {
+      slot: "text_preview",
+      label: "Text preview",
+      artifact: null,
+      // The contract has full_text iff parsing succeeded, which is the
+      // same precondition the workspace uses to flip the Text preview
+      // toggle to "ready". Markdown snapshot existence is loaded
+      // lazily inside MarkdownPreview itself; here we just show that
+      // a working preview is available at the page level.
+      hasContent:
+        typeof contract.full_text === "string" &&
+        contract.full_text.length > 0,
+      createdAt: null,
+      mimeHint: null,
+    },
+  ];
+
   return (
-    <div
-      className="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-dashed border-rule bg-canvas-subtle px-2.5 py-1.5 text-xs text-ink-muted"
-      data-testid="original-artifact-strip-legacy"
+    <section
+      className="mt-4 rounded border border-rule p-3"
+      data-testid="document-lifecycle-strip"
+      aria-label="Document lifecycle"
     >
-      <span className="font-medium text-ink">Original artifact</span>
-      <span>
-        Legacy original — uploaded before artifact tracking. Download
-        original still works from the contract record.
-      </span>
-      <span>{mimeLabel(contract.mime_type)}</span>
+      <p className="text-xs font-medium text-ink">Document lifecycle</p>
+      <p className="mt-0.5 text-[11px] text-ink-subtle">
+        Files associated with this Repository record. The current
+        official document is highlighted in the header.
+      </p>
+      <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {slots.map((s) => (
+          <LifecycleSlotCard key={s.slot} slot={s} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function LifecycleSlotCard({ slot }: { slot: LifecycleSlotDescriptor }) {
+  const stateClass = slot.hasContent
+    ? "border-rule bg-canvas-subtle"
+    : "border-dashed border-rule bg-canvas";
+  return (
+    <li
+      className={`rounded border ${stateClass} p-2 text-xs`}
+      data-testid={`lifecycle-slot-${slot.slot}`}
+      data-state={slot.hasContent ? "present" : "missing"}
+    >
+      <p className="font-medium text-ink">{slot.label}</p>
+      {slot.hasContent ? (
+        <>
+          <p className="mt-1 text-[11px] text-ink-subtle">
+            {slot.slot === "text_preview"
+              ? "Available"
+              : slot.createdAt
+                ? `Added ${formatDate(slot.createdAt)}`
+                : "Available"}
+          </p>
+          {slot.mimeHint && (
+            <p className="mt-0.5 text-[11px] text-ink-subtle">
+              {mimeLabel(slot.mimeHint)}
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-[11px] text-ink-subtle">Not yet available</p>
+      )}
+    </li>
+  );
+}
+
+interface DetailsSectionProps {
+  contract: ContractDetail;
+  metadata: ContractMetadataView | null;
+  onMetadataSaved: (view: ContractMetadataView) => void;
+  artifacts: ContractArtifact[];
+}
+
+function DetailsSection({
+  contract,
+  metadata,
+  onMetadataSaved,
+  artifacts,
+}: DetailsSectionProps) {
+  const [editing, setEditing] = useState(false);
+  const primaryOrigin = pickPrimaryOriginCopy(artifacts);
+  return (
+    <section
+      className="mt-6 rounded border border-rule p-4"
+      data-testid="contract-details-section"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-medium text-ink">Details</h2>
+          <p className="mt-1 text-xs text-ink-subtle">
+            Repository record metadata. Editing updates the saved
+            details — the contract itself is not re-parsed.
+          </p>
+        </div>
+        {!editing && (
+          <button
+            type="button"
+            className="text-xs underline text-ink-muted hover:text-ink"
+            onClick={() => setEditing(true)}
+            data-testid="contract-details-edit"
+          >
+            Edit details
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="mt-3">
+          <UploadReviewPanel
+            contract={{ id: contract.id, title: metadata?.title ?? contract.title }}
+            initialSavedMetadata={metadata}
+            context="repository_upload"
+            duplicateCandidates={[]}
+            extractedMetadata={null}
+            dataTestId="contract-details-edit-panel"
+            onSaved={(next) => {
+              onMetadataSaved(next);
+              setEditing(false);
+            }}
+          />
+          <div className="mt-2">
+            <button
+              type="button"
+              className="text-xs underline text-ink-muted hover:text-ink"
+              onClick={() => setEditing(false)}
+              data-testid="contract-details-edit-cancel"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <dl
+          className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2"
+          data-testid="contract-details-list"
+        >
+          <DetailRow label="Title" value={metadata?.title ?? contract.title} />
+          <DetailRow label="Status" value={<StatusBadge status={contract.status} />} />
+          <DetailRow label="Contract type" value={metadata?.contract_type ?? "—"} />
+          <DetailRow
+            label="Counterparty"
+            value={metadata?.counterparty_name ?? "—"}
+          />
+          <DetailRow
+            label="Effective date"
+            value={metadata?.effective_date ?? "—"}
+          />
+          <DetailRow label="Added" value={formatDate(contract.created_at)} />
+          <DetailRow
+            label="Last updated"
+            value={formatDateTime(contract.updated_at)}
+          />
+          <DetailRow label="Source" value={primaryOrigin ?? "—"} />
+        </dl>
+      )}
+    </section>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <dt className="text-[11px] uppercase tracking-wide text-ink-subtle">
+        {label}
+      </dt>
+      <dd className="text-ink">{value}</dd>
     </div>
+  );
+}
+
+function FilesSection({ state }: { state: ArtifactsState }) {
+  return (
+    <section
+      className="mt-6 rounded border border-rule p-4"
+      data-testid="contract-files-section"
+    >
+      <h2 className="text-sm font-medium text-ink">Files</h2>
+      <p className="mt-1 text-xs text-ink-subtle">
+        Files stored against this Repository record. The Download
+        original action in the header always fetches the current
+        official document.
+      </p>
+      {state.kind === "loading" && (
+        <p
+          className="mt-3 text-xs text-ink-subtle"
+          data-testid="contract-files-loading"
+        >
+          Loading files…
+        </p>
+      )}
+      {state.kind === "error" && (
+        <p
+          className="mt-3 text-xs text-ink-subtle"
+          data-testid="contract-files-error"
+        >
+          File metadata is temporarily unavailable.
+        </p>
+      )}
+      {state.kind === "loaded" &&
+        (state.artifacts.length === 0 ? (
+          <p
+            className="mt-3 text-xs text-ink-subtle"
+            data-testid="contract-files-empty"
+          >
+            No additional file metadata recorded.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-rule text-xs">
+            {state.artifacts.map((a) => (
+              <li
+                key={a.id}
+                className="grid gap-1 py-2 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_auto] sm:items-baseline"
+                data-testid="contract-files-row"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium text-ink">
+                    {artifactDisplayLabel(a.artifact_type, a.source)}
+                  </p>
+                  {a.filename && (
+                    <p className="truncate text-ink-subtle" title={a.filename}>
+                      {a.filename}
+                    </p>
+                  )}
+                </div>
+                <div className="min-w-0 text-ink-muted">
+                  {a.mime_type && <span>{mimeLabel(a.mime_type)}</span>}
+                  {a.mime_type && a.size_bytes != null && (
+                    <span className="mx-1">·</span>
+                  )}
+                  {a.size_bytes != null && (
+                    <span>{formatBytes(a.size_bytes)}</span>
+                  )}
+                  <span className="ml-1 block text-ink-subtle sm:inline">
+                    {a.created_at && (
+                      <>Added {formatDate(a.created_at)}</>
+                    )}
+                  </span>
+                  {(() => {
+                    const chip = artifactSourceChip(a);
+                    return chip ? (
+                      <span className="ml-2 inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-subtle">
+                        {chip}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+                <div className="text-ink-subtle sm:text-right">
+                  {artifactOriginCopy(a)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </section>
   );
 }
 

@@ -214,6 +214,47 @@ events record only the list of changed field names — never the old
 or new values — and storage / encryption fields are not part of
 this surface.
 
+## Repository detail polish + document lifecycle (PR #68)
+
+Opening a Repository record now lands on a cleaner workspace
+organized around the agreement's document lifecycle:
+
+- **Header** — title, status, contract type, counterparty, a
+  "Current document: <label>" hint, and the existing Download
+  original action.
+- **Document lifecycle strip** — four slots showing whether each
+  artifact stage is available: Source file, Generated Word document,
+  Signed PDF, and the working Text preview. Each card shows the
+  added date and MIME label when present, or a quiet "Not yet
+  available" line when not.
+- **Send to DocuSeal** — unchanged.
+- **Preview** — the existing Markdown / View original toggle and
+  metadata / clauses / review tabs.
+- **Details** — read-only metadata (title, status, contract type,
+  counterparty, effective date, source) with an *Edit details*
+  action that reuses the PR #67 upload-review form.
+- **Activity** — the existing chronological event timeline.
+- **Files** — a safe metadata listing of every ``ContractArtifact``
+  with user-facing labels, filename, MIME, size, source chip, and
+  origin sentence.
+
+User-facing labels never expose raw artifact_type names:
+
+| Artifact                                  | Label                       |
+| ----------------------------------------- | --------------------------- |
+| ``original_upload`` (user_upload)         | Source file                 |
+| ``original_upload`` (request_upload)      | Uploaded agreement          |
+| ``generated_docx``                        | Generated Word document     |
+| ``signed_pdf``                            | Signed PDF                  |
+| ``redline``                               | Redline                     |
+| ``attachment``                            | Attachment                  |
+
+The "Current document" label mirrors the existing backend download
+priority (``signed_pdf > generated_docx > original_upload > legacy
+fallback``); it is computed entirely on the client from the existing
+``GET /api/contracts/{id}/artifacts`` response. No backend, schema,
+or download priority changed.
+
 ### Clause segmentation (v1)
 
 Uploaded contracts are now segmented into clause-level units via a
