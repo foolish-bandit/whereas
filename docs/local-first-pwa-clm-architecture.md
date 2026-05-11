@@ -1423,9 +1423,9 @@ priority exactly:
 
 Tests pin the order so the marker cannot drift from the resolver in
 `backend/app/api/contracts.py` (see §6.2). Per-artifact downloads are
-deliberately not exposed; the header's "Download original" action
-remains the only download path and continues to resolve through the
-contract-scoped endpoint.
+exposed via the dedicated route added in PR #70 (see §6.5 below); the
+header's "Download current document" action continues to resolve
+through the contract-scoped endpoint and is unchanged.
 
 ### Safe metadata rendering
 
@@ -1462,12 +1462,75 @@ layers — is dropped. Tests pin the allowlist and assert that the raw
 
 ### Follow-ups
 
-- Per-artifact download endpoint (`GET /api/contracts/{id}/
-  artifacts/{artifact_id}/download`). Currently deferred — adding it
-  safely needs an org-scoped lookup, the artifact-aware DEK path,
-  and audit hooks. Until then the header's Download action stays
-  the only download path.
 - Redline comparison view across artifact versions.
 - Generated PDF preview alongside the DOCX.
 - Artifact diff / version compare.
+- Audit export covering both `contract.downloaded` and
+  `contract.artifact_downloaded` events.
 - PowerSync sync rules covering the Document history surface.
+
+## 6.5 Per-artifact download (PR #70)
+
+`GET /api/contracts/{contract_id}/artifacts/{artifact_id}/download`
+returns the bytes of a specific `ContractArtifact` version. The
+Document History row's "Download version" button calls this route;
+the header's "Download current document" action continues to use the
+contract-scoped `GET /api/contracts/{id}/download` (§6.2) so changing
+the priority winner does not require a UI update.
+
+### Resolution + scoping
+
+1. Resolve the contract by `(contract_id, organization_id)`. A miss
+   returns 404 via the same `_get_contract_for_org` helper used by
+   every other contract-scoped route.
+2. Resolve the artifact by `(id, contract_id, organization_id)`. A
+   miss on any of the three returns 404 — callers cannot distinguish
+   "no such artifact" from "artifact belongs to another contract"
+   from "artifact belongs to another org".
+3. If the artifact has no retrievable storage metadata
+   (`storage_key` empty / `"pending"`) or no wrapped DEK (neither on
+   the artifact nor on the contract), return 409.
+
+The endpoint does **not** fall back to `Contract.s3_key`. A request
+for a specific `artifact_id` that cannot be retrieved is a clean
+error, not a silent substitute.
+
+### Decryption + headers
+
+Decryption goes through the same `DocumentStorage.retrieve_decrypted`
+path as `/download`. Per-artifact wrapped DEKs (e.g. `signed_pdf`
+written by the PR #45 path) are honored; older artifacts decrypt
+under `Contract.wrapped_dek`. The AAD is recovered from the artifact
+storage key via `_document_id_from_storage_key`, falling back to
+`str(contract.id)` for the legacy single-DEK case.
+
+The response carries:
+
+- `Content-Type` from `artifact.mime_type` (falling back to
+  `contract.mime_type`).
+- `Content-Disposition: attachment; filename="..."` from
+  `artifact.filename` via `_download_filename`, which sanitizes the
+  base name and caps it at 180 chars.
+
+No presigned or private URLs are issued. `storage_key`,
+`wrapped_dek`, and the raw bytes never appear in response headers or
+the body's metadata.
+
+### Audit
+
+A successful per-artifact download writes a
+`contract.artifact_downloaded` audit event with `contract_id`,
+`artifact_id`, `artifact_type`, and `filename`. The contract-level
+`/download` endpoint continues to write `contract.downloaded`, so the
+two paths are distinguishable in the audit chain. Storage internals
+and raw bytes are never persisted to the audit log.
+
+### What did NOT change
+
+- Default contract download priority (still `signed_pdf >
+  generated_docx > original_upload > legacy`).
+- Approval gate semantics or DocuSeal behavior.
+- Artifact taxonomy, schema, or migrations.
+- Storage internals exposure — `storage_key` and `wrapped_dek` are
+  still stripped at the schema layer and re-scrubbed by the api
+  client.

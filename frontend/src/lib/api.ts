@@ -490,16 +490,54 @@ export async function downloadContract(
   options: ApiOptions = {},
 ): Promise<DownloadResult> {
   if (isDemoMode()) return mockApi.downloadContract(id, options);
+  return downloadBlob(
+    `/api/contracts/${encodeURIComponent(id)}/download`,
+    options,
+  );
+}
+
+/**
+ * PR #70 — download a specific ContractArtifact version rather than
+ * the current priority-winning document. Backed by the per-artifact
+ * route, which is org + contract scoped server-side; a stray
+ * cross-org or cross-contract call surfaces as a clean 404 here.
+ *
+ * The Document History row's "Download version" action calls this
+ * helper. The header's "Download current document" action continues
+ * to use ``downloadContract`` so changing the priority winner does
+ * not require a UI update.
+ */
+export async function downloadContractArtifact(
+  contractId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.downloadContractArtifact(contractId, artifactId, options);
+  }
+  return downloadBlob(
+    `/api/contracts/${encodeURIComponent(contractId)}/artifacts/${encodeURIComponent(
+      artifactId,
+    )}/download`,
+    options,
+  );
+}
+
+async function downloadBlob(
+  path: string,
+  options: ApiOptions,
+): Promise<DownloadResult> {
   const headers = new Headers();
   for (const [k, v] of Object.entries(devHeaders())) {
     headers.set(k, v);
   }
   let response: Response;
   try {
-    response = await fetch(
-      `${baseUrl()}/api/contracts/${encodeURIComponent(id)}/download`,
-      { method: "GET", headers, signal: options.signal },
-    );
+    response = await fetch(`${baseUrl()}${path}`, {
+      method: "GET",
+      headers,
+      signal: options.signal,
+    });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw err;

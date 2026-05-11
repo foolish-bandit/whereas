@@ -659,6 +659,44 @@ export async function downloadContract(
   };
 }
 
+/**
+ * PR #70 — per-artifact download in demo mode. Mirrors the real
+ * client's surface so the Document History "Download version" action
+ * works on the demo deployment too. No real bytes are stored, so we
+ * just return a deterministic placeholder that names the artifact
+ * being requested.
+ */
+export async function downloadContractArtifact(
+  contractId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  const safeTitle =
+    detail.title.replace(/[^A-Za-z0-9._-]+/g, "_") || "contract";
+  const filename = `${safeTitle}.version-${artifactId.slice(0, 8)}.demo.txt`.slice(
+    0,
+    180,
+  );
+  const body =
+    `Whereas demo mode placeholder.\n\n` +
+    `Title: ${detail.title}\n` +
+    `Contract id: ${detail.id}\n` +
+    `Artifact id: ${artifactId}\n\n` +
+    `No real document is stored in demo mode. To exercise the actual ` +
+    `per-version download flow, run Whereas locally with a backend ` +
+    `and clear VITE_WHEREAS_DEMO_MODE.\n`;
+  return {
+    blob: new Blob([body], { type: "text/plain" }),
+    filename,
+    mimeType: "text/plain",
+  };
+}
+
 function _applyCannedDeactivations<T extends { id: string; is_active: boolean }>(
   rows: T[],
 ): T[] {

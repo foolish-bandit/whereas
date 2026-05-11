@@ -89,6 +89,15 @@ class AuditEventType(StrEnum):
 
     CONTRACT_UPLOADED = "contract.uploaded"
     CONTRACT_DOWNLOADED = "contract.downloaded"
+    # PR #70 — per-artifact download from the Document History view.
+    # The current/default ``/download`` endpoint keeps emitting
+    # ``CONTRACT_DOWNLOADED``; this event is emitted only by the
+    # per-artifact ``/artifacts/{artifact_id}/download`` route so
+    # the audit chain distinguishes "current document" downloads
+    # from explicit version retrievals. Payload identifies the
+    # contract, the artifact, the artifact_type, and the filename;
+    # storage_key / wrapped_dek / raw bytes are NEVER recorded.
+    CONTRACT_ARTIFACT_DOWNLOADED = "contract.artifact_downloaded"
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"
 

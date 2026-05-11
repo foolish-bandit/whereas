@@ -140,7 +140,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     clearDevUserId();
   });
 
-  it("defaults to the markdown preview and shows the toggle + Download original action", async () => {
+  it("defaults to the markdown preview and shows the toggle + Download current document action", async () => {
     setupFetch(fetchMock);
     renderPage();
 
@@ -157,9 +157,9 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(buttons[1]).toHaveAttribute("aria-pressed", "false");
     expect(buttons[1].textContent).toMatch(/view original/i);
 
-    // The header still exposes the Download original action.
+    // The header still exposes the Download current document action.
     expect(
-      screen.getByRole("button", { name: /download original/i }),
+      screen.getByRole("button", { name: /download current document/i }),
     ).toBeInTheDocument();
   });
 
@@ -229,9 +229,9 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(
       screen.queryByTestId("repository-current-document"),
     ).not.toBeInTheDocument();
-    // Download original action stays available either way.
+    // Download current document action stays available either way.
     expect(
-      screen.getByRole("button", { name: /download original/i }),
+      screen.getByRole("button", { name: /download current document/i }),
     ).toBeInTheDocument();
   });
 
@@ -329,7 +329,7 @@ describe("ContractWorkspacePage markdown integration", () => {
       screen.queryByTestId("repository-current-document"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /download original/i }),
+      screen.getByRole("button", { name: /download current document/i }),
     ).toBeInTheDocument();
   });
 
@@ -981,6 +981,212 @@ describe("ContractWorkspacePage Document history (PR #69)", () => {
     expect(
       await screen.findByTestId("contract-files-section"),
     ).toHaveTextContent(/document history/i);
+  });
+});
+
+describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+    // jsdom does not implement URL.createObjectURL; stub it so the
+    // download path can build an anchor href and revoke it.
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn(() => "blob:demo"),
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: vi.fn(),
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  const SOURCE_ARTIFACT = {
+    ...ARTIFACT,
+    id: "44444444-4444-4444-8444-444444444444",
+    artifact_type: "original_upload",
+    filename: "source.pdf",
+    source: "user_upload",
+    created_at: "2026-05-01T00:00:00Z",
+  };
+  const SIGNED_ARTIFACT = {
+    ...ARTIFACT,
+    id: "55555555-5555-4555-8555-555555555555",
+    artifact_type: "signed_pdf",
+    filename: "executed.pdf",
+    mime_type: "application/pdf",
+    source: "docuseal",
+    created_at: "2026-05-03T00:00:00Z",
+  };
+
+  function withArtifactDownload(
+    artifacts: object[],
+    artifactResponder: (artifactId: string) => Response,
+  ): void {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse(artifacts);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      const m =
+        /\/api\/contracts\/[^/]+\/artifacts\/([^/]+)\/download$/.exec(url);
+      if (m) {
+        return artifactResponder(m[1]);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+  }
+
+  it("renders a Download version button on every history row", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const list = await screen.findByTestId("document-history-list");
+    const buttons = list.querySelectorAll(
+      '[data-testid="document-history-row-download"]',
+    );
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect((button as HTMLElement).textContent ?? "").toMatch(
+        /download version/i,
+      );
+    }
+  });
+
+  it("does not say 'Download artifact' anywhere in the history UI", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    expect(section.textContent ?? "").not.toMatch(/download artifact/i);
+  });
+
+  it("clicking Download version calls the per-artifact endpoint with contractId + artifactId", async () => {
+    const seen: string[] = [];
+    withArtifactDownload([SOURCE_ARTIFACT], (artifactId) => {
+      seen.push(artifactId);
+      return new Response(
+        new Blob(["%PDF-"], { type: "application/pdf" }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="source.pdf"',
+          },
+        },
+      );
+    });
+    renderPage();
+    const button = (await screen.findAllByTestId(
+      "document-history-row-download",
+    ))[0];
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(seen).toEqual([SOURCE_ARTIFACT.id]);
+    });
+    // The matching URL went to the per-artifact endpoint, not the
+    // contract-level one.
+    const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(
+      calledUrls.some((u) =>
+        u.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/${SOURCE_ARTIFACT.id}/download`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("header still exposes the Download current document action", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    expect(
+      await screen.findByRole("button", {
+        name: /download current document/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a safe inline error when the artifact download fails", async () => {
+    withArtifactDownload(
+      [SOURCE_ARTIFACT],
+      () =>
+        new Response(JSON.stringify({ detail: "Artifact not found." }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    renderPage();
+    const button = (await screen.findAllByTestId(
+      "document-history-row-download",
+    ))[0];
+    fireEvent.click(button);
+    const errorNode = await screen.findByTestId(
+      "document-history-row-download-error",
+    );
+    expect(errorNode.textContent ?? "").toMatch(/not found/i);
+    // The user-facing error never leaks storage internals.
+    expect(errorNode.textContent ?? "").not.toMatch(/storage_key/);
+    expect(errorNode.textContent ?? "").not.toMatch(/wrapped_dek/);
+  });
+
+  it("never surfaces storage_key or wrapped_dek into the DOM after a download attempt", async () => {
+    withArtifactDownload(
+      [SOURCE_ARTIFACT],
+      () =>
+        new Response(
+          new Blob(["%PDF-"], { type: "application/pdf" }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/pdf",
+              "Content-Disposition": 'attachment; filename="source.pdf"',
+            },
+          },
+        ),
+    );
+    renderPage();
+    const button = (await screen.findAllByTestId(
+      "document-history-row-download",
+    ))[0];
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    const html = document.body.innerHTML;
+    expect(html).not.toContain("storage_key");
+    expect(html).not.toContain("wrapped_dek");
+  });
+
+  it("uses the existing user-friendly row labels (no raw artifact_type)", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    expect(section.textContent ?? "").not.toMatch(/original_upload/);
+    expect(section.textContent ?? "").not.toMatch(/signed_pdf/);
+    // The user-friendly labels are still there from PR #69.
+    expect(section).toHaveTextContent(/source file/i);
+    expect(section).toHaveTextContent(/signed pdf/i);
   });
 });
 

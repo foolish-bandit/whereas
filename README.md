@@ -291,15 +291,50 @@ safe field set (``storage_key`` and ``wrapped_dek`` are stripped at
 the schema layer and re-scrubbed in the api client). The frontend
 allowlists which ``metadata_json`` keys are rendered.
 
-Per-artifact downloads are intentionally **not** wired up in this
-PR — the existing ``Download original`` action in the header still
-resolves the current document via the contract-scoped download
-endpoint, which is the authoritative path. Per-artifact download is
-tracked as a follow-up; the section is visibility only.
+Follow-ups tracked: redline comparison view, generated PDF preview,
+artifact diff / version compare, audit export, and PowerSync sync
+rules.
 
-Follow-ups tracked: per-artifact download endpoint, redline
-comparison view, generated PDF preview, artifact diff / version
-compare, and PowerSync sync rules.
+## Per-artifact download (PR #70)
+
+The Document History rows added in PR #69 now expose a **Download
+version** button that retrieves a specific ``ContractArtifact``
+version — the source upload, a generated Word draft, a signed PDF, a
+redline, an exhibit, or an attachment. The header's **Download
+current document** action is unchanged and continues to resolve the
+priority-winning document (``signed_pdf > generated_docx >
+original_upload > legacy``); the per-version button is for retrieving
+*a specific* artifact rather than whatever currently wins.
+
+Backend:
+
+- ``GET /api/contracts/{contract_id}/artifacts/{artifact_id}/download``
+  is org + contract scoped. The artifact must match
+  ``artifact_id``, belong to this contract, and belong to the same
+  organization — any miss returns 404 (no oracle on "wrong
+  contract" vs. "wrong org"). An artifact with no retrievable
+  storage metadata returns 409; this endpoint does **not** fall
+  back to ``Contract.s3_key``.
+- Decryption uses the same storage path as the existing contract
+  download endpoint. Per-artifact wrapped DEKs (e.g. ``signed_pdf``)
+  are honored; legacy artifacts continue to decrypt under
+  ``Contract.wrapped_dek``. The AAD is recovered deterministically
+  from the artifact storage key.
+- A dedicated ``contract.artifact_downloaded`` audit event is
+  written on success — distinct from ``contract.downloaded`` —
+  with ``contract_id``, ``artifact_id``, ``artifact_type``, and
+  ``filename``. ``storage_key``, ``wrapped_dek``, and raw bytes are
+  never recorded.
+- No presigned or private URLs are issued, and no storage
+  internals are returned in response headers or body.
+
+The current/default download priority and the
+``GET /api/contracts/{id}/download`` endpoint are unchanged by this
+PR; only the per-version surface is new.
+
+Follow-ups tracked: redline comparison view, generated PDF preview,
+artifact diff / version compare, audit export, and PowerSync sync
+rules.
 
 ### Clause segmentation (v1)
 

@@ -1403,3 +1403,356 @@ async def test_download_cross_org_returns_404(
     )
     assert response.status_code == 404
     assert FakeStorage.retrieve_calls == []
+
+
+# --------------------------------------------------------------------------
+# Per-artifact download (PR #70)
+#
+# The Document History view now exposes a "Download version" action that
+# fetches a specific ContractArtifact rather than the current
+# priority-winning document. These tests cover the new
+# ``/{contract_id}/artifacts/{artifact_id}/download`` endpoint:
+# org/contract scoping, each artifact_type, missing-storage handling,
+# headers, response-body secret scrubbing, and the new audit event.
+# Existing default-download tests above continue to verify that
+# ``/{contract_id}/download`` still uses signed_pdf > generated_docx >
+# original_upload > legacy ``Contract.s3_key`` (unchanged by PR #70).
+# --------------------------------------------------------------------------
+
+
+def _add_artifact(
+    db_session: AsyncSession,
+    *,
+    user_org: UserOrg,
+    contract_id: uuid.UUID,
+    artifact_type: str,
+    storage_key: str,
+    filename: str,
+    mime_type: str = "application/pdf",
+    wrapped_dek: bytes | None = None,
+    is_official: bool = True,
+    source: str | None = "user_upload",
+) -> ContractArtifact:
+    artifact = ContractArtifact(
+        organization_id=user_org.org.id,
+        contract_id=contract_id,
+        artifact_type=artifact_type,
+        storage_backend="s3",
+        storage_key=storage_key,
+        wrapped_dek=wrapped_dek,
+        filename=filename,
+        mime_type=mime_type,
+        is_official=is_official,
+        source=source,
+    )
+    db_session.add(artifact)
+    return artifact
+
+
+async def test_artifact_download_original_upload_succeeds_and_audits(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Per-artifact download for the original upload returns the file
+    and writes a dedicated ``contract.artifact_downloaded`` audit
+    entry distinct from the contract-level ``contract.downloaded``."""
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="vendor.pdf"),
+        data={"title": "Vendor MSA"},
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id,
+                ContractArtifact.artifact_type == "original_upload",
+            )
+        )
+    ).scalar_one()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{artifact_row.id}/download",
+        headers=_headers(user_org.user),
+    )
+
+    assert response.status_code == 200
+    assert response.content == _PDF_BYTES
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert "vendor.pdf" in response.headers["content-disposition"]
+    # No storage internals leaked in headers.
+    assert "storage_key" not in {k.lower() for k in response.headers}
+    assert "wrapped_dek" not in {k.lower() for k in response.headers}
+    # Storage retrieval used the artifact's storage_key.
+    assert (
+        FakeStorage.retrieve_calls[-1]["s3_key"]
+        == f"documents/{contract_id}.enc"
+    )
+
+    artifact_events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.CONTRACT_ARTIFACT_DOWNLOADED.value
+            )
+        )
+    ).scalars().all()
+    assert len(artifact_events) == 1
+    details = artifact_events[0].details
+    assert details["contract_id"] == str(contract_id)
+    assert details["artifact_id"] == str(artifact_row.id)
+    assert details["artifact_type"] == "original_upload"
+    assert details["filename"] == "vendor.pdf"
+    assert "wrapped_dek" not in str(details)
+    assert "storage_key" not in str(details)
+
+
+async def test_artifact_download_generated_docx_succeeds(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    generated = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="generated_docx",
+        storage_key=f"documents/{contract_id}.docx.enc",
+        filename="acme-nda.docx",
+        mime_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        source="template_generation",
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{generated.id}/download",
+        headers=_headers(user_org.user),
+    )
+
+    assert response.status_code == 200
+    assert response.content == _PDF_BYTES  # FakeStorage returns canned bytes
+    assert "acme-nda.docx" in response.headers["content-disposition"]
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert (
+        FakeStorage.retrieve_calls[-1]["s3_key"]
+        == f"documents/{contract_id}.docx.enc"
+    )
+
+
+async def test_artifact_download_signed_pdf_uses_artifact_dek_and_filename(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A ``signed_pdf`` artifact carries its own wrapped DEK (PR #45)
+    and a derived storage key. The download must pass the artifact's
+    DEK to the storage layer, not fall back to ``contract.wrapped_dek``,
+    and the AAD must be derived from the artifact storage key."""
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    # A separate document_id baked into the signed-PDF storage key so
+    # the AAD path resolves it via ``_document_id_from_storage_key``.
+    signed_doc_id = uuid.uuid4()
+    signed = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="signed_pdf",
+        storage_key=f"documents/{signed_doc_id}.enc",
+        filename="executed.pdf",
+        wrapped_dek=b"signed-wrapped-dek",
+        source="docuseal",
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{signed.id}/download",
+        headers=_headers(user_org.user),
+    )
+
+    assert response.status_code == 200
+    assert "executed.pdf" in response.headers["content-disposition"]
+    last = FakeStorage.retrieve_calls[-1]
+    assert last["s3_key"] == f"documents/{signed_doc_id}.enc"
+    assert last["wrapped_dek_bytes"] == b"signed-wrapped-dek"
+    # AAD must be the artifact's document id, not the contract id.
+    assert last["document_id"] == str(signed_doc_id)
+
+
+async def test_artifact_download_cross_org_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user_org(db_session, email="art-dl-a@example.com")
+    other = await _create_user_org(db_session, email="art-dl-b@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(owner.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id
+            )
+        )
+    ).scalar_one()
+
+    before = list(FakeStorage.retrieve_calls)
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{artifact_row.id}/download",
+        headers=_headers(other.user),
+    )
+    assert response.status_code == 404
+    assert FakeStorage.retrieve_calls == before
+
+
+async def test_artifact_download_wrong_contract_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """An artifact id belonging to another contract in the same org is
+    still 404 — the path's ``contract_id`` and the artifact's
+    ``contract_id`` must match."""
+    user_org = await _create_user_org(db_session)
+    first = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="a.pdf"),
+    )
+    second = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="b.pdf", content=b"%PDF-1.7\nB"),
+    )
+    second_id = uuid.UUID(second.json()["id"])
+    second_artifact = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == second_id
+            )
+        )
+    ).scalar_one()
+    first_id = first.json()["id"]
+
+    before = list(FakeStorage.retrieve_calls)
+    response = await client.get(
+        f"/api/contracts/{first_id}/artifacts/{second_artifact.id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+    assert FakeStorage.retrieve_calls == before
+
+
+async def test_artifact_download_missing_artifact_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = upload.json()["id"]
+
+    before = list(FakeStorage.retrieve_calls)
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{uuid.uuid4()}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+    assert FakeStorage.retrieve_calls == before
+
+
+async def test_artifact_download_missing_storage_metadata_returns_409(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """An artifact with no ``storage_key`` is unretrievable. The
+    endpoint must surface 409 rather than try to fetch a blob or fall
+    back to the contract record."""
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    orphan = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="attachment",
+        storage_key="",  # intentionally empty
+        filename="orphan.pdf",
+        source=None,
+        is_official=False,
+    )
+    await db_session.commit()
+
+    before = list(FakeStorage.retrieve_calls)
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{orphan.id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 409
+    assert FakeStorage.retrieve_calls == before
+
+
+async def test_artifact_download_response_does_not_expose_storage_internals(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The response body is the decrypted file bytes; storage_key and
+    wrapped_dek must never appear in headers or the body."""
+    user_org = await _create_user_org(db_session)
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id
+            )
+        )
+    ).scalar_one()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{artifact_row.id}/download",
+        headers=_headers(user_org.user),
+    )
+
+    assert response.status_code == 200
+    blob = response.content
+    assert b"storage_key" not in blob
+    assert b"wrapped_dek" not in blob
+    header_text = "\n".join(
+        f"{k}:{v}" for k, v in response.headers.items()
+    )
+    assert "storage_key" not in header_text
+    assert "wrapped_dek" not in header_text

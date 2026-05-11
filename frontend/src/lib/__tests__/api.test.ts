@@ -13,6 +13,7 @@ import {
   MissingDevUserError,
   createDevSetup,
   downloadContract,
+  downloadContractArtifact,
   getContract,
   getContractArtifacts,
   getContracts,
@@ -178,6 +179,56 @@ describe("api client", () => {
     const result = await downloadContract("abc");
     expect(result.filename).toBe("MSA.pdf");
     expect(result.mimeType).toBe("application/pdf");
+  });
+
+  describe("downloadContractArtifact (PR #70)", () => {
+    it("calls the per-artifact download endpoint with both ids encoded", async () => {
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(new Blob(["%PDF-"], { type: "application/pdf" }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="vendor.pdf"',
+          },
+        }),
+      );
+
+      const result = await downloadContractArtifact("c-1", "art-7");
+      expect(result.filename).toBe("vendor.pdf");
+      expect(result.mimeType).toBe("application/pdf");
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain(
+        "/api/contracts/c-1/artifacts/art-7/download",
+      );
+      const headers = (init as RequestInit).headers as Headers;
+      expect(headers.get("X-Whereas-Dev-User")).toBe(VALID_UUID);
+    });
+
+    it("maps a 404 from the artifact endpoint to ApiError", async () => {
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ detail: "Artifact not found." }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(
+        downloadContractArtifact("c-1", "missing"),
+      ).rejects.toMatchObject({
+        name: "ApiError",
+        status: 404,
+        message: "Artifact not found.",
+      });
+    });
+
+    it("throws MissingDevUserError before calling fetch when no dev user is set", async () => {
+      await expect(
+        downloadContractArtifact("c-1", "art-1"),
+      ).rejects.toBeInstanceOf(MissingDevUserError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("getContractArtifacts", () => {
