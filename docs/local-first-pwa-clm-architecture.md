@@ -1645,10 +1645,14 @@ disappear the moment the user changes a selection.
 - PowerSync sync rules covering the compare surface.
 
 
-### Repository document history PDF preview (PR #72)
+### Repository document history PDF preview (PR #72 / #73)
 - Added per-artifact preview endpoint: `GET /api/contracts/{contract_id}/artifacts/{artifact_id}/preview`.
 - PDF artifacts are decrypted server-side and streamed inline as `application/pdf` with `Content-Disposition: inline`.
-- DOCX-to-PDF preview generation deferred in this PR (`PDF preview is not available for this file type yet.`).
+- DOCX artifacts are converted server-side to a temporary PDF preview via LibreOffice/soffice **when installed**; converted bytes are streamed inline and never persisted as a `ContractArtifact`.
+- LibreOffice is optional for deployment overall: PDF previews work without it. Self-hosted operators who want DOCX preview must install LibreOffice/soffice on the backend host. No binaries are bundled or auto-downloaded.
+- Conversion failures and missing-converter environments return a safe preview error (`PDF preview could not be generated for this file.`) and do not expose storage internals.
 - Download remains available for retrievable artifacts and keeps existing priority/semantics.
 - No storage internals (`storage_key`, wrapped keys, private URLs) are exposed.
-- Future work: DOCX-to-PDF conversion, generated preview artifacts, visual PDF diff, thumbnails, PowerSync sync rules.
+- Service worker excludes `/api/*` from runtime caching, so authenticated preview responses/blobs are never cached.
+- No OCR, Docling, LLM extraction, presigned URLs, or artifact-priority/approval-state-machine changes are introduced by this preview path.
+

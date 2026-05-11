@@ -115,6 +115,11 @@ from app.services.document_parser import (
     UnsupportedDocumentTypeError,
     parse_document,
 )
+from app.services.document_preview import (
+    ConversionFailedError,
+    ConverterUnavailableError,
+    convert_to_pdf_preview,
+)
 from app.services.docuseal_bridge import (
     DocuSealError,
     send_document_to_docuseal,
@@ -1229,12 +1234,7 @@ async def preview_contract_artifact(
     )
 
     mime_type = artifact.mime_type or contract.mime_type
-    if mime_type == _DOCX_MIME:
-        raise HTTPException(
-            status_code=422,
-            detail="PDF preview is not available for this file type yet.",
-        )
-    if mime_type != _PDF_MIME:
+    if mime_type not in {_PDF_MIME, _DOCX_MIME}:
         raise HTTPException(status_code=415, detail="Unsupported file type for preview.")
 
     plaintext, _ = await _decrypt_artifact_bytes(
@@ -1244,6 +1244,23 @@ async def preview_contract_artifact(
         artifact=artifact,
         allow_legacy_fallback=False,
     )
+
+    try:
+        preview_result = convert_to_pdf_preview(plaintext, mime_type)
+    except ConverterUnavailableError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="PDF preview could not be generated for this file.",
+        ) from exc
+    except ConversionFailedError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="PDF preview could not be generated for this file.",
+        ) from exc
+
+    filename = _download_filename(contract, artifact=artifact)
+    if filename.lower().endswith(".docx"):
+        filename = f"{filename[:-5]}.pdf"
 
     await record_event(
         session,
@@ -1257,15 +1274,17 @@ async def preview_contract_artifact(
             "artifact_id": str(artifact.id),
             "artifact_type": artifact.artifact_type,
             "filename": artifact.filename,
-            "preview_mime_type": _PDF_MIME,
+            "mime_type": mime_type,
+            "preview_format": "pdf",
+            "conversion_source": preview_result.conversion_source,
         },
     )
 
     return Response(
-        content=plaintext,
+        content=preview_result.pdf_bytes,
         media_type=_PDF_MIME,
         headers={
-            "Content-Disposition": f'inline; filename="{_download_filename(contract, artifact=artifact)}"',
+            "Content-Disposition": f'inline; filename="{filename}"',
         },
     )
 

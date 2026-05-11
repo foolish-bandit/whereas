@@ -44,6 +44,7 @@ from app.services.document_parser import (  # noqa: E402
     ParsedDocument,
     ParsedPage,
 )
+from app.services.document_preview import PreviewResult  # noqa: E402
 from app.services.extraction import ExtractionError  # noqa: E402
 from app.services.storage import StoredDocument  # noqa: E402
 
@@ -1811,11 +1812,12 @@ async def test_artifact_preview_pdf_inline_success(
     }
 
 
-async def test_artifact_preview_docx_unavailable(
+async def test_artifact_preview_docx_success(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user_org = await _create_user_org(db_session, email="preview-docx@example.com")
+    user_org = await _create_user_org(db_session, email="preview-docx-success@example.com")
     upload = await client.post(
         "/api/contracts/upload",
         headers=_headers(user_org.user),
@@ -1835,24 +1837,30 @@ async def test_artifact_preview_docx_unavailable(
     )
     await db_session.commit()
 
+    def _fake_convert(content: bytes, mime_type: str, *, timeout_seconds: int = 20) -> PreviewResult:
+        assert mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return PreviewResult(pdf_bytes=b"%PDF-1.7\nDOCX PREVIEW\n", conversion_source="docx")
+
+    from app.api import contracts as contracts_module
+    monkeypatch.setattr(contracts_module, "convert_to_pdf_preview", _fake_convert)
+
     response = await client.get(
         f"/api/contracts/{contract_id}/artifacts/{generated.id}/preview",
         headers=_headers(user_org.user),
     )
-    assert response.status_code == 422
-    assert response.json()["detail"] == "PDF preview is not available for this file type yet."
-    details_text = str(response.json())
-    for secret_key in ("storage_key", "wrapped_dek", "s3_key", "metadata_json", "presigned"):
-        assert secret_key not in details_text
-    preview_events = (
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert "draft.pdf" in response.headers["content-disposition"]
+    assert response.content == b"%PDF-1.7\nDOCX PREVIEW\n"
+    preview_event = (
         await db_session.execute(
             select(AuditEvent).where(
-                AuditEvent.event_type
-                == AuditEventType.CONTRACT_ARTIFACT_PREVIEWED.value
+                AuditEvent.event_type == AuditEventType.CONTRACT_ARTIFACT_PREVIEWED.value
             )
         )
-    ).scalars().all()
-    assert preview_events == []
+    ).scalar_one()
+    assert preview_event.details["conversion_source"] == "docx"
 
 
 async def test_artifact_preview_unsupported_type_returns_415(
@@ -2015,3 +2023,50 @@ async def test_artifact_preview_missing_storage_metadata_returns_safe_409(
     assert isinstance(detail, str)
     for secret_key in ("storage_key", "wrapped_dek", "s3_key", "metadata_json", "presigned"):
         assert secret_key not in detail
+
+
+async def test_artifact_preview_docx_unavailable_returns_safe_422(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-docx-unavailable@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    generated = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="generated_docx",
+        storage_key=f"documents/{contract_id}.docx.enc",
+        filename="draft.docx",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        source="template_generation",
+    )
+    await db_session.commit()
+
+    from app.api import contracts as contracts_module
+    monkeypatch.setattr(
+        contracts_module,
+        "convert_to_pdf_preview",
+        lambda _c, _m, timeout_seconds=20: (_ for _ in ()).throw(contracts_module.ConverterUnavailableError("missing")),
+    )
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{generated.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "PDF preview could not be generated for this file."
+    preview_events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type == AuditEventType.CONTRACT_ARTIFACT_PREVIEWED.value
+            )
+        )
+    ).scalars().all()
+    assert preview_events == []
