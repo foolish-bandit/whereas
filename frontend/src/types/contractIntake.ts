@@ -34,3 +34,38 @@ export interface ExtractedContractMetadata {
   effective_date: string | null;
   warnings: string[];
 }
+
+/**
+ * Mirrors ``backend/app/schemas/contract_intake.ContractMetadataUpdateRequest``.
+ *
+ * All fields are optional; only the keys present in the request body
+ * are updated. ``null`` and empty strings clear the non-title fields;
+ * ``title`` is non-nullable on the Contract row so blank input
+ * coerces to "Untitled contract" on the server.
+ */
+export interface ContractMetadataUpdateRequest {
+  title?: string | null;
+  counterparty_name?: string | null;
+  contract_type?: string | null;
+  /** ISO date (YYYY-MM-DD) when present. */
+  effective_date?: string | null;
+}
+
+/**
+ * Mirrors ``backend/app/schemas/contract_intake.ContractMetadataResponse``.
+ *
+ * The merged view used by the upload-review surface: ``title`` lives
+ * on ``Contract.title``; the rest live on the latest
+ * ``original_upload`` artifact's ``metadata_json``. ``changed_fields``
+ * is populated by PATCH; GET returns an empty list.
+ */
+export interface ContractMetadataView {
+  contract_id: string;
+  title: string;
+  counterparty_name: string | null;
+  contract_type: string | null;
+  /** ISO date (YYYY-MM-DD) when present. */
+  effective_date: string | null;
+  updated_at: string;
+  changed_fields: string[];
+}

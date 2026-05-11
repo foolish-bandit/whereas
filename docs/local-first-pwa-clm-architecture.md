@@ -1216,3 +1216,77 @@ request row itself.
   the model carries `counterparty_name` / `contract_type`.
 - PowerSync sync rules covering the new `duplicate_candidates`
   surface.
+
+## Upload review + metadata confirmation (PR #67)
+
+PR #67 puts a small confirmation UX on top of PR #66's extracted
+metadata + duplicate-warning surfaces. Two new endpoints:
+
+```
+GET   /api/contracts/{contract_id}/metadata
+PATCH /api/contracts/{contract_id}/metadata
+```
+
+The PATCH payload accepts any subset of `title`,
+`counterparty_name`, `contract_type`, `effective_date`. Empty
+strings clear the three non-title fields (`title` is non-nullable
+on the Contract row and falls back to `"Untitled contract"`). The
+response always carries the merged saved view plus a
+`changed_fields` list so the UI can render a "Saved N fields"
+confirmation.
+
+### Storage placement (no schema migration)
+
+- `title` → persisted on the existing `Contract.title` column.
+- `counterparty_name` / `contract_type` / `effective_date` →
+  persisted on the latest `original_upload`
+  `ContractArtifact.metadata_json` dict, alongside the request-
+  conversion fields PR #65 already writes there.
+- No new tables. No new columns. Other artifact rows
+  (`generated_docx`, `signed_pdf`) are not touched. File storage,
+  wrapped DEKs, markdown snapshots, DocuSeal submission ids,
+  approval workflows, and the gate are untouched.
+
+### Audit
+
+A new `CONTRACT_METADATA_UPDATED` (`contract.metadata.updated`)
+event is appended to the org's hash-chained audit log when at
+least one field actually changes. The payload carries only
+`contract_id` + `changed_fields` (list of field names) — never the
+old or new values. A no-op patch (same value as already stored)
+emits no audit event.
+
+### Frontend
+
+A new `UploadReviewPanel` component renders on both upload
+surfaces:
+
+- `UploadPage` — after a successful Repository upload.
+- `RequestsPage` row — after a successful request convert-upload,
+  per request id.
+
+The panel composes four sections: confirmation header, editable
+metadata form, possible-duplicate warning (or quiet
+"No obvious duplicates" line), and an "Open in Repository" deep
+link. Duplicate dismissal is client-side only; nothing on the
+backend ever auto-merges or deletes candidates.
+
+### What did NOT change
+
+- No LLM, no OCR, no Docling, no PowerSync.
+- No approval-gate / DocuSeal behavior changes.
+- No backend `Contract` model / API rename.
+- No new audit-event old/new value capture.
+- No duplicate merge / link-to-existing workflow yet.
+
+### Follow-ups
+
+- Duplicate merge / "link to existing" workflow.
+- Contract detail page surfaces the confirmed
+  counterparty / contract type / effective date inline.
+- Metadata write-back to Contract columns once the model carries
+  `counterparty_name` / `contract_type`.
+- User-confirmed extraction history (today only the latest patch
+  is captured via the audit row; values aren't journalled).
+- OCR + Docling fallback for scanned uploads.
+- PowerSync sync rules covering the new metadata surface.

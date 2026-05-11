@@ -186,6 +186,34 @@ failures are logged and swallowed so the upload itself never
 blocks. The approval gate, DocuSeal flow, and existing artifact /
 markdown-snapshot semantics are unchanged.
 
+## Upload review + metadata confirmation (PR #67)
+
+After an upload or request-conversion lands, the UI shows a
+**Review upload** panel:
+
+- **Confirm details** — editable inputs for title, contract type,
+  counterparty, and effective date, pre-filled with the saved
+  values when present and otherwise with the PR #66 suggestions.
+  Saving via the ``Save details`` button calls
+  ``PATCH /api/contracts/{id}/metadata`` and reflects the new
+  ``saved`` state in place.
+- **Possible duplicates** — when PR #66 surfaced candidate
+  duplicates, the panel renders a warning with deep-links to each
+  matching record and a ``Keep as new record`` action that just
+  dismisses the warning client-side. No automatic merge or delete
+  happens at any point.
+- **Open in Repository** — a quick deep-link into the new contract's
+  workspace.
+
+The new endpoint persists ``title`` on ``Contract.title`` and the
+other three fields on the latest ``original_upload`` artifact's
+``metadata_json`` — no schema migration. Empty strings clear the
+non-title fields; ``title`` always falls back to ``"Untitled
+contract"`` if blanked, matching the upload route's posture. Audit
+events record only the list of changed field names — never the old
+or new values — and storage / encryption fields are not part of
+this surface.
+
 ### Clause segmentation (v1)
 
 Uploaded contracts are now segmented into clause-level units via a

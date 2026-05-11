@@ -8,6 +8,7 @@ import re
 import uuid
 import zipfile
 from collections.abc import Sequence
+from datetime import date
 from io import BytesIO
 from typing import Annotated, Any
 
@@ -34,6 +35,10 @@ from app.models import (
 )
 from app.schemas.activity import ActivityTimelineResponse
 from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contract_intake import (
+    ContractMetadataResponse,
+    ContractMetadataUpdateRequest,
+)
 from app.schemas.contracts import (
     ClauseResponse,
     ContractDetailResponse,
@@ -493,6 +498,233 @@ async def list_contract_artifacts(
         ContractArtifactResponse.model_validate(row)
         for row in result.scalars()
     ]
+
+
+# ---------------------------------------------------------------------------
+# PR #67 — User-confirmed metadata correction
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{contract_id}/metadata",
+    response_model=ContractMetadataResponse,
+)
+async def get_contract_metadata(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ContractMetadataResponse:
+    """Return the merged metadata view used by the upload-review panel.
+
+    Reads ``title`` off ``Contract.title`` and the rest off the latest
+    ``original_upload`` ``ContractArtifact`` row's ``metadata_json``.
+    Org scoped via ``_get_contract_for_org`` — cross-org returns 404.
+    Storage internals never appear (the response schema forbids
+    extras and the underlying artifact row's storage fields are not
+    projected).
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    artifact_metadata = await _latest_original_upload_metadata(
+        session,
+        contract_id=contract.id,
+        organization_id=user.organization_id,
+    )
+    return _build_metadata_response(contract, artifact_metadata, changed_fields=[])
+
+
+@router.patch(
+    "/{contract_id}/metadata",
+    response_model=ContractMetadataResponse,
+)
+async def update_contract_metadata(
+    contract_id: uuid.UUID,
+    payload: ContractMetadataUpdateRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ContractMetadataResponse:
+    """User-confirmed metadata update for an existing contract.
+
+    Behavior:
+
+    * ``title`` is persisted on ``Contract.title`` (the only Contract
+      column for these fields today). Empty strings normalize to
+      ``"Untitled contract"`` rather than ``null`` — ``Contract.title``
+      is non-nullable and the existing upload pipeline already coerces
+      empty input to that sentinel.
+    * ``counterparty_name`` / ``contract_type`` / ``effective_date``
+      are persisted on the latest ``original_upload`` artifact's
+      ``metadata_json``. Empty strings clear the key (the field
+      effectively goes back to ``null``); explicit ``null`` does the
+      same. Missing keys leave the existing value alone.
+    * Other artifact rows (``generated_docx``, ``signed_pdf``) are not
+      touched. File storage, wrapped DEKs, markdown snapshots,
+      DocuSeal submission ids, approval workflows, and the gate are
+      all untouched.
+    * Cross-org → 404 (via ``_get_contract_for_org``).
+    * Backfill case: if no ``original_upload`` artifact exists yet,
+      the non-title fields are not persisted (we don't invent an
+      artifact row just to hold metadata). Title still updates;
+      ``changed_fields`` reflects what was actually written.
+
+    Audit:
+
+    * Emits ``CONTRACT_METADATA_UPDATED`` with only the
+      ``changed_fields`` list — never the old/new values. The values
+      are PII; we keep them in the encrypted Contract / artifact rows.
+    * No audit event is emitted when nothing actually changed.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+
+    changes = payload.model_dump(exclude_unset=True)
+    changed_fields: list[str] = []
+
+    # Title is mandatory + non-nullable on the Contract row, so we
+    # coerce empty input to the same "Untitled contract" sentinel the
+    # upload route uses rather than treating it as "clear me".
+    if "title" in changes:
+        new_title = (changes["title"] or "").strip()[:500] or "Untitled contract"
+        if new_title != contract.title:
+            contract.title = new_title
+            changed_fields.append("title")
+
+    artifact = await _latest_original_upload_artifact(
+        session,
+        contract_id=contract.id,
+        organization_id=user.organization_id,
+    )
+
+    # Non-title fields go on the latest original_upload artifact's
+    # metadata_json. When no artifact exists (pre-PR #36 backfill case)
+    # we skip these — we'd rather lose the override silently than
+    # invent an artifact row from a metadata patch.
+    if artifact is not None:
+        meta = dict(artifact.metadata_json or {})
+        for field_name in ("counterparty_name", "contract_type"):
+            if field_name not in changes:
+                continue
+            new_value_raw = changes[field_name]
+            new_value: str | None
+            if new_value_raw is None or new_value_raw == "":
+                new_value = None
+            else:
+                cap = 255 if field_name == "counterparty_name" else 64
+                new_value = str(new_value_raw).strip()[:cap] or None
+            current_value = meta.get(field_name)
+            if new_value != current_value:
+                if new_value is None:
+                    meta.pop(field_name, None)
+                else:
+                    meta[field_name] = new_value
+                changed_fields.append(field_name)
+
+        if "effective_date" in changes:
+            new_date = changes["effective_date"]
+            new_iso: str | None = new_date.isoformat() if new_date else None
+            current_iso = meta.get("effective_date")
+            if new_iso != current_iso:
+                if new_iso is None:
+                    meta.pop("effective_date", None)
+                else:
+                    meta["effective_date"] = new_iso
+                changed_fields.append("effective_date")
+
+        if changed_fields:
+            artifact.metadata_json = meta
+
+    if changed_fields:
+        await session.flush()
+        await record_event(
+            session,
+            organization_id=user.organization_id,
+            event_type=AuditEventType.CONTRACT_METADATA_UPDATED,
+            actor_user_id=user.id,
+            target_type="contract",
+            target_id=str(contract.id),
+            details={
+                "contract_id": str(contract.id),
+                "changed_fields": list(changed_fields),
+            },
+        )
+        await session.refresh(contract)
+        if artifact is not None:
+            await session.refresh(artifact)
+
+    artifact_metadata = (artifact.metadata_json or {}) if artifact is not None else None
+    return _build_metadata_response(
+        contract, artifact_metadata, changed_fields=changed_fields
+    )
+
+
+async def _latest_original_upload_artifact(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> ContractArtifact | None:
+    stmt = (
+        select(ContractArtifact)
+        .where(
+            ContractArtifact.contract_id == contract_id,
+            ContractArtifact.organization_id == organization_id,
+            ContractArtifact.artifact_type == "original_upload",
+        )
+        .order_by(
+            ContractArtifact.created_at.desc(), ContractArtifact.id.desc()
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _latest_original_upload_metadata(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> dict | None:
+    artifact = await _latest_original_upload_artifact(
+        session, contract_id=contract_id, organization_id=organization_id
+    )
+    if artifact is None:
+        return None
+    return artifact.metadata_json or {}
+
+
+def _build_metadata_response(
+    contract: Contract,
+    artifact_metadata: dict | None,
+    *,
+    changed_fields: list[str],
+) -> ContractMetadataResponse:
+    meta = artifact_metadata or {}
+    counterparty = meta.get("counterparty_name") if isinstance(meta.get("counterparty_name"), str) else None
+    contract_type = meta.get("contract_type") if isinstance(meta.get("contract_type"), str) else None
+    effective_iso = meta.get("effective_date")
+    effective: date | None = None
+    if isinstance(effective_iso, str):
+        try:
+            effective = date.fromisoformat(effective_iso)
+        except ValueError:
+            effective = None
+    return ContractMetadataResponse(
+        contract_id=contract.id,
+        title=contract.title,
+        counterparty_name=counterparty,
+        contract_type=contract_type,
+        effective_date=effective,
+        updated_at=contract.updated_at,
+        changed_fields=list(changed_fields),
+    )
 
 
 @router.post(

@@ -347,6 +347,135 @@ function buildDemoIntake(
 }
 
 
+// ---------------------------------------------------------------------------
+// PR #67 — demo metadata GET / PATCH for the upload-review panel.
+//
+// Stored entirely in module-local state so the demo can round-trip
+// confirmed metadata through GET / PATCH cycles without a backend.
+// ---------------------------------------------------------------------------
+
+interface DemoContractMetadata {
+  title: string;
+  counterparty_name: string | null;
+  contract_type: string | null;
+  effective_date: string | null;
+  updated_at: string;
+}
+
+const sessionMetadataById: Record<string, DemoContractMetadata> = {};
+
+
+function _ensureMetadataEntry(contractId: string): DemoContractMetadata {
+  const existing = sessionMetadataById[contractId];
+  if (existing) return existing;
+  const item =
+    sessionList.find((c) => c.id === contractId) ??
+    sessionDetailById[contractId];
+  const title =
+    (item as ContractListItem | ContractDetail | undefined)?.title ??
+    "Untitled contract";
+  const next: DemoContractMetadata = {
+    title,
+    counterparty_name: null,
+    contract_type: null,
+    effective_date: null,
+    updated_at:
+      ((item as ContractListItem | ContractDetail | undefined)?.updated_at) ??
+      new Date().toISOString(),
+  };
+  sessionMetadataById[contractId] = next;
+  return next;
+}
+
+
+export async function getContractMetadata(
+  id: string,
+  options: ApiOptions = {},
+): Promise<import("../types/contractIntake").ContractMetadataView> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const entry = _ensureMetadataEntry(id);
+  return {
+    contract_id: id,
+    title: entry.title,
+    counterparty_name: entry.counterparty_name,
+    contract_type: entry.contract_type,
+    effective_date: entry.effective_date,
+    updated_at: entry.updated_at,
+    changed_fields: [],
+  };
+}
+
+
+export async function updateContractMetadata(
+  id: string,
+  payload: import("../types/contractIntake").ContractMetadataUpdateRequest,
+  options: ApiOptions = {},
+): Promise<import("../types/contractIntake").ContractMetadataView> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const entry = _ensureMetadataEntry(id);
+  const changed: string[] = [];
+
+  if ("title" in payload) {
+    const next =
+      (payload.title ?? "").trim().slice(0, 500) || "Untitled contract";
+    if (next !== entry.title) {
+      entry.title = next;
+      changed.push("title");
+    }
+  }
+  if ("counterparty_name" in payload) {
+    const raw = payload.counterparty_name ?? null;
+    const next = raw && raw.trim() ? raw.trim().slice(0, 255) : null;
+    if (next !== entry.counterparty_name) {
+      entry.counterparty_name = next;
+      changed.push("counterparty_name");
+    }
+  }
+  if ("contract_type" in payload) {
+    const raw = payload.contract_type ?? null;
+    const next = raw && raw.trim() ? raw.trim().slice(0, 64) : null;
+    if (next !== entry.contract_type) {
+      entry.contract_type = next;
+      changed.push("contract_type");
+    }
+  }
+  if ("effective_date" in payload) {
+    const next = payload.effective_date ?? null;
+    if (next !== entry.effective_date) {
+      entry.effective_date = next;
+      changed.push("effective_date");
+    }
+  }
+
+  if (changed.length > 0) {
+    entry.updated_at = new Date().toISOString();
+    // Mirror the title back onto the session list so the rest of the
+    // demo UI reflects the rename without a refetch.
+    const listItem = sessionList.find((c) => c.id === id);
+    if (listItem) {
+      listItem.title = entry.title;
+      listItem.updated_at = entry.updated_at;
+    }
+    const detail = sessionDetailById[id];
+    if (detail) {
+      detail.title = entry.title;
+      detail.updated_at = entry.updated_at;
+    }
+  }
+
+  return {
+    contract_id: id,
+    title: entry.title,
+    counterparty_name: entry.counterparty_name,
+    contract_type: entry.contract_type,
+    effective_date: entry.effective_date,
+    updated_at: entry.updated_at,
+    changed_fields: changed,
+  };
+}
+
+
+
 export async function getContractApprovalGate(
   id: string,
   options: ApiOptions = {},

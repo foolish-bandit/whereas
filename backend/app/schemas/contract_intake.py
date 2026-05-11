@@ -61,3 +61,58 @@ class DuplicateContractCandidateResponse(BaseModel):
     confidence: Literal["exact", "possible"]
     created_at: datetime
     status: str
+
+
+# ---------------------------------------------------------------------------
+# PR #67 — User-confirmed metadata correction
+#
+# After an upload or request-conversion lands, the UI lets the user
+# review the suggested metadata and either keep the auto-derived
+# values or override them. ``PATCH /api/contracts/{id}/metadata``
+# accepts the override; the response carries the merged ``saved``
+# state so the UI can drop its local form state.
+#
+# The endpoint persists ``title`` on the Contract row (the only
+# Contract column that exists for these fields today) and the rest
+# on the latest ``original_upload`` artifact's ``metadata_json``.
+# That keeps PR #67 schema-migration-free while still preserving the
+# values across reloads.
+# ---------------------------------------------------------------------------
+
+
+class ContractMetadataUpdateRequest(BaseModel):
+    """Patch payload for user-confirmed contract metadata.
+
+    All fields are optional — only the keys actually present in the
+    request body are updated. An explicit empty string normalizes to
+    ``null`` so users can clear a previously-set counterparty.
+    Storage / encryption fields are not part of this surface and
+    cannot be patched here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=500)
+    counterparty_name: str | None = Field(default=None, max_length=255)
+    contract_type: str | None = Field(default=None, max_length=64)
+    effective_date: date | None = None
+
+
+class ContractMetadataResponse(BaseModel):
+    """Compact merged-metadata view for the upload-review surface.
+
+    ``title`` is read off ``Contract.title``; the rest are read off
+    the latest ``original_upload`` artifact's ``metadata_json``. The
+    response forbids extra attributes so additional server-side state
+    cannot accidentally leak through this projection.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_id: uuid.UUID
+    title: str
+    counterparty_name: str | None = None
+    contract_type: str | None = None
+    effective_date: date | None = None
+    updated_at: datetime
+    changed_fields: list[str] = Field(default_factory=list)

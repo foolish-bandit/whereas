@@ -8,7 +8,7 @@ import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
-import UploadIntakeFeedback from "../components/UploadIntakeFeedback";
+import UploadReviewPanel from "../components/UploadReviewPanel";
 import { demoPath } from "../lib/routes";
 import {
   ApiError,
@@ -463,9 +463,18 @@ export default function RequestsPage() {
               )}
 
               {uploadFeedback[row.id] && (
-                <UploadIntakeFeedback
-                  extracted={uploadFeedback[row.id].extracted_metadata}
-                  duplicates={uploadFeedback[row.id].duplicate_candidates}
+                <UploadReviewPanel
+                  contract={{
+                    id: uploadFeedback[row.id].contract.id,
+                    title: uploadFeedback[row.id].contract.title,
+                  }}
+                  extractedMetadata={
+                    uploadFeedback[row.id].extracted_metadata
+                  }
+                  duplicateCandidates={
+                    uploadFeedback[row.id].duplicate_candidates
+                  }
+                  context="request_upload"
                   dataTestId="request-upload-feedback"
                 />
               )}
