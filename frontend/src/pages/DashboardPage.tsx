@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
+import LoadingSkeleton from "../components/LoadingSkeleton";
 import {
   ApiError,
   MissingDevUserError,
@@ -12,6 +13,7 @@ import type {
   DashboardApprovalAnalytics,
   DashboardApprovalAssigneeBucket,
   DashboardContractSummary,
+  DashboardCounts,
   DashboardInboxSummary,
   DashboardOldestPendingStep,
   DashboardRequestSummary,
@@ -23,67 +25,103 @@ type LoadState =
   | { kind: "loaded"; summary: DashboardSummary }
   | { kind: "error"; message: string };
 
-const COUNT_TILES: {
-  key: keyof DashboardSummary["counts"];
+interface CountTile {
+  key: keyof DashboardCounts;
   label: string;
   hint: string;
-}[] = [
-  { key: "open_requests", label: "Open requests", hint: "Status open" },
+  to: string;
+  tone?: "default" | "danger";
+}
+
+const PIPELINE_TILES: CountTile[] = [
+  {
+    key: "open_requests",
+    label: "Open requests",
+    hint: "Status open",
+    to: demoPath("/requests"),
+  },
   {
     key: "in_progress_requests",
-    label: "Requests in progress",
+    label: "In progress",
     hint: "Status in_progress",
+    to: demoPath("/requests"),
   },
   {
     key: "urgent_or_high_priority_requests",
-    label: "Urgent / high-priority requests",
+    label: "Urgent / high priority",
     hint: "Open or in-progress, priority urgent or high",
+    to: demoPath("/requests"),
   },
-  { key: "open_inbox_items", label: "Open inbox items", hint: "Status open" },
-  {
-    key: "overdue_inbox_items",
-    label: "Overdue inbox items",
-    hint: "Status open and past due",
-  },
+];
+
+const REPOSITORY_TILES: CountTile[] = [
   {
     key: "contracts_total",
-    label: "Contracts (all)",
+    label: "Repository total",
     hint: "Every contract in this org",
+    to: demoPath("/repository"),
   },
   {
     key: "contracts_sent_for_signature",
     label: "Out for signature",
     hint: "Status sent_for_signature",
+    to: demoPath("/repository"),
   },
   {
     key: "contracts_executed",
     label: "Executed contracts",
     hint: "Status executed",
+    to: demoPath("/repository"),
   },
-  {
-    key: "templates_active",
-    label: "Active templates",
-    hint: "Status active",
-  },
-  {
-    key: "active_approval_workflows",
-    label: "Active approval workflows",
-    hint: "Workflows still moving through their steps",
-  },
+];
+
+const APPROVAL_COUNT_TILES: CountTile[] = [
   {
     key: "pending_approval_steps",
-    label: "Pending approval steps",
-    hint: "Steps on active workflows awaiting a decision",
+    label: "Pending approvals",
+    hint: "Steps awaiting a decision on active workflows",
+    to: demoPath("/approvals/tasks"),
   },
   {
     key: "overdue_approval_steps",
-    label: "Overdue approval steps",
+    label: "Overdue approvals",
     hint: "Pending steps past their due date",
+    to: demoPath("/approvals/tasks"),
+    tone: "danger",
+  },
+  {
+    key: "active_approval_workflows",
+    label: "Active workflows",
+    hint: "Workflows still moving through their steps",
+    to: demoPath("/approvals/workflows"),
   },
   {
     key: "active_approval_workflow_templates",
     label: "Approval templates",
     hint: "Active approval workflow blueprints",
+    to: demoPath("/approvals/templates"),
+  },
+];
+
+const INBOX_AND_TEMPLATE_TILES: CountTile[] = [
+  {
+    key: "open_inbox_items",
+    label: "Open inbox items",
+    hint: "Status open",
+    to: demoPath("/inbox"),
+  },
+  {
+    key: "overdue_inbox_items",
+    label: "Overdue inbox items",
+    hint: "Status open and past due",
+    to: demoPath("/inbox"),
+    tone: "danger",
+  },
+  {
+    key: "templates_active",
+    label: "Active templates",
+    hint: "Status active",
+    to: demoPath("/requests/templates"),
   },
 ];
 
@@ -110,17 +148,16 @@ export default function DashboardPage() {
     <div className="space-y-6" data-testid="dashboard-page">
       <div>
         <h1 className="text-lg font-semibold text-ink">Dashboard</h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          A read-only snapshot of CLM activity in this workspace. Counts
-          and lists summarize existing requests, inbox items, contracts,
-          signatures, and templates — not a reporting engine.
+        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+          A read-only snapshot of CLM activity in this workspace. Click a
+          tile or row to jump straight into the matching surface.
         </p>
       </div>
 
       {state.kind === "loading" && (
-        <p className="text-sm text-ink-muted" data-testid="dashboard-loading">
-          Loading dashboard…
-        </p>
+        <div data-testid="dashboard-loading">
+          <LoadingSkeleton rows={6} />
+        </div>
       )}
 
       {state.kind === "error" && (
@@ -139,37 +176,37 @@ export default function DashboardPage() {
 function DashboardContent({ summary }: { summary: DashboardSummary }) {
   return (
     <>
-      <section data-testid="dashboard-counts">
-        <h2 className="text-sm font-medium text-ink">At a glance</h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {COUNT_TILES.map((tile) => (
-            <div
-              key={tile.key}
-              className="rounded border border-rule p-3"
-              data-testid={`count-${tile.key}`}
-            >
-              <p className="text-xs uppercase tracking-wide text-ink-subtle">
-                {tile.label}
-              </p>
-              <p className="mt-2 text-2xl font-semibold text-ink">
-                {summary.counts[tile.key]}
-              </p>
-              <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
-            </div>
-          ))}
-        </div>
+      <ActionBanner counts={summary.counts} />
+
+      <section data-testid="dashboard-counts" className="space-y-5">
+        <CountGroup
+          heading="Request pipeline"
+          tiles={PIPELINE_TILES}
+          counts={summary.counts}
+        />
+        <CountGroup
+          heading="Repository"
+          tiles={REPOSITORY_TILES}
+          counts={summary.counts}
+        />
+        <CountGroup
+          heading="Approvals"
+          tiles={APPROVAL_COUNT_TILES}
+          counts={summary.counts}
+        />
+        <CountGroup
+          heading="Inbox & templates"
+          tiles={INBOX_AND_TEMPLATE_TILES}
+          counts={summary.counts}
+        />
       </section>
 
       <section
         className="grid gap-4 lg:grid-cols-2"
         data-testid="dashboard-upcoming"
       >
-        <UpcomingRequests
-          rows={summary.upcoming.requests_due_soon}
-        />
-        <UpcomingInboxItems
-          rows={summary.upcoming.inbox_items_due_soon}
-        />
+        <UpcomingRequests rows={summary.upcoming.requests_due_soon} />
+        <UpcomingInboxItems rows={summary.upcoming.inbox_items_due_soon} />
       </section>
 
       <section
@@ -193,6 +230,94 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
 
       <ApprovalAnalyticsSection analytics={summary.approval_analytics} />
     </>
+  );
+}
+
+function ActionBanner({ counts }: { counts: DashboardCounts }) {
+  const overdueApprovals = counts.overdue_approval_steps;
+  const overdueInbox = counts.overdue_inbox_items;
+  if (overdueApprovals === 0 && overdueInbox === 0) return null;
+  const parts: string[] = [];
+  if (overdueApprovals > 0) {
+    parts.push(
+      `${overdueApprovals} overdue approval ${
+        overdueApprovals === 1 ? "step" : "steps"
+      }`,
+    );
+  }
+  if (overdueInbox > 0) {
+    parts.push(
+      `${overdueInbox} overdue inbox ${
+        overdueInbox === 1 ? "item" : "items"
+      }`,
+    );
+  }
+  // CTA prefers approvals when both are present; that's almost always the
+  // higher-stakes surface.
+  const ctaHref = overdueApprovals > 0 ? "/approvals/tasks" : "/inbox";
+  const ctaLabel =
+    overdueApprovals > 0 ? "Open approval tasks" : "Open inbox";
+  return (
+    <div
+      className="flex flex-col gap-2 rounded border border-danger-ring bg-danger-soft p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+      data-testid="dashboard-action-banner"
+    >
+      <p className="text-ink">
+        <span className="font-medium text-danger">Needs attention:</span>{" "}
+        {parts.join(" · ")}
+      </p>
+      <Link
+        to={demoPath(ctaHref)}
+        className="inline-flex w-fit items-center rounded border border-danger bg-danger px-2.5 py-1 text-xs font-medium text-canvas hover:opacity-90"
+        data-testid="dashboard-action-cta"
+      >
+        {ctaLabel}
+      </Link>
+    </div>
+  );
+}
+
+function CountGroup({
+  heading,
+  tiles,
+  counts,
+}: {
+  heading: string;
+  tiles: CountTile[];
+  counts: DashboardCounts;
+}) {
+  return (
+    <div>
+      <h2 className="text-sm font-medium text-ink">{heading}</h2>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {tiles.map((tile) => {
+          const value = counts[tile.key];
+          const danger = tile.tone === "danger" && Number(value) > 0;
+          return (
+            <Link
+              key={tile.key}
+              to={tile.to}
+              data-testid={`count-${tile.key}`}
+              className={`group rounded border bg-canvas p-3 transition-colors hover:border-rule-strong hover:bg-canvas-subtle ${
+                danger ? "border-danger-ring" : "border-rule"
+              }`}
+            >
+              <p className="text-xs uppercase tracking-wide text-ink-subtle">
+                {tile.label}
+              </p>
+              <p
+                className={`mt-2 text-2xl font-semibold tabular-nums ${
+                  danger ? "text-danger" : "text-ink"
+                }`}
+              >
+                {value}
+              </p>
+              <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -259,7 +384,7 @@ function ApprovalAnalyticsSection({
             <p className="text-xs uppercase tracking-wide text-ink-subtle">
               {tile.label}
             </p>
-            <p className="mt-2 text-2xl font-semibold text-ink">
+            <p className="mt-2 text-2xl font-semibold text-ink tabular-nums">
               {analytics[tile.key]}
             </p>
             <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
@@ -315,12 +440,26 @@ function OldestPendingSteps({
                 {" · "}
                 <Link
                   to={demoPath(
-                    `/requests?request_id=${encodeURIComponent(row.request_id)}`,
+                    `/requests/${encodeURIComponent(row.request_id)}`,
                   )}
                   className="underline"
                   data-testid="approval-analytics-request-link"
                 >
-                  request
+                  open request
+                </Link>
+              </>
+            ) : null}
+            {row.contract_id && !row.request_id ? (
+              <>
+                {" · "}
+                <Link
+                  to={demoPath(
+                    `/repository/${encodeURIComponent(row.contract_id)}`,
+                  )}
+                  className="underline"
+                  data-testid="approval-analytics-contract-link"
+                >
+                  open repository record
                 </Link>
               </>
             ) : null}
@@ -352,11 +491,7 @@ function PendingByAssignee({
             data-testid="approval-analytics-assignee-row"
           >
             <p className="font-medium text-ink">
-              {row.assigned_to ? (
-                <code className="text-sm">{row.assigned_to}</code>
-              ) : (
-                "Unassigned"
-              )}
+              {row.assigned_to ?? "Unassigned"}
             </p>
             <p className="text-xs text-ink-subtle">
               {row.count} pending
@@ -418,7 +553,10 @@ function UpcomingRequests({ rows }: { rows: DashboardRequestSummary[] }) {
           data-testid="dashboard-request-row"
         >
           <p className="font-medium text-ink">
-            <Link to={demoPath("/requests")} className="hover:underline">
+            <Link
+              to={demoPath(`/requests/${encodeURIComponent(row.id)}`)}
+              className="hover:underline"
+            >
               {row.title}
             </Link>
           </p>
@@ -442,24 +580,31 @@ function UpcomingInboxItems({ rows }: { rows: DashboardInboxSummary[] }) {
       emptyHint="Nothing in the inbox is due in the next two weeks."
       isEmpty={rows.length === 0}
     >
-      {rows.map((row) => (
-        <li
-          key={row.id}
-          className="rounded border border-rule p-2"
-          data-testid="dashboard-inbox-row"
-        >
-          <p className="font-medium text-ink">
-            <Link to={demoPath("/inbox")} className="hover:underline">
-              {row.title}
-            </Link>
-          </p>
-          <p className="text-xs text-ink-subtle">
-            {row.item_type}
-            {row.priority ? ` · ${row.priority}` : ""}
-            {row.due_date ? ` · due ${row.due_date}` : ""}
-          </p>
-        </li>
-      ))}
+      {rows.map((row) => {
+        const href = row.request_id
+          ? demoPath(`/requests/${encodeURIComponent(row.request_id)}`)
+          : row.contract_id
+            ? demoPath(`/repository/${encodeURIComponent(row.contract_id)}`)
+            : demoPath("/inbox");
+        return (
+          <li
+            key={row.id}
+            className="rounded border border-rule p-2"
+            data-testid="dashboard-inbox-row"
+          >
+            <p className="font-medium text-ink">
+              <Link to={href} className="hover:underline">
+                {row.title}
+              </Link>
+            </p>
+            <p className="text-xs text-ink-subtle">
+              {row.item_type}
+              {row.priority ? ` · ${row.priority}` : ""}
+              {row.due_date ? ` · due ${row.due_date}` : ""}
+            </p>
+          </li>
+        );
+      })}
     </ListSection>
   );
 }
@@ -479,7 +624,10 @@ function RecentRequests({ rows }: { rows: DashboardRequestSummary[] }) {
           data-testid="dashboard-recent-request-row"
         >
           <p className="font-medium text-ink">
-            <Link to={demoPath("/requests")} className="hover:underline">
+            <Link
+              to={demoPath(`/requests/${encodeURIComponent(row.id)}`)}
+              className="hover:underline"
+            >
               {row.title}
             </Link>
           </p>
@@ -522,7 +670,7 @@ function RecentContracts({
         >
           <p className="font-medium text-ink">
             <Link
-              to={demoPath(`/contracts/${encodeURIComponent(row.id)}`)}
+              to={demoPath(`/repository/${encodeURIComponent(row.id)}`)}
               className="hover:underline"
             >
               {row.title}
