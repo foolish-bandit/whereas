@@ -85,8 +85,11 @@ describe("App routing — UI consolidation pass", () => {
   beforeEach(() => {
     fetchMock = vi.fn();
     // Default to a friendly response so list pages can render an
-    // empty/loaded state without error noise.
-    fetchMock.mockResolvedValue(jsonResponse([]));
+    // empty/loaded state without error noise. Use mockImplementation
+    // so each call gets a fresh Response object — needed because
+    // multiple consumers (e.g. Sidebar + page) may both fetch in the
+    // same test, and a Response body can only be read once.
+    fetchMock.mockImplementation(async () => jsonResponse([]));
     vi.stubGlobal("fetch", fetchMock);
     setDevUserId(DEV_USER);
   });
@@ -204,7 +207,7 @@ describe("App routing — UI consolidation pass", () => {
   });
 
   it("keeps demo Request list links under /demo/requests/:id", async () => {
-    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    fetchMock.mockImplementation(async () => jsonResponse([SAMPLE_REQUEST]));
     renderAt("/demo/requests");
     expect(await screen.findByTestId("request-title-link")).toHaveAttribute(
       "href",
