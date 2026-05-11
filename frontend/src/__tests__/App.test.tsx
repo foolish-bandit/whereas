@@ -15,6 +15,46 @@ import { clearDevUserId, setDevUserId } from "../lib/devUser";
 
 const DEV_USER = "11111111-1111-4111-8111-111111111111";
 
+const SAMPLE_REQUEST = {
+  id: "req-1",
+  organization_id: "org-1",
+  title: "NDA with Acme",
+  description: null,
+  request_type: "new_contract",
+  contract_type: "NDA",
+  status: "open",
+  priority: "normal",
+  requester_name: null,
+  requester_email: null,
+  counterparty_name: "Acme",
+  due_date: null,
+  assigned_to: null,
+  linked_contract_id: null,
+  linked_template_id: null,
+  created_at: "2026-05-08T16:00:00Z",
+  updated_at: "2026-05-08T16:00:00Z",
+  created_by: null,
+  metadata_json: null,
+};
+
+const EMPTY_APPROVAL_STATUS = {
+  request_id: "req-1",
+  linked_contract_id: null,
+  matching_policy_ids: [],
+  matching_policies: [],
+  workflow_runs: [],
+  summary: {
+    has_required_policies: false,
+    has_active_workflows: false,
+    has_rejected_workflows: false,
+    has_completed_workflows: false,
+    all_required_policy_workflows_completed: true,
+    ready_for_signature: null,
+    blocking_reason: null,
+    blocking_reason_text: null,
+  },
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -161,6 +201,71 @@ describe("App routing — UI consolidation pass", () => {
     expect(
       screen.getByTestId("requests-card-manage-templates"),
     ).toHaveAttribute("href", "/demo/requests/templates");
+  });
+
+  it("keeps demo Request list links under /demo/requests/:id", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderAt("/demo/requests");
+    expect(await screen.findByTestId("request-title-link")).toHaveAttribute(
+      "href",
+      "/demo/requests/req-1",
+    );
+    expect(screen.getByTestId("request-view-link")).toHaveAttribute(
+      "href",
+      "/demo/requests/req-1",
+    );
+  });
+
+  it("renders the normal Requests list at /requests", async () => {
+    renderAt("/requests");
+    await waitFor(() =>
+      expect(screen.getByTestId("requests-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("preserves request_id auto-expand on the normal /requests?request_id route", async () => {
+    renderAt("/requests?request_id=req-missing");
+    await waitFor(() =>
+      expect(screen.getByTestId("requests-page")).toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByTestId("requests-deep-link-not-found"),
+    ).toHaveTextContent("req-missing");
+  });
+
+  it("renders the normal Request detail route at /requests/:id", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(EMPTY_APPROVAL_STATUS);
+      }
+      if (url.endsWith("/api/requests/req-1/activity")) {
+        return jsonResponse({ items: [] });
+      }
+      if (url.endsWith("/api/requests/req-1")) {
+        return jsonResponse(SAMPLE_REQUEST);
+      }
+      return jsonResponse([]);
+    });
+    renderAt("/requests/req-1");
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "NDA with Acme" })).toBeInTheDocument();
+  });
+
+  it("also renders the demo Request detail route at /demo/requests/:id", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/api/requests/req-1/approval-status")) {
+        return jsonResponse(EMPTY_APPROVAL_STATUS);
+      }
+      if (url.endsWith("/api/requests/req-1/activity")) {
+        return jsonResponse({ items: [] });
+      }
+      if (url.endsWith("/api/requests/req-1")) {
+        return jsonResponse(SAMPLE_REQUEST);
+      }
+      return jsonResponse([]);
+    });
+    renderAt("/demo/requests/req-1");
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
   });
 
   it("still serves the legacy /demo/agreement-templates route", async () => {

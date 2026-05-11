@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import type { ReactNode } from "react";
 
 import AppShell from "./components/AppShell";
 import ContractsPage from "./pages/ContractsPage";
@@ -11,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
+import RequestDetailPage from "./pages/RequestDetailPage";
 import RequestsPage from "./pages/RequestsPage";
 import InboxPage from "./pages/InboxPage";
 import ApprovalsLandingPage from "./pages/ApprovalsLandingPage";
@@ -23,10 +25,24 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/requests" element={<StandaloneApp><RequestsPage /></StandaloneApp>} />
+      <Route
+        path="/requests/templates"
+        element={<StandaloneApp><AgreementTemplatesPage /></StandaloneApp>}
+      />
+      <Route
+        path="/requests/templates/:id"
+        element={<StandaloneApp><AgreementTemplateDetailPage /></StandaloneApp>}
+      />
+      <Route path="/requests/:id" element={<StandaloneApp><RequestDetailPage /></StandaloneApp>} />
       <Route path="/demo/*" element={<DemoApp />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+function StandaloneApp({ children }: { children: ReactNode }) {
+  return <AppShell>{children}</AppShell>;
 }
 
 /**
@@ -84,6 +100,7 @@ function DemoApp() {
         />
 
         <Route path="requests" element={<RequestsPage />} />
+        <Route path="requests/:id" element={<RequestDetailPage />} />
 
         {/* Approvals workspace. /approvals is now a landing page with
             cards; /approvals?workflow_id=... is preserved as a deep

@@ -18,7 +18,7 @@ interface Props {
  *
  * The third-party / counterparty-paper intake path: the user uploads
  * an external agreement file and the request is converted into a
- * Repository contract. Collapsed by default behind a small toggle so
+ * Repository record. Collapsed by default behind a small toggle so
  * dense request lists stay readable.
  *
  * Rendered when the request has no ``linked_contract_id`` and is not
@@ -102,7 +102,7 @@ export default function RequestUploadConvertSection({
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-sm font-medium text-ink">
-              Add a third-party agreement to Repository
+              Add third-party paper to Repository
             </p>
             <button
               type="button"
@@ -118,8 +118,8 @@ export default function RequestUploadConvertSection({
           </div>
           <p className="text-xs text-ink-subtle">
             Upload the counterparty paper or signed exhibit attached to this
-            request. The file becomes the official source file in the
-            Repository and is linked back to this request.
+            request. The file becomes the Source file in the Repository and is
+            linked back to this Request.
           </p>
 
           <input

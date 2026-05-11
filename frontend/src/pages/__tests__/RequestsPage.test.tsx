@@ -74,6 +74,19 @@ describe("RequestsPage", () => {
     expect(screen.getByText(/Counterparty: Acme/)).toBeInTheDocument();
   });
 
+  it("links each request title and View action to the detail route", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    expect(await screen.findByTestId("request-title-link")).toHaveAttribute(
+      "href",
+      "/requests/req-1",
+    );
+    expect(screen.getByTestId("request-view-link")).toHaveAttribute(
+      "href",
+      "/requests/req-1",
+    );
+  });
+
   it("creates a request through the form", async () => {
     let listed = [SAMPLE_REQUEST];
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
@@ -269,7 +282,7 @@ describe("RequestsPage", () => {
     await screen.findByText("Already converted");
     expect(screen.queryByTestId("request-convert-section")).toBeNull();
     const link = await screen.findByTestId("request-convert-contract-link");
-    expect(link).toHaveAttribute("href", "/demo/contracts/contract-xyz");
+    expect(link).toHaveAttribute("href", "/repository/contract-xyz");
   });
 
   it("converts a request and swaps the row state in place", async () => {
@@ -308,7 +321,7 @@ describe("RequestsPage", () => {
       );
     });
     const link = await screen.findByTestId("request-convert-contract-link");
-    expect(link).toHaveAttribute("href", "/demo/contracts/contract-new");
+    expect(link).toHaveAttribute("href", "/repository/contract-new");
 
     // The DOM must not contain any storage internals — the API client
     // scrubs them, but this checks end-to-end at the rendered surface.
@@ -520,7 +533,7 @@ describe("RequestsPage", () => {
       await screen.findByTestId("request-approval-badge-ready"),
     ).toBeInTheDocument();
     const link = screen.getByTestId("request-approval-contract-link");
-    expect(link).toHaveAttribute("href", "/demo/contracts/contract-1");
+    expect(link).toHaveAttribute("href", "/repository/contract-1");
   });
 
   it("renders a rejected/blocked badge with the gate reason text", async () => {
@@ -915,7 +928,7 @@ describe("RequestsPage", () => {
     const link = await screen.findByTestId(
       "request-convert-contract-link",
     );
-    expect(link).toHaveAttribute("href", "/demo/contracts/contract-new");
+    expect(link).toHaveAttribute("href", "/repository/contract-new");
     // Storage internals never make it into the rendered DOM.
     expect(document.body.textContent ?? "").not.toContain("storage_key");
     expect(document.body.textContent ?? "").not.toContain("wrapped_dek");

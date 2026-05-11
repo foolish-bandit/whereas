@@ -2366,6 +2366,7 @@ export async function convertRequestWithUpload(
   writable.linked_contract_id = contractId;
   writable.status = "completed";
   writable.updated_at = now;
+  sessionList.unshift(response.contract);
   resolveSessionInboxItemsForRequest(id, "completed");
 
   response.request = { ...writable };

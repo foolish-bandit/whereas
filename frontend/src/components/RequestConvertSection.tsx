@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import {
   ApiError,
@@ -7,7 +7,7 @@ import {
   convertRequestToContract,
   listAgreementTemplateVariables,
 } from "../lib/api";
-import { demoPath } from "../lib/routes";
+import { mountedPath } from "../lib/routes";
 import type { AgreementTemplateVariable } from "../types/agreementTemplates";
 import type {
   ContractRequest,
@@ -111,11 +111,11 @@ export default function RequestConvertSection({ request, onConverted }: Props) {
       className="mt-3 rounded border border-rule bg-canvas-subtle p-3 text-sm"
       data-testid="request-convert-section"
     >
-      <p className="text-xs font-medium text-ink">Generate contract from template</p>
+      <p className="text-xs font-medium text-ink">Generate agreement from template</p>
       <p className="mt-1 text-xs text-ink-subtle">
-        Render a draft DOCX from the linked agreement template using the
-        variable values below. The new contract will land in the contract
-        repository as a draft; this does not send anything for signature.
+        Render a Generated Word document from the linked Agreement Template
+        using the variable values below. The new Repository record will stay as
+        a draft; this does not send anything for signature.
       </p>
 
       {varsState.kind === "loading" && (
@@ -141,7 +141,7 @@ export default function RequestConvertSection({ request, onConverted }: Props) {
 
           {variables.length === 0 ? (
             <p className="text-xs text-ink-subtle">
-              No variables defined on this template. The contract will be
+              No variables defined on this template. The agreement will be
               generated as-is.
             </p>
           ) : (
@@ -179,7 +179,7 @@ export default function RequestConvertSection({ request, onConverted }: Props) {
               disabled={submitting || missingRequired}
               data-testid="request-convert-submit"
             >
-              {submitting ? "Generating…" : "Generate contract"}
+              {submitting ? "Generating…" : "Generate agreement"}
             </button>
             {error && (
               <span
@@ -201,17 +201,21 @@ interface LinkProps {
 }
 
 /**
- * Tiny "open the linked contract" affordance shared between the
+ * Tiny "open the linked Repository record" affordance shared between the
  * just-converted state and the already-converted state.
  */
 export function ConvertedContractLink({ contractId }: LinkProps) {
+  const location = useLocation();
   return (
     <Link
-      to={demoPath(`/contracts/${encodeURIComponent(contractId)}`)}
+      to={mountedPath(
+        `/repository/${encodeURIComponent(contractId)}`,
+        location.pathname,
+      )}
       className="text-xs underline"
       data-testid="request-convert-contract-link"
     >
-      Open generated contract
+      Open Repository record
     </Link>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import ActivityExport from "../components/ActivityExport";
@@ -10,7 +10,7 @@ import RequestConvertSection, {
 } from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
 import UploadReviewPanel from "../components/UploadReviewPanel";
-import { demoPath } from "../lib/routes";
+import { demoPath, mountedPath } from "../lib/routes";
 import {
   ApiError,
   MissingDevUserError,
@@ -45,6 +45,7 @@ const REQUEST_TYPE_OPTIONS = [
 
 export default function RequestsPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const location = useLocation();
   const [includeCancelled, setIncludeCancelled] = useState(false);
   // Track which rows have their approval-status section expanded.
   // Lazy-load on toggle so a long list doesn't fire N approval-status
@@ -404,7 +405,13 @@ export default function RequestsPage() {
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div>
-                  <p className="font-medium text-ink">{row.title}</p>
+                  <Link
+                    to={mountedPath(`/requests/${encodeURIComponent(row.id)}`, location.pathname)}
+                    className="font-medium text-ink underline-offset-2 hover:underline"
+                    data-testid="request-title-link"
+                  >
+                    {row.title}
+                  </Link>
                   <p className="text-xs text-ink-subtle">
                     {row.contract_type ?? "Untyped"} ·{" "}
                     <span data-testid="request-status">{row.status}</span>
@@ -440,6 +447,13 @@ export default function RequestsPage() {
                       Cancel
                     </button>
                   )}
+                  <Link
+                    to={mountedPath(`/requests/${encodeURIComponent(row.id)}`, location.pathname)}
+                    className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                    data-testid="request-view-link"
+                  >
+                    View
+                  </Link>
                 </div>
               </div>
               {row.counterparty_name && (
@@ -456,7 +470,7 @@ export default function RequestsPage() {
                   className="mt-3 flex flex-wrap items-baseline gap-2 text-xs"
                   data-testid="request-converted-link"
                 >
-                  <span className="text-ink-subtle">Linked contract:</span>
+                  <span className="text-ink-subtle">Linked Repository record:</span>
                   <ConvertedContractLink
                     contractId={row.linked_contract_id}
                   />
@@ -497,7 +511,7 @@ export default function RequestsPage() {
                     data-testid="request-no-template-hint"
                   >
                     Link an agreement template to this request to generate a
-                    draft contract, or upload an external agreement below.
+                    draft agreement, or upload an external agreement below.
                   </p>
                 )}
 
