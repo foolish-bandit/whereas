@@ -136,6 +136,28 @@ uv run alembic upgrade head
 `uv sync` resolves and installs the backend dependencies into a local
 virtualenv on first use. Subsequent runs are fast.
 
+### Running backend tests
+
+`uv sync --extra dev` (or `pip install -e ".[dev]"` if you prefer
+plain pip) is what installs **pytest** and **pytest-asyncio**. The
+backend's `pyproject.toml` sets `asyncio_mode = "auto"` and
+`asyncio_default_fixture_loop_scope = "function"`; both options
+require pytest-asyncio. Running `pytest` from a Python that does not
+have pytest-asyncio installed prints "Unknown config option:
+asyncio_mode" and silently skips async test discovery — fix by
+installing the dev extras into the venv you actually run pytest from,
+not by removing the config keys.
+
+```
+cd backend
+uv run pytest
+# or, with the venv activated:
+pytest
+```
+
+The DOCX preview tests stub LibreOffice; you do not need a local
+`libreoffice` / `soffice` binary to run the suite.
+
 ## 6. Start the backend
 
 From `backend/`, with the same `.env` from step 3 picked up

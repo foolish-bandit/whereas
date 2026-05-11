@@ -67,7 +67,16 @@ ignore = ["E501"]  # line length handled by formatter
 known-third-party = ["alembic"]
 
 [tool.pytest.ini_options]
+# Both options require pytest-asyncio (declared in [project.optional-dependencies].dev).
+# Running pytest from a Python that lacks pytest-asyncio prints
+# "Unknown config option: asyncio_mode" and silently skips async test
+# discovery — the fix is always to install dev extras into the active
+# Python, never to drop these keys. See backend/README.md.
 asyncio_mode = "auto"
+# pytest-asyncio 1.x emits a DeprecationWarning when this is unset on
+# strict-mode runs. Pin it explicitly so the choice is recorded in
+# config rather than implied by the plugin's default.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 
 [build-system]
