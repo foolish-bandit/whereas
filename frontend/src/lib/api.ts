@@ -593,6 +593,74 @@ export async function compareContractArtifacts(
   return scrubSecrets(data);
 }
 
+/**
+ * On-demand redline-style export of a comparison report DOCX (PR #90).
+ *
+ * POSTs the same body shape as `compareContractArtifacts` and resolves
+ * to a `Blob` carrying the DOCX bytes, the suggested filename from
+ * the `Content-Disposition` header, and the response content-type.
+ *
+ * Demo mode is routed to `mockApi` so the hosted demo can simulate a
+ * download without contacting a backend.
+ */
+export async function exportContractArtifactsCompare(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.exportContractArtifactsCompare(
+      contractId,
+      baseArtifactId,
+      compareArtifactId,
+      options,
+    );
+  }
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const [k, v] of Object.entries(devHeaders())) {
+    headers.set(k, v);
+  }
+  let response: Response;
+  try {
+    response = await fetch(
+      `${baseUrl()}/api/contracts/${encodeURIComponent(
+        contractId,
+      )}/artifacts/compare/export`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          base_artifact_id: baseArtifactId,
+          compare_artifact_id: compareArtifactId,
+        }),
+        signal: options.signal,
+      },
+    );
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(
+      0,
+      "Could not reach the backend. Is the API running?",
+      err instanceof Error ? err.message : undefined,
+    );
+  }
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new ApiError(response.status, message);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const m = FILENAME_RE.exec(disposition);
+  return {
+    blob,
+    filename: m ? m[1] : null,
+    mimeType: response.headers.get("Content-Type") ?? blob.type,
+  };
+}
+
 async function downloadBlob(
   path: string,
   options: ApiOptions,

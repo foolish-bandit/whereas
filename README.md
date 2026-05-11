@@ -242,6 +242,57 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Redline export foundation (PR #90)
+
+The Document History compare panel on a Repository workspace now
+exposes an **Export redline (DOCX)** action next to the existing
+*Compare selected versions* button. Selecting two versions and
+clicking export downloads a `.docx` **comparison report** generated
+server-side from the same text-extraction + diff pipeline that
+powers the on-screen compare (PR #71).
+
+Honest framing: this is **not** a Word tracked-changes
+(`w:ins` / `w:del`) file. Generating a faithful tracked-changes DOCX
+from arbitrary text input is error-prone — paragraph boundaries,
+table cells, and formatting all complicate it — and a half-broken
+file is worse than no file. The first paragraph of the rendered DOCX,
+and the copy next to the button in the UI, both make that explicit.
+Each unchanged line is plain text; each removed line is red +
+strikethrough; each added line is green + underlined; long runs of
+unchanged text are collapsed to a muted "… N unchanged lines …"
+indicator so the report stays focused on actual differences.
+
+What landed:
+
+- `POST /api/contracts/{contract_id}/artifacts/compare/export` —
+  same resolution rules and scoping invariants as the existing
+  `POST .../compare` endpoint. Cross-org / wrong-contract → 404;
+  unretrievable storage metadata → 409; either side
+  un-extractable → 422. On success the response is
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+  bytes with `Content-Disposition: attachment` and a sanitized
+  `<contract-title>-comparison-report.docx` filename.
+- New service `app.services.compare_report_docx` renders a
+  `DiffResult` to DOCX bytes via `python-docx`. No tracked-changes
+  XML manipulation; no LLM; no OCR / Docling; no remote service.
+- New audit event `contract.artifacts_compare_exported` recording
+  the contract, the two artifact ids / types, the line-count
+  summary, `format=docx`, and the byte count. No extracted text,
+  no storage internals, no signer PII.
+- **No persistence**: the DOCX bytes are returned to the caller and
+  forgotten. No new `ContractArtifact` row is written, no download
+  priority changes, no DocuSeal / approval-state behavior changes.
+
+Frontend:
+
+- Export button next to *Compare selected versions* in the Document
+  History compare panel. Disabled until two distinct versions are
+  selected; explicit "Preparing redline…" pending state; safe error
+  surface if the export endpoint returns a 4xx / 5xx.
+- Mock / demo parity — the hosted demo at `https://whereas.pages.dev/`
+  triggers a real download, but the body is a plain-text comparison
+  report rather than a real DOCX (the renderer is server-only).
+
 ## Upload-intake intelligence (PR #66)
 
 Repository uploads and request-conversion uploads now return two

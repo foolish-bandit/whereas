@@ -19,6 +19,7 @@ import {
   ApiError,
   MissingDevUserError,
   compareContractArtifacts,
+  exportContractArtifactsCompare,
   downloadContract,
   downloadContractArtifact,
   previewContractArtifact,
@@ -101,6 +102,14 @@ type CompareState =
   | { kind: "loaded"; result: ArtifactCompareResponse }
   | { kind: "error"; message: string };
 
+// PR #90 — the redline export is independent of the on-screen compare
+// result. A user can export without first running the on-screen
+// compare, and the export action does not change `compareState`.
+type CompareExportState =
+  | { kind: "idle" }
+  | { kind: "exporting" }
+  | { kind: "error"; message: string };
+
 type SidebarTab = "metadata" | "clauses" | "review";
 
 type ArtifactsState =
@@ -134,6 +143,9 @@ export default function ContractWorkspacePage() {
     compareId: null,
   });
   const [compareState, setCompareState] = useState<CompareState>({ kind: "idle" });
+  const [compareExportState, setCompareExportState] = useState<CompareExportState>(
+    { kind: "idle" },
+  );
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
   // Full artifact list drives the lifecycle strip, the Files section,
   // the Current-document label, and the Details origin copy. Mirrors
@@ -388,6 +400,41 @@ export default function ContractWorkspacePage() {
     if (compareState.kind !== "idle") {
       setCompareState({ kind: "idle" });
     }
+    if (compareExportState.kind !== "idle") {
+      setCompareExportState({ kind: "idle" });
+    }
+  }
+
+  async function onExportRedline() {
+    if (!contract) return;
+    const { baseId, compareId } = compareSelection;
+    if (!baseId || !compareId || baseId === compareId) return;
+    setCompareExportState({ kind: "exporting" });
+    try {
+      const result = await exportContractArtifactsCompare(
+        contract.id,
+        baseId,
+        compareId,
+      );
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download =
+        result.filename ?? `${contract.title || "comparison-report"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setCompareExportState({ kind: "idle" });
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError
+          ? err.message
+          : err instanceof ApiError
+            ? err.message
+            : "Redline export failed unexpectedly.";
+      setCompareExportState({ kind: "error", message });
+    }
   }
 
   if (state.kind === "loading") {
@@ -593,6 +640,8 @@ export default function ContractWorkspacePage() {
         compareState={compareState}
         onCompareSelectionChange={onCompareSelectionChange}
         onCompare={onCompareArtifacts}
+        compareExportState={compareExportState}
+        onExportRedline={onExportRedline}
       />
     </div>
   );
@@ -1069,6 +1118,8 @@ function DocumentHistorySection({
   compareState,
   onCompareSelectionChange,
   onCompare,
+  compareExportState,
+  onExportRedline,
 }: {
   state: ArtifactsState;
   artifactDownloads: ArtifactDownloadStateMap;
@@ -1077,6 +1128,8 @@ function DocumentHistorySection({
   compareState: CompareState;
   onCompareSelectionChange: (next: CompareSelection) => void;
   onCompare: () => void;
+  compareExportState: CompareExportState;
+  onExportRedline: () => void;
 }) {
   const artifacts = state.kind === "loaded" ? state.artifacts : [];
   return (
@@ -1131,6 +1184,8 @@ function DocumentHistorySection({
                 state={compareState}
                 onSelectionChange={onCompareSelectionChange}
                 onCompare={onCompare}
+                exportState={compareExportState}
+                onExportRedline={onExportRedline}
               />
             )}
           </>
@@ -1321,18 +1376,23 @@ function CompareVersionsPanel({
   state,
   onSelectionChange,
   onCompare,
+  exportState,
+  onExportRedline,
 }: {
   artifacts: readonly ContractArtifact[];
   selection: CompareSelection;
   state: CompareState;
   onSelectionChange: (next: CompareSelection) => void;
   onCompare: () => void;
+  exportState: CompareExportState;
+  onExportRedline: () => void;
 }) {
-  const canCompare =
+  const hasPair =
     selection.baseId !== null &&
     selection.compareId !== null &&
-    selection.baseId !== selection.compareId &&
-    state.kind !== "comparing";
+    selection.baseId !== selection.compareId;
+  const canCompare = hasPair && state.kind !== "comparing";
+  const canExport = hasPair && exportState.kind !== "exporting";
   return (
     <div
       className="mt-5 rounded border border-rule bg-canvas-subtle p-3"
@@ -1399,13 +1459,37 @@ function CompareVersionsPanel({
         >
           {state.kind === "comparing" ? "Comparing…" : "Compare selected versions"}
         </button>
+        <button
+          type="button"
+          onClick={onExportRedline}
+          disabled={!canExport}
+          data-testid="compare-export-redline-button"
+          title="Download a DOCX comparison report of the two selected versions"
+          className="inline-flex items-center justify-center rounded border border-rule bg-canvas px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {exportState.kind === "exporting"
+            ? "Preparing redline…"
+            : "Export redline (DOCX)"}
+        </button>
       </div>
+      <p className="mt-2 text-[11px] text-ink-subtle">
+        Export redline downloads a DOCX <em>comparison report</em>, not an
+        official Word tracked-changes file.
+      </p>
       {state.kind === "error" && (
         <p
           className="mt-3 text-[11px] text-danger"
           data-testid="compare-versions-error"
         >
           {state.message}
+        </p>
+      )}
+      {exportState.kind === "error" && (
+        <p
+          className="mt-2 text-[11px] text-danger"
+          data-testid="compare-export-redline-error"
+        >
+          {exportState.message}
         </p>
       )}
       {state.kind === "loaded" && <CompareResultPanel result={state.result} />}

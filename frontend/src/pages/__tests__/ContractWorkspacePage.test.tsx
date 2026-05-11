@@ -1718,6 +1718,156 @@ describe("ContractWorkspacePage compare versions (PR #71)", () => {
       screen.queryByTestId("compare-versions-result"),
     ).not.toBeInTheDocument();
   });
+
+  // -------------------------------------------------------------------------
+  // PR #90 — on-demand DOCX redline export
+  // -------------------------------------------------------------------------
+
+  it("disables Export redline until two distinct versions are picked", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    const exportBtn = screen.getByTestId("compare-export-redline-button");
+    expect(exportBtn).toBeDisabled();
+    // Picking the same artifact on both sides is degenerate.
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    expect(exportBtn).toBeDisabled();
+    // Two distinct versions enables the action.
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    expect(exportBtn).not.toBeDisabled();
+  });
+
+  it("POSTs to /artifacts/compare/export and triggers a blob download", async () => {
+    // Spy on the URL + anchor click pipeline so we can confirm the
+    // download flow fires without actually navigating jsdom.
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:test");
+    const revokeObjectURL = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => undefined);
+    const anchorClicks: string[] = [];
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag);
+      if (tag === "a") {
+        Object.defineProperty(el, "click", {
+          value: function () {
+            anchorClicks.push((el as HTMLAnchorElement).href || "");
+          },
+          writable: true,
+        });
+      }
+      return el;
+    });
+
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    // Layer the export endpoint on top of the existing mock.
+    const baseImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/export`,
+        ) &&
+        init?.method === "POST"
+      ) {
+        return new Response(new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])]), {
+          status: 200,
+          headers: {
+            "Content-Type":
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "Content-Disposition":
+              'attachment; filename="Acme-MSA-comparison-report.docx"',
+          },
+        });
+      }
+      return baseImpl!(url, init);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-export-redline-button"));
+
+    await waitFor(() => {
+      const exportCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/export`,
+        ),
+      );
+      expect(exportCall).toBeDefined();
+      const body = JSON.parse(
+        (exportCall![1] as RequestInit).body as string,
+      );
+      expect(body.base_artifact_id).toBe(SOURCE_ARTIFACT.id);
+      expect(body.compare_artifact_id).toBe(SIGNED_ARTIFACT.id);
+    });
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalled();
+      expect(anchorClicks.length).toBeGreaterThan(0);
+      expect(revokeObjectURL).toHaveBeenCalled();
+    });
+
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it("surfaces a safe error message when the export endpoint fails", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    const baseImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/export`,
+        )
+      ) {
+        return jsonResponse({ detail: "boom" }, 500);
+      }
+      return baseImpl!(url, init);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-export-redline-button"));
+
+    const error = await screen.findByTestId("compare-export-redline-error");
+    expect(error.textContent ?? "").toMatch(/boom|export failed/i);
+  });
+
+  it("frames the export action as a comparison report, not an official Word redline", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    renderPage();
+    const panel = await screen.findByTestId("document-history-compare-panel");
+    // Both the existing compare panel framing and the new export
+    // framing must read as "comparison report", not "redline".
+    expect(panel.textContent ?? "").toMatch(/not an official Word redline/i);
+    expect(panel.textContent ?? "").toMatch(/comparison report/i);
+  });
 });
 
 // ---------------------------------------------------------------------------

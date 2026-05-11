@@ -848,3 +848,258 @@ async def test_compare_truncates_large_diff_with_warning(
     # Summary still reflects the full diff (every line replaced).
     assert body["summary"]["added_lines"] == 3000
     assert body["summary"]["removed_lines"] == 3000
+
+
+# --------------------------------------------------------------------------
+# PR #90 — redline export
+# --------------------------------------------------------------------------
+
+
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+
+async def _expect_audit_event(
+    db_session: AsyncSession, *, event_type: str
+) -> dict[str, Any] | None:
+    """Return the most recent audit event of the given type, if any."""
+    from app.security.audit_log import AuditEvent
+
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.event_type == event_type)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(1)
+    )
+    row = (await db_session.execute(stmt)).scalar_one_or_none()
+    return row.details if row is not None else None
+
+
+async def test_compare_export_returns_docx_attachment(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """Happy path: two compatible artifacts → DOCX bytes with the right
+    Content-Type and an attachment Content-Disposition header that
+    includes the contract title (sanitized) plus a -comparison-report.docx
+    suffix."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith(_DOCX_MIME)
+    disposition = response.headers["content-disposition"]
+    assert "attachment;" in disposition
+    assert "comparison-report.docx" in disposition
+    # Real DOCX files start with the ZIP magic bytes.
+    assert response.content[:2] == b"PK"
+    assert len(response.content) > 0
+
+
+async def test_compare_export_emits_safe_audit_event(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """A successful export emits ``contract.artifacts_compare_exported``
+    with allowlisted details — never the diff/extracted text or any
+    storage internals."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 200
+
+    details = await _expect_audit_event(
+        db_session, event_type="contract.artifacts_compare_exported"
+    )
+    assert details is not None
+    assert set(details.keys()) == {
+        "contract_id",
+        "base_artifact_id",
+        "compare_artifact_id",
+        "base_artifact_type",
+        "compare_artifact_type",
+        "added_lines",
+        "removed_lines",
+        "changed_blocks",
+        "format",
+        "byte_count",
+    }
+    assert details["contract_id"] == str(contract_id)
+    assert details["base_artifact_id"] == str(base.id)
+    assert details["compare_artifact_id"] == str(compare.id)
+    assert details["format"] == "docx"
+    assert isinstance(details["byte_count"], int) and details["byte_count"] > 0
+    # No leaked content.
+    serialized = str(details)
+    assert "storage_key" not in serialized
+    assert "wrapped_dek" not in serialized
+    assert "BETA" not in serialized  # would be from extracted text
+    assert "alpha" not in serialized
+    assert "epsilon" not in serialized
+
+
+async def test_compare_export_cross_org_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """An artifact id that belongs to another org returns 404, never
+    a leakier response. The route cannot distinguish wrong-org from
+    no-such-artifact."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    # A second org with its own contract + artifacts.
+    other_org = await _create_user_org(db_session)
+    _, _, other_compare = await _two_artifacts(client, db_session, other_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(other_compare.id),
+        },
+    )
+    assert response.status_code == 404
+
+
+async def test_compare_export_unknown_artifact_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, _compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(uuid.uuid4()),
+        },
+    )
+    assert response.status_code == 404
+
+
+async def test_compare_export_unextractable_side_returns_422(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """If one side cannot be converted to comparable text the route
+    returns 422 with a user-friendly message — no DOCX rendered."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+    # Force the compare side to be unextractable.
+    _set_artifact_plaintext(compare, "")  # empty body → CompareTextExtractionError
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 422
+    assert "compare version" in response.json()["detail"].lower()
+
+
+async def test_compare_export_does_not_persist_an_artifact(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """PR #90 is the export *foundation*: a successful export does NOT
+    write a ``ContractArtifact`` row. The existing artifact list must
+    stay the same after export."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    before = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id
+            )
+        )
+    ).scalars().all()
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 200
+
+    after = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id
+            )
+        )
+    ).scalars().all()
+    assert [a.id for a in before] == [a.id for a in after]
+
+
+async def test_compare_export_response_carries_no_storage_internals(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """Defense-in-depth: the rendered DOCX bytes should never contain
+    storage_key, wrapped_dek, s3_key, raw metadata_json keys, or
+    DocuSeal secret keys, even when the underlying artifacts carry
+    them on the row."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/export",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 200
+    body = response.content
+    for needle in (
+        b"storage_key",
+        b"wrapped_dek",
+        b"s3_key",
+        b"presigned",
+        b"docuseal_submission_id",
+    ):
+        assert needle not in body
