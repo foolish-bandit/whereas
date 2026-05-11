@@ -351,6 +351,8 @@ visibility only.
 User-facing copy is deliberate:
 
 - The panel header is **Text comparison**, not "redline."
+- Comparison results render as a side-by-side preview (left version vs right version) and remain explicitly non-official.
+- Official artifact labels in Repository remain **Source file**, **Generated Word document**, and **Signed PDF**.
 - A subtitle reads *Preview comparison only — not an official
   redline*, with a follow-up sentence pointing users at the
   per-version download for a Word-style redline.

@@ -1545,7 +1545,7 @@ describe("ContractWorkspacePage compare versions (PR #71)", () => {
       "document-history-compare-panel",
     );
     expect(panel).toHaveTextContent(/text comparison/i);
-    expect(panel).toHaveTextContent(/not an official redline/i);
+    expect(panel).toHaveTextContent(/not an official word redline/i);
     expect(screen.getByTestId("compare-base-select")).toBeInTheDocument();
     expect(screen.getByTestId("compare-target-select")).toBeInTheDocument();
     const button = screen.getByTestId("compare-versions-button");
