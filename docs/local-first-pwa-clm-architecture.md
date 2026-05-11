@@ -1,8 +1,8 @@
 # Whereas Local-First PWA CLM Architecture Handoff
 
-This document is the catch-up read for any developer (or new Claude Code session) joining Whereas after PRs #32–#47. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next step.
+This document is the catch-up read for any developer (or new Claude Code session) joining Whereas. It explains where the product is going, the architecture decisions we have already locked in, what shipped in each recent PR, the current domain model and end-to-end CLM loop, the live security and privacy rules, the known gaps, and the recommended next steps.
 
-It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed, section 5 for the live domain model, section 6 for the end-to-end CLM loop wired up by PRs #42–#45, section 7 for the Requests + Inbox layer added in PR #47, section 7.x for the request → contract conversion route added in PR #48, section 7.y for the dashboard summary added in PR #49, section 7.z for the approval workflow foundation added in PR #50, the approval workflow templates added in PR #51, **section 14 for the consolidated approval/policy/gate/visibility/timeline/analytics checkpoint as of PR #62** (the place to read first if you only have time for one), and section 11 for the next PR.
+It is intentionally long. Skim section 1 for product framing, section 2 for the load-bearing decisions, section 4 for what landed through PR #47, section 5 for the live domain model, section 6 for the PRs #42–#45 CLM loop, section 7 for the Requests + Inbox layer (PR #47) plus the subsequent intake / dashboard / approvals work, **section 14 for the consolidated approval/policy/gate/visibility/timeline/analytics checkpoint as of PR #62** (the place to read first if you only have time for one), the navigation-consolidation pass for PR #63 and the per-feature sections below it through PR #73 (preview), the *Compare UI, audit export, duplicate merge, test harness* section for **PRs #74–#77**, and the **UI polish pass for PRs #78–#88** at the end of the document.
 
 ---
 
@@ -1655,4 +1655,131 @@ disappear the moment the user changes a selection.
 - No storage internals (`storage_key`, wrapped keys, private URLs) are exposed.
 - Service worker excludes `/api/*` from runtime caching, so authenticated preview responses/blobs are never cached.
 - No OCR, Docling, LLM extraction, presigned URLs, or artifact-priority/approval-state-machine changes are introduced by this preview path.
+
+## Compare UI, audit export, duplicate merge, test harness (PRs #74 – #77)
+
+### PR #74 — Side-by-side version compare UI
+
+Frontend-only follow-up to PR #71. The compare-result viewer in the
+Document History section now renders the two selected artifact
+versions side-by-side with explicit *Left version* / *Right version*
+headers and clearer copy framing the output as a "text comparison
+preview, not an official Word redline." Comparison response semantics
+are unchanged (the existing diff endpoint output is reused).
+
+### PR #75 — Activity timeline CSV / JSON export
+
+- `GET /api/contracts/{id}/activity/export?format=csv|json` and
+  `GET /api/requests/{id}/activity/export?format=csv|json`.
+- Reuses the existing **sanitized** timeline projection added in
+  PR #58 — there is no raw-audit query path. Cross-org IDs return 404.
+- CSV output uses the standard library `csv` module with a fixed,
+  allowlisted column order. JSON output is
+  `{ export_type, generated_at, subject_type, subject_id, events }`.
+- Hard cap at 1 000 events per export. Unsupported `format` → 422.
+- Each export emits its own safe audit event
+  (`contract.activity_exported` / `request.activity_exported`),
+  excluded from the timeline being exported so the export action
+  doesn't appear inside its own output.
+- Frontend `ActivityExport` component renders CSV / JSON buttons in
+  the Repository workspace and per-row in the Request activity panel.
+  Export bytes go straight from `Blob` → anchor click and are never
+  written into the DOM.
+- Tests assert no `storage_key`, `wrapped_dek`, `s3_key`,
+  `metadata_json`, document bytes, raw webhook payloads, DocuSeal
+  secrets, or decision-note text appear in exported output.
+
+### PR #76 — Duplicate-merge workflow foundation
+
+- Migration `backend/alembic/versions/0016_contract_duplicate_merge.py`
+  adds `merged_into_contract_id` + `merged_at` columns to `Contract`
+  with org-scoped FKs.
+- Service / API to mark a duplicate Repository record as merged into a
+  canonical one. Artifacts are **reassigned** to the canonical record,
+  not deleted; no `storage_key` / `wrapped_dek` is mutated.
+- The default Repository list filters merged rows out
+  (`?include_merged=true` to see them). The detail page still resolves
+  for the merged source record and renders a *Merged into …* notice
+  with a link to the canonical record.
+- Safe audit event(s) on merge — no storage internals.
+- Frontend duplicate-merge panel with a confirmation step. Mock/demo
+  parity included so the flow exercises end-to-end against `mockApi`.
+
+### PR #77 — Backend test harness cleanup
+
+- Backend `pip install -e ".[dev]"` failed because `backend/pyproject.toml`
+  referenced a missing `README.md`. That cascaded into `pytest-asyncio`
+  never landing in the venv, which surfaced as misleading
+  `Unknown config option: asyncio_mode` warnings and assorted
+  async-fixture flakes in CI and locally.
+- Fixes:
+  - Added a real `backend/README.md`.
+  - `backend/pyproject.toml`: set `asyncio_default_fixture_loop_scope = "function"`.
+  - Updated a stale preview-audit test assertion left over from
+    PR #73's schema change.
+  - Fixed a clause-template fixture re-export and a sqlite-fallback
+    table list that omitted `ClauseTemplate`.
+  - `docs/local-developer-quickstart.md` got a backend-test section.
+- Full backend suite: 694 passed, 3 skipped, 0 errors. **No
+  runtime / API behavior changed.**
+
+## UI polish pass (PRs #78 – #88)
+
+A focused, frontend-only pass that brought every top-level surface up
+to the same UX bar. Each PR was narrow, merged the same day, and
+deployed to the hosted demo at `https://whereas.pages.dev/`. No
+backend endpoints, approval state machine, gate semantics, artifact
+priority, or DocuSeal behavior changed in this pass.
+
+| PR | Surface | Headline |
+|---:|---|---|
+| #78 | Request detail | Real `/requests/:id` workspace mounted top-level (previously only at `/demo/requests/:id`). Mount-aware row links from the Request list. |
+| #79 | Approvals | Live count cards on the landing page; dedicated `/demo/approvals/tasks` view filtered to `item_type=approval`; workflow rows show status pill, "Step N of M" progress, and source label (manual / from template / from policy). |
+| #80 | Clause Manager | Loading / error / empty states, Active / Archived pill, *Add a clause* panel, copy-to-clipboard, metadata chips, two-step Archive confirm. Mock now soft-archives demo rows via a session override set so the flow demos correctly. |
+| #81 | Repository list | Filter dropdown gains *Out for signature* and *Executed*; sort dropdown (Newest / Oldest / Title A→Z); *Show merged* toggle wired to PR #76's `?include_merged=true`; *Merged* chip on merged rows. `getContracts()` API client extended to accept the flag. |
+| #82 | Dashboard | Conditional *Needs attention* banner for overdue items with a CTA to the right triage surface; grouped clickable count tiles (Request pipeline / Repository / Approvals / Inbox & templates); per-row deep links to the specific Request / Repository pages; loading skeleton. |
+| #83 | Repository workspace | Lifecycle status banner above the Document Lifecycle strip — green *Executed* (with the signed-PDF date once artifacts load) when `status=executed`, info-toned *Out for signature* when `status=sent_for_signature`. Banner is informational; the header's *Download current document* button already prefers `signed_pdf` for executed contracts. |
+| #84 | Inbox queue | Mount-aware row links to the related Request / Repository / Agreement template; item-type / status / priority chips; *Overdue* badge for open items past their due date; server-side `?item_type=` filter; better empty-state copy when filters yield no rows. |
+| #85 | Approval Policies | Rewrote a previously minified one-line JSX page. Proper layout; status pill; criteria chips (Request type / Contract type / Priority / Agreement) with *Any* fallbacks; *Manual attach* chip when `auto_attach=false`; workflow-template name resolved from the templates list; two-step Archive confirm. Existing `?policy_id=` deep link preserved. |
+| #86 | Sidebar | Red overdue-count badge next to *Approvals*, visible on every page. Sourced from the existing dashboard summary (`overdue_approval_steps`); best-effort fetch so the sidebar never blocks on it. `aria-label` uses correct singular / plural. |
+| #87 | Agreement Templates list | Loading skeleton, Active / Archived pill, template-type chip, mount-aware row link to `/requests/templates/:id`, *Updated* date hint per row. `ErrorState` replaces the inline red text. |
+| #88 | URL consistency | All internal `/demo/contracts/:id` link targets renamed to `/demo/repository/:id` across `ContractTable`, the merged-notice link, the post-generate CTA on `AgreementTemplateDetailPage`, duplicate-candidate links in upload feedback / review, and the post-upload CTA on `UploadPage` (also relabelled *Open contract workspace* → *Open in Repository*). Legacy `/contracts/:id` route alias preserved. |
+
+### Cross-cutting hardening applied on every PR in the pass
+
+- **Mount-aware links**: `mountedPath()` (and `demoPath()` for
+  demo-only destinations) used consistently so each top-level
+  standalone route AND the `/demo/*` workspace resolve the right
+  targets without per-component branching.
+- **Forbidden-string DOM guards**: every test poisons
+  `storage_key`, `wrapped_dek`, `s3_key`, raw `metadata_json`,
+  `private_url`, `presigned`, signer PII, and DocuSeal secrets, then
+  asserts none appear in the rendered DOM.
+- **Service worker `/api/*` denylist** verified in the built
+  `dist/sw.js` on every PR.
+- **Mock / demo parity** for every new UI capability so the hosted
+  demo at `https://whereas.pages.dev/` (Cloudflare Pages auto-deploy
+  on merge to `main`) reflects each PR end-to-end.
+- **Standardized state components**: `LoadingSkeleton`, `ErrorState`,
+  and `EmptyState` from `components/` replace per-page ad-hoc copy.
+- **Two-step destructive confirm pattern**: established on Clause
+  Manager (PR #80) and reused on Approval Policies (PR #85). No
+  native `confirm()` dialogs; reveal *Confirm* + *Cancel* inline on
+  click, send the request only on *Confirm*.
+- **Status-pill pattern**: Active / Archived for templates / policies
+  / clauses, plus workflow-run states (active / completed / rejected
+  / cancelled), all using the existing Tailwind tokens with `/10` and
+  `/40` opacity modifiers.
+
+### Test harness note from the pass
+
+The `App.test.tsx` `beforeEach` originally used
+`fetchMock.mockResolvedValue(jsonResponse(...))`, which returns the
+**same** `Response` object on every call. After PR #86 added a second
+consumer of `fetch()` (the sidebar's dashboard-summary call), the
+sidebar and the page both tried to read that single `Response` body
+and only the first read succeeded. The fix was switching to
+`mockImplementation(async () => jsonResponse(...))` so each call gets
+a fresh `Response`. Apply the same pattern to any new top-level test
+that mocks `fetch` globally and renders the full `App`.
 
