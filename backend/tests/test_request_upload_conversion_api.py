@@ -820,6 +820,50 @@ async def test_convert_upload_emits_audit_event(
     assert "wrapped_dek" not in event.details
 
 
+async def test_convert_upload_event_surfaces_on_request_activity_timeline(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The new ``request.converted_by_upload`` event should appear on the
+    request's activity timeline so users see how the request got linked.
+
+    The timeline projection is server-rendered; this asserts on the
+    title shape and the safe-detail fields rather than any raw audit
+    blob. PR #65 doesn't surface the event on the contract timeline yet
+    (the contract event-type bucket only covers DocuSeal send /
+    completion). That's tracked as follow-up.
+    """
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files(),
+    )
+    assert response.status_code == 201, response.text
+
+    timeline = await client.get(
+        f"/api/requests/{request_row['id']}/activity",
+        headers=_headers(user_org.user),
+    )
+    assert timeline.status_code == 200, timeline.text
+    items = timeline.json()["items"]
+    upload_events = [
+        item
+        for item in items
+        if item["event_type"] == "request.converted_by_upload"
+    ]
+    assert len(upload_events) == 1
+    event = upload_events[0]
+    assert "counterparty.pdf" in event["title"]
+    assert event["request_id"] == request_row["id"]
+    assert event["contract_id"] == response.json()["contract"]["id"]
+    # Storage internals never reach the timeline projection.
+    body_text = timeline.text
+    assert "storage_key" not in body_text
+    assert "wrapped_dek" not in body_text
+
+
 async def test_uploaded_contract_is_downloadable_via_contracts_endpoint(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
