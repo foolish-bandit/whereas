@@ -148,7 +148,13 @@ Top-level navigation:
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
 - **Clause Manager** — approved clauses, fallback language, and reusable
-  drafting guidance. Legacy `/demo/clause-library` still resolves.
+  drafting guidance. PR #80 polished this surface: loading / error /
+  empty states, an Active / Archived status pill, an "Add a clause"
+  panel, server-side `clause_type` filter, client-side search across
+  name / type / jurisdiction / tags / text, expandable clause text,
+  copy-to-clipboard, metadata chips, and a two-step Archive confirm.
+  Backend semantics are unchanged — Archive is still soft-delete via
+  the existing endpoint. Legacy `/demo/clause-library` still resolves.
 - **Approvals** — landing page with cards for *Approval tasks*, *Approval
   workflows*, *Approval templates*, and *Approval policies*. PR #79
   polished this surface: the landing cards show live counts pulled
