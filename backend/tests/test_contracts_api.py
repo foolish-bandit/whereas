@@ -1756,3 +1756,262 @@ async def test_artifact_download_response_does_not_expose_storage_internals(
     )
     assert "storage_key" not in header_text
     assert "wrapped_dek" not in header_text
+
+
+
+async def test_artifact_preview_pdf_inline_success(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-owner@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="signed.pdf"),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id,
+                ContractArtifact.artifact_type == "original_upload",
+            )
+        )
+    ).scalar_one()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{artifact_row.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert "signed.pdf" in response.headers["content-disposition"]
+    assert response.content == _PDF_BYTES
+    assert response.text != ""
+    assert "storage_key" not in response.text
+    assert "wrapped_dek" not in response.text
+    assert "s3_key" not in response.text
+    assert "presigned" not in response.text.lower()
+    assert "metadata_json" not in response.text
+    event = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.CONTRACT_ARTIFACT_PREVIEWED.value
+            )
+        )
+    ).scalar_one()
+    assert event.details == {
+        "contract_id": str(contract_id),
+        "artifact_id": str(artifact_row.id),
+        "artifact_type": "original_upload",
+        "filename": "signed.pdf",
+        "preview_mime_type": "application/pdf",
+    }
+
+
+async def test_artifact_preview_docx_unavailable(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-docx@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+
+    generated = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="generated_docx",
+        storage_key=f"documents/{contract_id}.docx.enc",
+        filename="draft.docx",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        source="template_generation",
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{generated.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "PDF preview is not available for this file type yet."
+    details_text = str(response.json())
+    for secret_key in ("storage_key", "wrapped_dek", "s3_key", "metadata_json", "presigned"):
+        assert secret_key not in details_text
+    preview_events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.CONTRACT_ARTIFACT_PREVIEWED.value
+            )
+        )
+    ).scalars().all()
+    assert preview_events == []
+
+
+async def test_artifact_preview_unsupported_type_returns_415(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-unsupported@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    attachment = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="attachment",
+        storage_key=f"documents/{contract_id}.txt.enc",
+        filename="notes.txt",
+        mime_type="text/plain",
+        source=None,
+    )
+    await db_session.commit()
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{attachment.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported file type for preview."
+
+
+async def test_artifact_preview_missing_artifact_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-missing-art@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = upload.json()["id"]
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{uuid.uuid4()}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_artifact_preview_wrong_contract_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-wrong-contract@example.com")
+    first = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="first.pdf"),
+    )
+    second = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(name="second.pdf", content=b"%PDF-1.7\nSECOND"),
+    )
+    second_id = uuid.UUID(second.json()["id"])
+    second_artifact = (
+        await db_session.execute(
+            select(ContractArtifact).where(ContractArtifact.contract_id == second_id)
+        )
+    ).scalar_one()
+    response = await client.get(
+        f"/api/contracts/{first.json()['id']}/artifacts/{second_artifact.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_artifact_preview_cross_org_contract_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user_org(db_session, email="preview-owner-a@example.com")
+    other = await _create_user_org(db_session, email="preview-owner-b@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(owner.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    artifact_row = (
+        await db_session.execute(
+            select(ContractArtifact).where(ContractArtifact.contract_id == contract_id)
+        )
+    ).scalar_one()
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{artifact_row.id}/preview",
+        headers=_headers(other.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_artifact_preview_cross_org_artifact_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    org_a = await _create_user_org(db_session, email="preview-art-org-a@example.com")
+    org_b = await _create_user_org(db_session, email="preview-art-org-b@example.com")
+    upload_a = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(org_a.user),
+        files=_file_tuple(name="a.pdf"),
+    )
+    upload_b = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(org_b.user),
+        files=_file_tuple(name="b.pdf"),
+    )
+    contract_a_id = upload_a.json()["id"]
+    contract_b_id = uuid.UUID(upload_b.json()["id"])
+    artifact_b = (
+        await db_session.execute(
+            select(ContractArtifact).where(ContractArtifact.contract_id == contract_b_id)
+        )
+    ).scalar_one()
+    response = await client.get(
+        f"/api/contracts/{contract_a_id}/artifacts/{artifact_b.id}/preview",
+        headers=_headers(org_a.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_artifact_preview_missing_storage_metadata_returns_safe_409(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="preview-missing-storage@example.com")
+    upload = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(),
+    )
+    contract_id = uuid.UUID(upload.json()["id"])
+    broken = _add_artifact(
+        db_session,
+        user_org=user_org,
+        contract_id=contract_id,
+        artifact_type="signed_pdf",
+        storage_key="",
+        filename="broken.pdf",
+        mime_type="application/pdf",
+    )
+    await db_session.commit()
+    response = await client.get(
+        f"/api/contracts/{contract_id}/artifacts/{broken.id}/preview",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert isinstance(detail, str)
+    for secret_key in ("storage_key", "wrapped_dek", "s3_key", "metadata_json", "presigned"):
+        assert secret_key not in detail

@@ -19,6 +19,7 @@ import {
   compareContractArtifacts,
   downloadContract,
   downloadContractArtifact,
+  previewContractArtifact,
   getContract,
   getContractArtifacts,
   getContractApprovalGate,
@@ -1013,10 +1014,45 @@ function DocumentHistoryRow({
   downloadState: ArtifactDownloadStateMap[string];
   onDownload: (artifact: ContractArtifact) => void;
 }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const canPreview = canPreviewArtifact(item.artifact);
   const { artifact } = item;
   const isDownloading = downloadState?.kind === "downloading";
   const errorMessage =
     downloadState?.kind === "error" ? downloadState.message : null;
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  function clearPreview(): void {
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
+  async function handlePreview(): Promise<void> {
+    setPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      const result = await previewContractArtifact(artifact.contract_id, artifact.id);
+      const nextUrl = URL.createObjectURL(result.blob);
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return nextUrl;
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Preview unavailable for this file type";
+      setPreviewError(msg);
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }
+
   return (
     <li
       className="grid gap-1 py-2.5 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_auto] sm:items-baseline"
@@ -1080,6 +1116,21 @@ function DocumentHistoryRow({
       </div>
       <div className="flex flex-col items-start gap-1 text-ink-subtle sm:items-end sm:text-right">
         {item.originCopy && <span>{item.originCopy}</span>}
+
+        {canPreview ? (
+          <button
+            type="button"
+            onClick={handlePreview}
+            disabled={isPreviewLoading}
+            className="inline-flex items-center justify-center rounded border border-rule px-2 py-1 text-[11px] font-medium text-ink hover:bg-canvas-subtle disabled:cursor-not-allowed disabled:opacity-60"
+            data-testid="document-history-row-preview"
+          >
+            {isPreviewLoading ? "Loading…" : "Preview"}
+          </button>
+        ) : (
+          <span className="text-[11px] text-ink-subtle">Preview unavailable for this file type</span>
+        )}
+
         <button
           type="button"
           onClick={() => onDownload(artifact)}
@@ -1099,6 +1150,20 @@ function DocumentHistoryRow({
           </p>
         )}
       </div>
+      {previewUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="pdf-preview-modal">
+          <div className="h-[85vh] w-[90vw] rounded bg-canvas p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-medium text-ink">PDF preview</h3>
+              <button type="button" onClick={clearPreview}>Close</button>
+            </div>
+            <iframe title="PDF preview" src={previewUrl} className="h-[calc(85vh-3rem)] w-full" />
+            <p className="mt-1 text-xs text-ink-subtle">Download the file to view it locally</p>
+          </div>
+        </div>
+      )}
+      {previewError && <p className="max-w-xs text-[11px] text-danger">{previewError}</p>}
+
     </li>
   );
 }
@@ -1111,6 +1176,10 @@ function DocumentHistoryRow({
  * redline — because text extraction is best-effort and we don't
  * generate a tracked-changes DOCX yet.
  */
+function canPreviewArtifact(artifact: ContractArtifact): boolean {
+  return (artifact.mime_type ?? "") === "application/pdf";
+}
+
 function CompareVersionsPanel({
   artifacts,
   selection,

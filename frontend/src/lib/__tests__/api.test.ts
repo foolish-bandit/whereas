@@ -15,6 +15,7 @@ import {
   createDevSetup,
   downloadContract,
   downloadContractArtifact,
+  previewContractArtifact,
   getContract,
   getContractArtifacts,
   getContracts,
@@ -231,6 +232,27 @@ describe("api client", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+
+    it("calls the per-artifact preview endpoint with both ids encoded", async () => {
+      setDevUserId(VALID_UUID);
+      const blob = new Blob(["%PDF"], { type: "application/pdf" });
+      fetchMock.mockResolvedValue(
+        new Response(blob, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'inline; filename="preview.pdf"',
+          },
+        }),
+      );
+      const res = await previewContractArtifact("c-1", "art-7");
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain("/api/contracts/c-1/artifacts/art-7/preview");
+      const headers = (init as RequestInit).headers as Headers;
+      expect(headers.get("X-Whereas-Dev-User")).toBe(VALID_UUID);
+      expect(res.mimeType).toBe("application/pdf");
+    });
 
   describe("compareContractArtifacts (PR #71)", () => {
     const RESPONSE = {
@@ -549,3 +571,4 @@ describe("api client", () => {
     });
   });
 });
+  

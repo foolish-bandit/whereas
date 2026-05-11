@@ -701,6 +701,25 @@ export async function downloadContractArtifact(
   };
 }
 
+
+export async function previewContractArtifact(
+  contractId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  if (!detail) throw new ApiError(404, "Contract not found.");
+  const artifacts = await getContractArtifacts(contractId, options);
+  const artifact = artifacts.find((a) => a.id === artifactId);
+  if (!artifact) throw new ApiError(404, "Artifact not found.");
+  if (artifact.mime_type !== "application/pdf") {
+    throw new ApiError(422, "PDF preview is not available for this file type yet.");
+  }
+  const body = `%PDF-1.1\n% demo preview for ${artifact.filename ?? "artifact"}\n`;
+  return { blob: new Blob([body], { type: "application/pdf" }), filename: artifact.filename ?? "preview.pdf", mimeType: "application/pdf" };
+}
+
 /**
  * PR #71 — demo-mode artifact compare. The real backend extracts
  * comparable text via MarkItDown and diffs the result; demo mode

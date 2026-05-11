@@ -1206,6 +1206,70 @@ async def download_contract_artifact(
     )
 
 
+
+@router.get("/{contract_id}/artifacts/{artifact_id}/preview")
+async def preview_contract_artifact(
+    contract_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Inline PDF preview for a specific Repository document version."""
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=artifact_id,
+        organization_id=user.organization_id,
+    )
+
+    mime_type = artifact.mime_type or contract.mime_type
+    if mime_type == _DOCX_MIME:
+        raise HTTPException(
+            status_code=422,
+            detail="PDF preview is not available for this file type yet.",
+        )
+    if mime_type != _PDF_MIME:
+        raise HTTPException(status_code=415, detail="Unsupported file type for preview.")
+
+    plaintext, _ = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=artifact,
+        allow_legacy_fallback=False,
+    )
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_ARTIFACT_PREVIEWED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "artifact_id": str(artifact.id),
+            "artifact_type": artifact.artifact_type,
+            "filename": artifact.filename,
+            "preview_mime_type": _PDF_MIME,
+        },
+    )
+
+    return Response(
+        content=plaintext,
+        media_type=_PDF_MIME,
+        headers={
+            "Content-Disposition": f'inline; filename="{_download_filename(contract, artifact=artifact)}"',
+        },
+    )
+
+
 @router.post(
     "/{contract_id}/artifacts/compare",
     response_model=ArtifactCompareResponse,
