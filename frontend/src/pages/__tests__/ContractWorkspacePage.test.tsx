@@ -1148,14 +1148,14 @@ describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Preview only for PDF artifacts and unavailable copy for non-PDF", async () => {
+  it("shows Preview for PDF and DOCX artifacts and unavailable copy for unsupported types", async () => {
     setupFetch(fetchMock, {
-      artifacts: [SIGNED_ARTIFACT, { ...SOURCE_ARTIFACT, mime_type: "text/plain" }],
+      artifacts: [SIGNED_ARTIFACT, { ...SOURCE_ARTIFACT, mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", artifact_type: "generated_docx" }, { ...SOURCE_ARTIFACT, id: "unsupported-1", mime_type: "text/plain" }],
     });
     renderPage();
     const section = await screen.findByTestId("contract-files-section");
     const previewButtons = await screen.findAllByTestId("document-history-row-preview");
-    expect(previewButtons).toHaveLength(1);
+    expect(previewButtons).toHaveLength(2);
     expect(section).toHaveTextContent("Preview unavailable for this file type");
   });
 

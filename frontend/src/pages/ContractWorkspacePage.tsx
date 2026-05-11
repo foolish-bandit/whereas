@@ -1177,7 +1177,8 @@ function DocumentHistoryRow({
  * generate a tracked-changes DOCX yet.
  */
 function canPreviewArtifact(artifact: ContractArtifact): boolean {
-  return (artifact.mime_type ?? "") === "application/pdf";
+  const mime = artifact.mime_type ?? "";
+  return mime === "application/pdf" || mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 }
 
 function CompareVersionsPanel({
