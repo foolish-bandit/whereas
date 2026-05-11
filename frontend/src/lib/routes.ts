@@ -13,3 +13,10 @@ export function demoPath(path: string): string {
   const trimmed = path.startsWith("/") ? path : `/${path}`;
   return `${DEMO_BASE}${trimmed}`;
 }
+
+export function mountedPath(path: string, pathname: string): string {
+  const trimmed = path.startsWith("/") ? path : `/${path}`;
+  return pathname === DEMO_BASE || pathname.startsWith(`${DEMO_BASE}/`)
+    ? demoPath(trimmed)
+    : trimmed;
+}

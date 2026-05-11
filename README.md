@@ -130,17 +130,21 @@ Top-level navigation:
   surfaces cards for *New request*, *Start from template*, *Upload
   third-party agreement*, *Agreement templates* (template management
   lives here, reachable at `/demo/requests/templates` and the legacy
-  `/demo/agreement-templates`), and the *Request queue*. A request can
-  become a Repository contract via two intake paths:
+  `/demo/agreement-templates`), and the *Request queue*. Each Request
+  also has a detail workspace at `/demo/requests/:id` with intake
+  metadata, approval status, matching Approval Policies, active
+  Approval Workflows, conversion actions, linked Repository context,
+  activity timeline, and activity export controls. A request can
+  become a Repository record via two intake paths:
   - generating a draft from an `AgreementTemplate` and rendered variable
     values (PR #48), or
   - uploading a third-party agreement file (PDF/DOCX) — counterparty
     paper, signed exhibit, or external draft — which is stored as the
-    new contract's official `original_upload` artifact (PR #65).
+    new Repository record's Source file (PR #65).
   Both paths leave the request `linked_contract_id` set and the open
   `request_review` inbox item resolved in the same transaction. The
-  approval gate / policy matching / DocuSeal send semantics apply
-  unchanged.
+  Request detail workspace does not change approval gate, approval
+  policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
 - **Clause Manager** — approved clauses, fallback language, and reusable
@@ -527,7 +531,7 @@ A request that carries a `linked_template_id` can be **converted to a draft Cont
 
 **Duplicate merge (PR #76)** turns the warning-only duplicate-detection surface from PR #66 into an intentional resolution workflow. `GET /api/contracts/{contract_id}/duplicate-candidates` lists possible duplicates for an existing Repository record using the same allowlisted projection as the upload-time list — exact-hash and normalized-title matches, no storage internals. `POST /api/contracts/{target_contract_id}/merge-duplicate` accepts `{source_contract_id, merge_note?}` and merges the source into the target. The source row is **not** deleted: its `ContractArtifact` rows are reassigned to the target (the only mutation is the `contract_id` FK — `storage_key`, `wrapped_dek`, `metadata_json`, hashes, and timestamps are preserved verbatim), and the source is flagged with new nullable columns `merged_into_contract_id` / `merged_at` / `merged_by_user_id` (migration `0016_contract_duplicate_merge`). The default Repository list filters merged rows out; `?include_merged=true` brings them back. A merged source's detail still resolves (no 404) and carries the merged-into pointer so the UI renders a safe "merged into …" notice with a deep link to the canonical record. Errors are explicit: 400 for `source == target`, 404 for cross-org / missing rows, 409 for already-merged source or target. Two paired audit events fire — `contract.duplicate_merged` (against the target) and `contract.merged_into` (against the source) — each carrying only `{target_contract_id, source_contract_id, artifacts_moved, merge_note_present, workflow_runs_attached_to_source, requests_attached_to_source}`; the note text is never persisted, never echoed back, never written to the audit log. This PR deliberately does **not** rewire workflow / request links, does **not** call DocuSeal, does **not** change contract status, and does **not** touch download/preview priority — the response surfaces counts so the UI can warn that those links stayed on the merged record. The Repository workspace shows a "Possible duplicates" section with a confirmation modal that spells out what does (artifacts move into Document History; source is marked merged and hidden) and does not (no files deleted; no DocuSeal calls; workflows stay put) happen. Demo mode mirrors the same posture in memory. Richer conflict resolution (workflow / request migration, undo merge, side-by-side diff assist) is future work.
 
-Richer policy builders, policy reconciliation/removal when requests stop matching, RBAC for policy management and overrides, full request / workflow / policy detail routes (the deep-link query strings shipped in PR #61 land on the existing list pages — true detail pages remain future work), a remediation checklist UI, request approval timeline / analytics, SLA / calendar reminders, and PowerSync sync rules are tracked as follow-ups.
+Richer policy builders, policy reconciliation/removal when requests stop matching, RBAC for policy management and overrides, workflow / policy detail routes (the deep-link query strings shipped in PR #61 still land on the existing approval list pages), a remediation checklist UI, request approval analytics, SLA / calendar reminders, and PowerSync sync rules are tracked as follow-ups.
 
 A **dashboard summary** at `GET /api/dashboard/summary` (and the corresponding Dashboard page) gives a read-only view of CLM activity in the workspace: open / in-progress request counts, urgent + high-priority counts, open and overdue inbox counts, contract totals broken down by sent-for-signature and executed, active template count, active approval workflows + pending / overdue approval steps, active approval workflow template count, plus small lists of requests / inbox items due in the next 14 days and the most recent contracts, requests, and signed contracts. It is a lightweight aggregate of existing state, **not** a reporting / BI engine — there are no charts, cycle-time metrics, or workload-by-assignee breakdowns yet.
 

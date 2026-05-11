@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import {
   ApiError,
   MissingDevUserError,
   getRequestApprovalStatus,
 } from "../lib/api";
-import { demoPath } from "../lib/routes";
+import { mountedPath } from "../lib/routes";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
 
 interface Props {
@@ -32,6 +32,7 @@ type LoadState =
  */
 export default function RequestApprovalStatusSection({ requestId }: Props) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const location = useLocation();
 
   useEffect(() => {
     let aborted = false;
@@ -90,7 +91,7 @@ export default function RequestApprovalStatusSection({ requestId }: Props) {
 
       {status.matching_policies.length > 0 && (
         <div data-testid="request-approval-policies">
-          <p className="text-ink-subtle">Matching policies</p>
+          <p className="text-ink-subtle">Approval Policies</p>
           <ul className="ml-4 list-disc">
             {status.matching_policies.map((p) => (
               <li
@@ -98,7 +99,19 @@ export default function RequestApprovalStatusSection({ requestId }: Props) {
                 data-testid="request-approval-policy"
                 className="text-ink-muted"
               >
-                {p.name}
+                <Link
+                  to={mountedPath(
+                    `/approvals/policies?policy_id=${encodeURIComponent(p.id)}`,
+                    location.pathname,
+                  )}
+                  className="underline-offset-2 hover:underline"
+                >
+                  {p.name}
+                </Link>
+                {" · "}
+                <span data-testid="request-approval-policy-workflow-state">
+                  {policyWorkflowState(p.id, status)}
+                </span>
                 {p.applies_to_generated_contracts ? " · required" : ""}
                 {!p.auto_attach ? " · manual" : ""}
               </li>
@@ -109,7 +122,7 @@ export default function RequestApprovalStatusSection({ requestId }: Props) {
 
       {status.workflow_runs.length > 0 ? (
         <div data-testid="request-approval-workflows">
-          <p className="text-ink-subtle">Workflows</p>
+          <p className="text-ink-subtle">Approval Workflows</p>
           <ul className="space-y-1">
             {status.workflow_runs.map((run) => {
               const currentStep =
@@ -125,7 +138,15 @@ export default function RequestApprovalStatusSection({ requestId }: Props) {
                   data-testid="request-approval-workflow"
                 >
                   <p className="text-ink">
-                    {run.name}
+                    <Link
+                      to={mountedPath(
+                        `/approvals/workflows?workflow_id=${encodeURIComponent(run.id)}`,
+                        location.pathname,
+                      )}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      {run.name}
+                    </Link>
                     {run.source_approval_policy_name ? (
                       <span className="text-ink-subtle">
                         {" "}· from policy {run.source_approval_policy_name}
@@ -174,16 +195,37 @@ export default function RequestApprovalStatusSection({ requestId }: Props) {
       {status.linked_contract_id ? (
         <p>
           <Link
-            to={demoPath(`/contracts/${status.linked_contract_id}`)}
+            to={mountedPath(
+              `/repository/${encodeURIComponent(status.linked_contract_id)}`,
+              location.pathname,
+            )}
             className="text-ink-muted underline-offset-2 hover:underline"
             data-testid="request-approval-contract-link"
           >
-            Open linked contract workspace
+            Open linked Repository record
           </Link>
         </p>
       ) : null}
     </div>
   );
+}
+
+function policyWorkflowState(
+  policyId: string,
+  status: RequestApprovalStatus,
+): string {
+  const runs = status.workflow_runs.filter(
+    (run) => run.source_approval_policy_id === policyId,
+  );
+  if (runs.some((run) => run.status === "active")) return "workflow active";
+  if (runs.some((run) => run.status === "completed")) {
+    return "workflow completed";
+  }
+  if (runs.some((run) => run.status === "rejected")) return "workflow rejected";
+  if (runs.some((run) => run.status === "cancelled")) {
+    return "workflow cancelled";
+  }
+  return "workflow not attached";
 }
 
 function ApprovalBadge({ status }: { status: RequestApprovalStatus }) {
