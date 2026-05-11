@@ -1719,3 +1719,165 @@ describe("ContractWorkspacePage compare versions (PR #71)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR #83 — lifecycle status banner above the document lifecycle strip
+// ---------------------------------------------------------------------------
+
+describe("ContractWorkspacePage lifecycle status banner (PR #83)", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  it("renders a green Executed banner with the signed-PDF date when status is executed", async () => {
+    const signed = {
+      ...ARTIFACT,
+      id: "55555555-5555-4555-8555-555555555555",
+      artifact_type: "signed_pdf",
+      filename: "signed.pdf",
+      created_at: "2026-05-11T00:00:00Z",
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([ARTIFACT, signed]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse({ ...CONTRACT_DETAIL, status: "executed" });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    const banner = await screen.findByTestId("workspace-status-banner-executed");
+    expect(banner).toHaveTextContent(/executed/i);
+    // The banner surfaces the formatted signed-PDF date — exact text
+    // depends on locale, but the year is stable.
+    expect(banner).toHaveTextContent(/2026/);
+    expect(
+      screen.queryByTestId("workspace-status-banner-sent"),
+    ).toBeNull();
+  });
+
+  it("renders an Out for signature info banner when status is sent_for_signature", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse({
+          ...CONTRACT_DETAIL,
+          status: "sent_for_signature",
+        });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    const banner = await screen.findByTestId("workspace-status-banner-sent");
+    expect(banner).toHaveTextContent(/out for signature/i);
+    expect(banner).toHaveTextContent(/waiting/i);
+    expect(
+      screen.queryByTestId("workspace-status-banner-executed"),
+    ).toBeNull();
+  });
+
+  it("renders no status banner for status 'ready' (clean by default)", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    await screen.findByTestId("document-lifecycle-strip");
+    expect(
+      screen.queryByTestId("workspace-status-banner-executed"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("workspace-status-banner-sent"),
+    ).toBeNull();
+  });
+
+  it("renders an Executed banner even when the artifacts list is still loading", async () => {
+    // The banner should not block on the artifacts request — clients
+    // see status=executed on the contract response and that alone is
+    // enough to surface the success state. The signed-PDF date is a
+    // nice-to-have.
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        // Hang forever; the banner should still render from the
+        // contract response.
+        return new Promise<Response>(() => {});
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse({ ...CONTRACT_DETAIL, status: "executed" });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    expect(
+      await screen.findByTestId("workspace-status-banner-executed"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not leak storage_key / wrapped_dek / signer PII through the banner path", async () => {
+    const signed = {
+      ...ARTIFACT,
+      id: "77777777-7777-4777-8777-777777777777",
+      artifact_type: "signed_pdf",
+      filename: "signed.pdf",
+      created_at: "2026-05-11T00:00:00Z",
+      // Poison values: the API client scrubs them, but assert
+      // defense-in-depth against the rendered DOM.
+      metadata_json: {
+        storage_key: "should-not-appear",
+        wrapped_dek: "should-not-appear",
+        signer_email: "signer@example.com",
+        docuseal_secret: "shhh",
+      } as Record<string, unknown>,
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([ARTIFACT, signed]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse({ ...CONTRACT_DETAIL, status: "executed" });
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    await screen.findByTestId("workspace-status-banner-executed");
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("storage_key");
+    expect(text).not.toContain("wrapped_dek");
+    expect(text).not.toContain("signer@example.com");
+    expect(text).not.toContain("docuseal_secret");
+    expect(text).not.toContain("shhh");
+  });
+});

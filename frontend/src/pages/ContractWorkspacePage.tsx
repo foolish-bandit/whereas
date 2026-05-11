@@ -471,6 +471,11 @@ export default function ContractWorkspacePage() {
         onDownload={onDownload}
       />
 
+      <LifecycleStatusBanner
+        contract={state.contract}
+        state={artifactsState}
+      />
+
       <DocumentLifecycleStrip
         contract={state.contract}
         state={artifactsState}
@@ -749,6 +754,66 @@ function RepositoryHeader({
 interface LifecycleStripProps {
   contract: ContractDetail;
   state: ArtifactsState;
+}
+
+/**
+ * Top-of-workspace status banner that makes the contract's
+ * lifecycle phase obvious at a glance (PR #83).
+ *
+ * - status "executed": green success banner with the signed-PDF date
+ *   when the artifact is loaded. The header's Download current
+ *   document button already prefers signed_pdf in this state, so the
+ *   banner is informational rather than a duplicate CTA.
+ * - status "sent_for_signature": info banner explaining what to wait
+ *   for. No signer PII / submission id is surfaced here.
+ * - any other status (or while artifacts are still loading): no
+ *   banner — the lifecycle strip and status badge in the header are
+ *   enough.
+ */
+function LifecycleStatusBanner({
+  contract,
+  state,
+}: LifecycleStripProps) {
+  if (contract.status === "executed") {
+    let signedDateLabel: string | null = null;
+    if (state.kind === "loaded") {
+      const signed = state.artifacts.find(
+        (a) => a.artifact_type === "signed_pdf",
+      );
+      if (signed?.created_at) {
+        signedDateLabel = formatDate(signed.created_at);
+      }
+    }
+    return (
+      <div
+        className="mt-3 rounded border border-success-ring bg-success-soft p-3 text-sm"
+        data-testid="workspace-status-banner-executed"
+      >
+        <p className="font-medium text-success">Executed</p>
+        <p className="mt-1 text-ink-muted">
+          The signed PDF is the current official document and is what
+          the Download action returns.
+          {signedDateLabel ? ` Signed PDF added ${signedDateLabel}.` : ""}
+        </p>
+      </div>
+    );
+  }
+  if (contract.status === "sent_for_signature") {
+    return (
+      <div
+        className="mt-3 rounded border border-info-ring bg-info-soft p-3 text-sm"
+        data-testid="workspace-status-banner-sent"
+      >
+        <p className="font-medium text-info">Out for signature</p>
+        <p className="mt-1 text-ink-muted">
+          Waiting on the counterparty to sign. The signed PDF will
+          appear in the Document Lifecycle and Document History once
+          DocuSeal confirms completion.
+        </p>
+      </div>
+    );
+  }
+  return null;
 }
 
 interface LifecycleSlotDescriptor {
