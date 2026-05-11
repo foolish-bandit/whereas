@@ -147,6 +147,14 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Agreement Templates** — `/demo/requests/templates`. PR #87 polished
+  the list page: real LoadingSkeleton (replacing the plain "Loading
+  templates…" text), Active / Archived status pill, template-type
+  chip, mount-aware row links (so `/demo/requests/templates/:id`
+  and standalone `/requests/templates/:id` both resolve correctly),
+  formatted "Updated" date hint, and friendlier empty-state copy
+  for the include-archived case. ErrorState replaces the inline
+  red text. No backend changes.
 - **Sidebar** — top-level navigation. PR #86 added a small overdue
   badge next to the *Approvals* entry sourced from the existing
   dashboard summary (`overdue_approval_steps`). The badge is

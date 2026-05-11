@@ -154,7 +154,12 @@ describe("AgreementTemplatesPage", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("Mutual NDA")).toBeInTheDocument();
-    expect(screen.getByText("MSA")).toBeInTheDocument();
+    // PR #87: "MSA" appears both as the row title and the type chip,
+    // so we disambiguate via the row-link testId.
+    const links = screen.getAllByTestId("agreement-templates-row-link");
+    expect(links.map((l) => l.textContent)).toEqual(
+      expect.arrayContaining(["Mutual NDA", "MSA"]),
+    );
   });
 
   it("shows an empty state when no templates exist", async () => {

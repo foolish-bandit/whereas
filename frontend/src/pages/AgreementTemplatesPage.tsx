@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
+import ErrorState from "../components/ErrorState";
+import LoadingSkeleton from "../components/LoadingSkeleton";
 import {
   ApiError,
   MissingDevUserError,
   createAgreementTemplate,
   listAgreementTemplates,
 } from "../lib/api";
-import { demoPath } from "../lib/routes";
+import { formatDate } from "../lib/format";
+import { demoPath, mountedPath } from "../lib/routes";
 import type { AgreementTemplate } from "../types/agreementTemplates";
 
 type LoadState =
@@ -24,6 +27,7 @@ export default function AgreementTemplatesPage() {
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const location = useLocation();
 
   useEffect(() => {
     let aborted = false;
@@ -88,7 +92,7 @@ export default function AgreementTemplatesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-ink">Agreement Templates</h1>
-          <p className="mt-1 text-sm text-ink-muted">
+          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
             Reusable agreement templates used to start and generate requests.
             Uploaded template originals are the official source file; a text
             preview is the lightweight working copy.
@@ -99,6 +103,7 @@ export default function AgreementTemplatesPage() {
             type="checkbox"
             checked={includeArchived}
             onChange={(e) => setIncludeArchived(e.target.checked)}
+            data-testid="agreement-templates-include-archived"
           />
           Show archived
         </label>
@@ -122,7 +127,7 @@ export default function AgreementTemplatesPage() {
           onChange={(e) => setTemplateType(e.target.value)}
         />
         <textarea
-          className="rounded border border-rule px-2 py-1 text-sm"
+          className="min-h-[3rem] rounded border border-rule px-2 py-1 text-sm"
           placeholder="Description (optional)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -140,16 +145,23 @@ export default function AgreementTemplatesPage() {
         </div>
       </section>
 
-      {state.kind === "loading" && (
-        <p className="text-sm text-ink-muted">Loading templates…</p>
-      )}
+      {state.kind === "loading" && <LoadingSkeleton rows={3} />}
       {state.kind === "error" && (
-        <p className="text-sm text-danger">{state.message}</p>
+        <ErrorState
+          title="Could not load templates"
+          description={state.message}
+        />
       )}
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
-          title="No templates yet"
-          description="Create a template above, then upload its DOCX or PDF original. The text preview will appear once conversion succeeds."
+          title={
+            includeArchived ? "No templates to show" : "No templates yet"
+          }
+          description={
+            includeArchived
+              ? "Create one above. Templates power the start-from-template and generate-agreement flows under Requests."
+              : "Create a template above, then upload its DOCX or PDF original. The text preview will appear once conversion succeeds."
+          }
         />
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (
@@ -160,26 +172,58 @@ export default function AgreementTemplatesPage() {
               className="rounded border border-rule p-3 text-sm"
               data-testid="agreement-templates-row"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <Link
-                    to={`/demo/agreement-templates/${row.id}`}
-                    className="font-medium text-ink underline"
-                  >
-                    {row.name}
-                  </Link>
-                  <p className="text-xs text-ink-subtle">
-                    {row.template_type ?? "Untyped"} · {row.status}
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <Link
+                      to={mountedPath(
+                        `/requests/templates/${row.id}`,
+                        location.pathname,
+                      )}
+                      className="font-medium text-ink underline hover:text-ink-muted"
+                      data-testid="agreement-templates-row-link"
+                    >
+                      {row.name}
+                    </Link>
+                    <TemplateStatusPill status={row.status} />
+                    {row.template_type && (
+                      <span
+                        className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                        data-testid="agreement-templates-row-type"
+                      >
+                        {row.template_type}
+                      </span>
+                    )}
+                  </div>
+                  {row.description && (
+                    <p className="mt-1 text-sm text-ink-muted">
+                      {row.description}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] text-ink-subtle">
+                    Updated {formatDate(row.updated_at)}
                   </p>
                 </div>
               </div>
-              {row.description && (
-                <p className="mt-2 text-sm text-ink-muted">{row.description}</p>
-              )}
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+function TemplateStatusPill({ status }: { status: string }) {
+  const cls =
+    status === "active"
+      ? "bg-success/10 text-success border-success/40"
+      : "bg-canvas-muted text-ink-muted border-rule";
+  return (
+    <span
+      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
+      data-testid="agreement-templates-status-pill"
+    >
+      {status === "active" ? "Active" : status === "archived" ? "Archived" : status}
+    </span>
   );
 }
