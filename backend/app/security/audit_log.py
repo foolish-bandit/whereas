@@ -121,6 +121,13 @@ class AuditEventType(StrEnum):
     # bytes) are intentionally NOT recorded.
     REQUEST_CONVERTED_BY_UPLOAD = "request.converted_by_upload"
 
+    # PR #67 — user-confirmed metadata correction after upload.
+    # Payload identifies the contract and the list of changed
+    # fields, NEVER the old/new values. We deliberately don't write
+    # counterparty/title/etc. into the audit log because those values
+    # are PII and live in the encrypted Contract / artifact rows.
+    CONTRACT_METADATA_UPDATED = "contract.metadata.updated"
+
     LLM_REMOTE_PROVIDER_ENABLED = "llm.remote_provider.enabled"
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"

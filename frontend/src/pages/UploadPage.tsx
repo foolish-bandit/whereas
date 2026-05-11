@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import ErrorState from "../components/ErrorState";
 import UploadDropzone from "../components/UploadDropzone";
-import UploadIntakeFeedback from "../components/UploadIntakeFeedback";
+import UploadReviewPanel from "../components/UploadReviewPanel";
 import {
   ApiError,
   MissingDevUserError,
@@ -107,10 +107,12 @@ export default function UploadPage() {
           </div>
         )}
 
-        <UploadIntakeFeedback
-          extracted={state.result.extracted_metadata}
-          duplicates={state.result.duplicate_candidates}
-          dataTestId="upload-page-intake-feedback"
+        <UploadReviewPanel
+          contract={{ id: state.result.id, title: state.result.title }}
+          extractedMetadata={state.result.extracted_metadata}
+          duplicateCandidates={state.result.duplicate_candidates}
+          context="repository_upload"
+          dataTestId="upload-page-review-panel"
         />
       </div>
     );

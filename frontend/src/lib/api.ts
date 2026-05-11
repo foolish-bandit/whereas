@@ -2,6 +2,10 @@ import { getDevUserId } from "./devUser";
 import { isDemoMode } from "./env";
 import * as mockApi from "./mockApi";
 import type {
+  ContractMetadataUpdateRequest,
+  ContractMetadataView,
+} from "../types/contractIntake";
+import type {
   Clause,
   ContractArtifact,
   ContractDetail,
@@ -385,6 +389,50 @@ export async function uploadContract(
       body: formData,
     },
     { signal: input.signal },
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Fetch the merged contract metadata view used by the upload-review
+ * panel (PR #67). Reads ``title`` off ``Contract.title`` and the rest
+ * off the latest ``original_upload`` artifact's ``metadata_json``.
+ */
+export async function getContractMetadata(
+  id: string,
+  options: ApiOptions = {},
+): Promise<ContractMetadataView> {
+  if (isDemoMode()) return mockApi.getContractMetadata(id, options);
+  const data = await call<ContractMetadataView>(
+    `/api/contracts/${encodeURIComponent(id)}/metadata`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * User-confirmed metadata update for an existing contract (PR #67).
+ * ``title`` persists on ``Contract.title``;
+ * ``counterparty_name`` / ``contract_type`` / ``effective_date``
+ * persist on the latest ``original_upload`` artifact's
+ * ``metadata_json``. Empty strings clear the non-title fields.
+ */
+export async function updateContractMetadata(
+  id: string,
+  payload: ContractMetadataUpdateRequest,
+  options: ApiOptions = {},
+): Promise<ContractMetadataView> {
+  if (isDemoMode())
+    return mockApi.updateContractMetadata(id, payload, options);
+  const data = await call<ContractMetadataView>(
+    `/api/contracts/${encodeURIComponent(id)}/metadata`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
   );
   return scrubSecrets(data);
 }

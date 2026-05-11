@@ -989,7 +989,7 @@ describe("RequestsPage", () => {
     ],
   };
 
-  it("surfaces extracted metadata + duplicate warning after a successful upload", async () => {
+  it("surfaces the review panel with extracted metadata + duplicate warning after upload", async () => {
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
       if (
         url.includes("/api/requests/req-upload/convert-upload") &&
@@ -1014,24 +1014,25 @@ describe("RequestsPage", () => {
     });
     fireEvent.click(screen.getByTestId("request-upload-convert-submit"));
 
-    // The feedback panel lands once the upload completes.
+    // PR #67 — the review panel lands once the upload completes,
+    // pre-filled with extracted suggestions and warning about the
+    // matching duplicate.
     const feedback = await screen.findByTestId("request-upload-feedback");
     expect(feedback).toBeInTheDocument();
     expect(
-      within(feedback).getByTestId("upload-duplicate-warning"),
+      within(feedback).getByTestId("upload-review-duplicate-warning"),
     ).toBeInTheDocument();
     expect(
-      within(feedback).getByTestId("upload-extracted-metadata"),
-    ).toBeInTheDocument();
-    expect(
-      within(feedback).getByTestId("upload-meta-contract-type").textContent,
-    ).toMatch(/NDA/);
-    // No storage internals appear anywhere in the DOM.
+      (within(feedback).getByTestId(
+        "upload-review-contract-type",
+      ) as HTMLInputElement).value,
+    ).toBe("NDA");
+    // Storage internals never appear anywhere in the DOM.
     expect(document.body.textContent ?? "").not.toContain("storage_key");
     expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
   });
 
-  it("stays quiet (no feedback panel) when there are no duplicates and no metadata", async () => {
+  it("still renders the review panel when no duplicates/metadata are detected, with quiet state", async () => {
     const quietResponse = {
       ...UPLOAD_RESPONSE,
       extracted_metadata: {
@@ -1073,6 +1074,16 @@ describe("RequestsPage", () => {
         "completed",
       );
     });
-    expect(screen.queryByTestId("request-upload-feedback")).toBeNull();
+
+    // The review panel always renders post-upload (PR #67) — the
+    // duplicate section just shows the quiet "no obvious duplicates"
+    // line when the list is empty.
+    const feedback = screen.getByTestId("request-upload-feedback");
+    expect(
+      within(feedback).getByTestId("upload-review-no-duplicates"),
+    ).toBeInTheDocument();
+    expect(
+      within(feedback).queryByTestId("upload-review-duplicate-warning"),
+    ).toBeNull();
   });
 });
