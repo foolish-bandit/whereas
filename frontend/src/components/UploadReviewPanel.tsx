@@ -246,7 +246,7 @@ export default function UploadReviewPanel({
                 >
                   <Link
                     to={demoPath(
-                      `/contracts/${encodeURIComponent(c.contract_id)}`,
+                      `/repository/${encodeURIComponent(c.contract_id)}`,
                     )}
                     className="font-medium text-ink underline hover:text-accent-ring"
                     data-testid="upload-review-duplicate-link"
@@ -284,7 +284,7 @@ export default function UploadReviewPanel({
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <Link
-          to={demoPath(`/contracts/${encodeURIComponent(contract.id)}`)}
+          to={demoPath(`/repository/${encodeURIComponent(contract.id)}`)}
           className="rounded border border-rule px-3 py-1 text-xs text-ink hover:bg-canvas-muted"
           data-testid="upload-review-open-in-repository"
         >

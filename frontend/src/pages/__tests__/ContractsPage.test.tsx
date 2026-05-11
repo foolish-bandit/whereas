@@ -227,7 +227,7 @@ describe("ContractsPage (Repository list)", () => {
     // Sanity check: title cell links to the demo contract route.
     if (table) {
       const link = within(table).getByRole("link", { name: "Acme NDA" });
-      expect(link.getAttribute("href")).toBe("/demo/contracts/c-1");
+      expect(link.getAttribute("href")).toBe("/demo/repository/c-1");
     }
   });
 });

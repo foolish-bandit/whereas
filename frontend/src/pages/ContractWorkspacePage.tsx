@@ -451,7 +451,7 @@ export default function ContractWorkspacePage() {
             Its files were moved into the canonical record&apos;s Document
             History. No files were deleted.{" "}
             <Link
-              to={`/demo/contracts/${encodeURIComponent(
+              to={`/demo/repository/${encodeURIComponent(
                 state.contract.merged_into_contract_id,
               )}`}
               className="font-medium text-ink underline hover:text-accent-ring"

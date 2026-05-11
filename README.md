@@ -147,6 +147,13 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Repository URL consistency** — PR #88 renamed all internal links
+  that pointed at the legacy `/demo/contracts/:id` alias to
+  `/demo/repository/:id` (Upload success CTA, merged-notice link,
+  duplicate-candidate links in Upload feedback / review, generated-
+  contract link on the Agreement template detail page, the Repository
+  list table rows). The legacy alias is preserved so old bookmarks
+  and the Sidebar's active-state highlighting keep working.
 - **Agreement Templates** — `/demo/requests/templates`. PR #87 polished
   the list page: real LoadingSkeleton (replacing the plain "Loading
   templates…" text), Active / Archived status pill, template-type

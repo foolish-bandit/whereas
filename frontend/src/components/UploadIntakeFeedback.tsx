@@ -58,7 +58,7 @@ export default function UploadIntakeFeedback({
             {dupes.map((c) => (
               <li key={c.contract_id} data-testid="upload-duplicate-row">
                 <Link
-                  to={demoPath(`/contracts/${encodeURIComponent(c.contract_id)}`)}
+                  to={demoPath(`/repository/${encodeURIComponent(c.contract_id)}`)}
                   className="font-medium text-ink underline hover:text-accent-ring"
                 >
                   {c.title}
