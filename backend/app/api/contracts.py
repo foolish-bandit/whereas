@@ -13,7 +13,7 @@ from io import BytesIO
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -79,6 +79,7 @@ from app.security.encryption import (
     load_instance_key,
     load_org_master_key,
 )
+from app.services import activity_export
 from app.services import activity_timeline as activity_timeline_module
 from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.artifact_compare import (
@@ -413,6 +414,92 @@ async def get_contract_activity(
         session, contract, limit=limit
     )
     return ActivityTimelineResponse(items=items)
+
+
+@router.get("/{contract_id}/activity/export")
+async def export_contract_activity(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    export_format: str = Query(
+        default="csv",
+        alias="format",
+        description="Export format: 'csv' or 'json'.",
+    ),
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Download the contract's activity timeline as CSV or JSON (PR #75).
+
+    Reuses the same sanitized projection as ``GET /activity`` — the
+    timeline service decides which audit detail keys are exposed; this
+    handler only formats that projection into bytes. Storage internals,
+    raw audit details, document bytes, signer PII, and DocuSeal
+    payloads cannot leak through this path.
+
+    Cross-org / missing contracts return 404 via ``_get_contract_for_org``.
+    Unsupported ``?format=`` values return 422.
+    """
+    fmt = export_format.lower().strip()
+    if fmt not in activity_export.SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=422,
+            detail="Unsupported export format. Use 'csv' or 'json'.",
+        )
+
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    items = await activity_timeline_module.load_contract_activity(
+        session,
+        contract,
+        limit=activity_timeline_module.EXPORT_MAX_LIMIT,
+        max_cap=activity_timeline_module.EXPORT_MAX_LIMIT,
+    )
+
+    filename = activity_export.export_filename(
+        subject_type="contract",
+        subject_id=contract.id,
+        fmt=fmt,  # type: ignore[arg-type]
+    )
+
+    # Record an audit event for the export itself. Safe details only:
+    # subject id, format, event count. The exported content is NEVER
+    # written to the audit log. The new event type is intentionally
+    # outside the timeline projection's event-type list so an export
+    # does not appear inside the timeline it just produced.
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_ACTIVITY_EXPORTED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "format": fmt,
+            "event_count": len(items),
+        },
+    )
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if fmt == "csv":
+        return Response(
+            content=activity_export.render_csv(items),
+            media_type=activity_export.CSV_MEDIA_TYPE,
+            headers=headers,
+        )
+    envelope = activity_export.render_json_envelope(
+        subject_type="contract",
+        subject_id=contract.id,
+        items=items,
+    )
+    return JSONResponse(
+        content=envelope,
+        media_type=activity_export.JSON_MEDIA_TYPE,
+        headers=headers,
+    )
 
 
 @router.get("/{contract_id}/clauses", response_model=list[ClauseResponse])

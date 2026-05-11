@@ -26,6 +26,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,7 +79,7 @@ from app.schemas.requests import (
     ConvertRequestUploadResponse,
 )
 from app.security.audit_log import AuditEventType, record_event
-from app.services import activity_timeline
+from app.services import activity_export, activity_timeline
 from app.services.approval_gating import can_send_contract_to_docuseal
 from app.services.approval_policies import (
     apply_approval_policies_to_request,
@@ -872,6 +873,87 @@ async def get_request_activity(
         session, request, limit=limit
     )
     return ActivityTimelineResponse(items=items)
+
+
+@router.get("/{request_id}/activity/export")
+async def export_request_activity(
+    request_id: uuid.UUID,
+    session: DbSession,
+    export_format: str = Query(
+        default="csv",
+        alias="format",
+        description="Export format: 'csv' or 'json'.",
+    ),
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Download the request's activity timeline as CSV or JSON (PR #75).
+
+    Reuses the same sanitized projection as ``GET /activity`` — the
+    timeline service decides which audit detail keys are exposed; this
+    handler only formats that projection into bytes. Storage internals,
+    raw audit details, document bytes, signer PII, and DocuSeal
+    payloads cannot leak through this path.
+
+    Cross-org / missing requests return 404 via ``_get_request_for_org``.
+    Unsupported ``?format=`` values return 422.
+    """
+    fmt = export_format.lower().strip()
+    if fmt not in activity_export.SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=422,
+            detail="Unsupported export format. Use 'csv' or 'json'.",
+        )
+
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    request = await _get_request_for_org(session, request_id, user.organization_id)
+    items = await activity_timeline.load_request_activity(
+        session,
+        request,
+        limit=activity_timeline.EXPORT_MAX_LIMIT,
+        max_cap=activity_timeline.EXPORT_MAX_LIMIT,
+    )
+
+    filename = activity_export.export_filename(
+        subject_type="request",
+        subject_id=request.id,
+        fmt=fmt,  # type: ignore[arg-type]
+    )
+
+    # Audit the export. Safe details only — subject id, format, count.
+    # The exported content is not recorded. The new event type sits
+    # outside the timeline's surfaced event-type list so a request
+    # export doesn't appear inside the timeline it produced.
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.REQUEST_ACTIVITY_EXPORTED,
+        actor_user_id=user.id,
+        target_type="request",
+        target_id=str(request.id),
+        details={
+            "request_id": str(request.id),
+            "format": fmt,
+            "event_count": len(items),
+        },
+    )
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if fmt == "csv":
+        return Response(
+            content=activity_export.render_csv(items),
+            media_type=activity_export.CSV_MEDIA_TYPE,
+            headers=headers,
+        )
+    envelope = activity_export.render_json_envelope(
+        subject_type="request",
+        subject_id=request.id,
+        items=items,
+    )
+    return JSONResponse(
+        content=envelope,
+        media_type=activity_export.JSON_MEDIA_TYPE,
+        headers=headers,
+    )
 
 
 def _workflow_links_request(request: ContractRequest):

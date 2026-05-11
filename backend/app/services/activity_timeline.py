@@ -34,6 +34,10 @@ from app.security.audit_log import AuditEvent, AuditEventType
 # audit dump.
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
+# Cap for activity export endpoints (PR #75). Larger than the UI
+# timeline cap so users can pull a meaningful CSV/JSON, but still
+# bounded so a single export can't run away.
+EXPORT_MAX_LIMIT = 1000
 
 
 # Approval and DocuSeal events the timeline surfaces. Other event types
@@ -105,6 +109,7 @@ async def load_request_activity(
     request: ContractRequest,
     *,
     limit: int = DEFAULT_LIMIT,
+    max_cap: int = MAX_LIMIT,
 ) -> list[ActivityTimelineItem]:
     """Timeline for a request: approval events for runs attached to it
     (or to its linked contract), DocuSeal events on the linked
@@ -122,6 +127,7 @@ async def load_request_activity(
         contract_ids=contract_ids,
         request_ids=[str(request.id)],
         limit=limit,
+        max_cap=max_cap,
     )
 
 
@@ -130,6 +136,7 @@ async def load_contract_activity(
     contract: Contract,
     *,
     limit: int = DEFAULT_LIMIT,
+    max_cap: int = MAX_LIMIT,
 ) -> list[ActivityTimelineItem]:
     """Timeline for a contract: approval events for runs attached to it,
     plus DocuSeal events on it.
@@ -142,6 +149,7 @@ async def load_contract_activity(
         contract_ids=[str(contract.id)],
         request_ids=[],
         limit=limit,
+        max_cap=max_cap,
     )
 
 
@@ -153,11 +161,17 @@ async def _query_events(
     contract_ids: list[str],
     request_ids: list[str],
     limit: int,
+    max_cap: int = MAX_LIMIT,
 ) -> list[ActivityTimelineItem]:
     """Build the OR predicate, run the single audit-events query, and
     project the rows into ``ActivityTimelineItem`` instances.
+
+    ``max_cap`` controls the hard upper bound on how many rows the
+    query returns. UI callers use the default ``MAX_LIMIT``; export
+    callers raise it to ``EXPORT_MAX_LIMIT`` so a CSV/JSON dump can
+    cover more history without bypassing the query path.
     """
-    bounded_limit = max(1, min(MAX_LIMIT, limit))
+    bounded_limit = max(1, min(max_cap, limit))
     if (
         not approval_workflow_run_ids
         and not contract_ids

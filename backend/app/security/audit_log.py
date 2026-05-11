@@ -146,6 +146,16 @@ class AuditEventType(StrEnum):
     # are PII and live in the encrypted Contract / artifact rows.
     CONTRACT_METADATA_UPDATED = "contract.metadata.updated"
 
+    # PR #75 — activity timeline export (CSV/JSON) for a contract or
+    # request. Records that an export happened; payload carries the
+    # subject id, the requested format, and the count of events
+    # included. The exported content itself is NEVER recorded.
+    # These events are deliberately NOT added to the timeline event
+    # types in ``services/activity_timeline.py`` so an export does
+    # not appear inside the timeline it produces (no recursion).
+    CONTRACT_ACTIVITY_EXPORTED = "contract.activity_exported"
+    REQUEST_ACTIVITY_EXPORTED = "request.activity_exported"
+
     LLM_REMOTE_PROVIDER_ENABLED = "llm.remote_provider.enabled"
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"
