@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import ActivityExport from "../components/ActivityExport";
@@ -6,6 +6,7 @@ import ActivityTimeline from "../components/ActivityTimeline";
 import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
+import DuplicateMergePanel from "../components/DuplicateMergePanel";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import MarkdownPreview from "../components/MarkdownPreview";
@@ -202,6 +203,20 @@ export default function ContractWorkspacePage() {
         setArtifactsState({ kind: "error" });
       });
     return () => controller.abort();
+  }, [id]);
+
+  // PR #76 — re-fetch artifacts on demand. Used after a successful
+  // duplicate merge so the moved artifacts appear in Document History
+  // without forcing a full page reload.
+  const reloadArtifacts = useCallback(async () => {
+    if (!id) return;
+    setArtifactsState({ kind: "loading" });
+    try {
+      const rows = await getContractArtifacts(id);
+      setArtifactsState({ kind: "loaded", artifacts: rows });
+    } catch {
+      setArtifactsState({ kind: "error" });
+    }
   }, [id]);
 
   // The metadata view is the merged "Repository details" projection
@@ -422,6 +437,32 @@ export default function ContractWorkspacePage() {
         ← Back to Repository
       </Link>
 
+      {state.contract.merged_into_contract_id ? (
+        <div
+          className="mt-3 rounded border border-warning-ring bg-warning-soft p-3 text-xs text-ink"
+          role="status"
+          data-testid="contract-merged-notice"
+        >
+          <p className="font-medium">
+            This Repository record was merged into another Repository
+            record.
+          </p>
+          <p className="mt-1 text-ink-muted">
+            Its files were moved into the canonical record&apos;s Document
+            History. No files were deleted.{" "}
+            <Link
+              to={`/demo/contracts/${encodeURIComponent(
+                state.contract.merged_into_contract_id,
+              )}`}
+              className="font-medium text-ink underline hover:text-accent-ring"
+              data-testid="contract-merged-notice-link"
+            >
+              Open the canonical Repository record.
+            </Link>
+          </p>
+        </div>
+      ) : null}
+
       <RepositoryHeader
         contract={state.contract}
         metadata={metadataView}
@@ -498,6 +539,32 @@ export default function ContractWorkspacePage() {
         onMetadataSaved={setMetadataView}
         artifacts={artifacts}
       />
+
+      {state.contract.merged_into_contract_id ? null : (
+        <section
+          className="mt-6 rounded border border-rule p-4"
+          data-testid="contract-duplicate-merge-section"
+        >
+          <h2 className="text-sm font-medium text-ink">
+            Possible duplicates
+          </h2>
+          <p className="mt-1 text-xs text-ink-subtle">
+            Resolve a duplicate Repository record by merging it into
+            this one. Files move into Document History; nothing is
+            deleted.
+          </p>
+          <DuplicateMergePanel
+            targetContractId={state.contract.id}
+            onMerged={() => {
+              // Refresh artifacts so the moved files show up in Document
+              // History. The activity timeline lazily reloads on next
+              // mount; for now keeping the rest of the page stable is
+              // less surprising than a full detail refetch.
+              void reloadArtifacts();
+            }}
+          />
+        </section>
+      )}
 
       <section
         className="mt-6 rounded border border-rule p-4"

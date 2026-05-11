@@ -59,6 +59,10 @@ from app.schemas.docuseal import (
     SendContractToDocuSealRequest,
     SendContractToDocuSealResponse,
 )
+from app.schemas.duplicate_merge import (
+    DuplicateMergeRequest,
+    DuplicateMergeResponse,
+)
 from app.schemas.findings import (
     CreateReviewRunRequest,
     DeviationFindingResponse,
@@ -131,6 +135,10 @@ from app.services.duplicate_detection import (
 from app.services.duplicate_detection import (
     DuplicateCandidate,
     find_possible_duplicate_contracts,
+)
+from app.services.duplicate_merge import (
+    DuplicateMergeError,
+    merge_duplicate_contract,
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.playbook_loader import (
@@ -336,13 +344,31 @@ async def upload_contract(
 async def list_contracts(
     session: DbSession,
     x_whereas_dev_user: Annotated[str | None, Header()] = None,
+    include_merged: bool = Query(
+        default=False,
+        description=(
+            "Include Repository records that have been merged into "
+            "another record. False by default so the canonical list "
+            "is not cluttered with merged duplicates."
+        ),
+    ),
 ) -> list[ContractListItemResponse]:
+    """List Repository records for the caller's organization.
+
+    Records that have been merged into another record (i.e.
+    ``merged_into_contract_id IS NOT NULL``) are filtered out by
+    default; PR #76 introduced the merge workflow and surfacing
+    them as active Repository rows would re-create the duplicate
+    clutter the merge was meant to resolve. Pass
+    ``?include_merged=true`` to see them — useful for audit /
+    "where did this go" queries.
+    """
     user = await _current_dev_user(session, x_whereas_dev_user)
-    result = await session.execute(
-        select(Contract)
-        .where(Contract.organization_id == user.organization_id)
-        .order_by(Contract.created_at.desc(), Contract.id.desc())
-    )
+    stmt = select(Contract).where(Contract.organization_id == user.organization_id)
+    if not include_merged:
+        stmt = stmt.where(Contract.merged_into_contract_id.is_(None))
+    stmt = stmt.order_by(Contract.created_at.desc(), Contract.id.desc())
+    result = await session.execute(stmt)
     return [ContractListItemResponse.model_validate(row) for row in result.scalars()]
 
 
@@ -499,6 +525,169 @@ async def export_contract_activity(
         content=envelope,
         media_type=activity_export.JSON_MEDIA_TYPE,
         headers=headers,
+    )
+
+
+@router.get("/{contract_id}/duplicate-candidates")
+async def list_duplicate_candidates_for_contract(
+    contract_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """List possible duplicate Repository records for an existing contract (PR #76).
+
+    The upload route already attaches a warning-level duplicate list
+    to fresh uploads. PR #76 surfaces the same lookup on an existing
+    contract so the detail page can offer a "merge duplicate" action
+    against historical clutter. Same safety posture as the upload
+    surface: org-scoped lookup; never returns storage internals;
+    candidates are exact-hash and normalized-title matches only.
+
+    Cross-org / missing target → 404. The target itself, and any
+    already-merged contract, are excluded from the candidate list.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    raw_candidates = await _safe_find_duplicates(
+        session,
+        organization_id=user.organization_id,
+        file_hash_sha256=contract.file_hash_sha256,
+        suggested_title=contract.title,
+        counterparty_name=None,
+        filename=None,
+        exclude_contract_id=contract.id,
+    )
+    # Filter merged rows. ``DuplicateCandidate`` does not carry the
+    # merge flag, so we have to look the rows up. The list is small
+    # (DEFAULT_LIMIT=5) so this is cheap; using ``in_`` keeps it to
+    # one query.
+    candidate_ids = [c.contract_id for c in raw_candidates]
+    merged_ids: set[uuid.UUID] = set()
+    if candidate_ids:
+        merged_rows = await session.execute(
+            select(Contract.id).where(
+                Contract.id.in_(candidate_ids),
+                Contract.merged_into_contract_id.is_not(None),
+            )
+        )
+        merged_ids = set(merged_rows.scalars().all())
+    return {
+        "candidates": [
+            _duplicate_response(c)
+            for c in raw_candidates
+            if c.contract_id not in merged_ids
+        ]
+    }
+
+
+@router.post(
+    "/{target_contract_id}/merge-duplicate",
+    response_model=DuplicateMergeResponse,
+)
+async def merge_duplicate_into_contract(
+    target_contract_id: uuid.UUID,
+    payload: DuplicateMergeRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> DuplicateMergeResponse:
+    """Merge a duplicate Repository record into this canonical record (PR #76).
+
+    Both rows must belong to the caller's organization (cross-org
+    returns 404). ``source_contract_id == target_contract_id``
+    returns 400. Already-merged source or target returns 409 with a
+    safe error code (``source_already_merged`` /
+    ``target_already_merged``) so the UI can branch.
+
+    Merge behavior:
+
+    * Reassigns ``ContractArtifact`` rows from source to target.
+      Artifact storage keys, wrapped DEKs, filenames, hashes, and
+      timestamps are preserved verbatim — the only mutation is the
+      ``contract_id`` foreign key.
+    * Does NOT delete the source row, source document bytes, or any
+      artifact. The source row is flagged with
+      ``merged_into_contract_id`` / ``merged_at`` / ``merged_by_user_id``
+      so deep links still resolve and render a safe "merged into …"
+      notice.
+    * Does NOT trigger DocuSeal, does NOT change contract status,
+      does NOT change approval gates / workflow state, does NOT
+      rewire ``ContractRequest`` links, and does NOT mutate
+      ``ApprovalWorkflowRun`` rows. The response carries counts so
+      the UI can warn about any links that stayed on the source.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    target = await _get_contract_for_org(
+        session,
+        contract_id=target_contract_id,
+        organization_id=user.organization_id,
+    )
+    source = await _get_contract_for_org(
+        session,
+        contract_id=payload.source_contract_id,
+        organization_id=user.organization_id,
+    )
+
+    try:
+        result = await merge_duplicate_contract(
+            session,
+            target=target,
+            source=source,
+            merged_by_user_id=user.id,
+            merge_note=payload.merge_note,
+        )
+    except DuplicateMergeError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.message) from e
+
+    # Paired audit events. Both payloads are intentionally compact:
+    # safe identifier fields, a count, and ``merge_note_present`` —
+    # never the note text, never storage internals, never raw
+    # artifact metadata.
+    merge_note_present = bool(
+        payload.merge_note is not None and payload.merge_note.strip()
+    )
+    safe_details = {
+        "target_contract_id": str(target.id),
+        "source_contract_id": str(source.id),
+        "artifacts_moved": result.artifacts_moved,
+        "merge_note_present": merge_note_present,
+        "workflow_runs_attached_to_source": (
+            result.workflow_runs_attached_to_source
+        ),
+        "requests_attached_to_source": result.requests_attached_to_source,
+    }
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_DUPLICATE_MERGED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(target.id),
+        details=safe_details,
+    )
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_MERGED_INTO,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(source.id),
+        details=safe_details,
+    )
+
+    return DuplicateMergeResponse(
+        target_contract_id=result.target_contract_id,
+        source_contract_id=result.source_contract_id,
+        artifacts_moved=result.artifacts_moved,
+        merged_at=result.merged_at,
+        merged_by_user_id=result.merged_by_user_id,
+        workflow_runs_attached_to_source=(
+            result.workflow_runs_attached_to_source
+        ),
+        requests_attached_to_source=result.requests_attached_to_source,
     )
 
 

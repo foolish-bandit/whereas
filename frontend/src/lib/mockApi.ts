@@ -157,10 +157,14 @@ function combinedList(): ContractListItem[] {
 }
 
 export async function getContracts(
-  options: ApiOptions = {},
+  options: ApiOptions & { include_merged?: boolean } = {},
 ): Promise<ContractListItem[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  return combinedList();
+  const includeMerged = options.include_merged === true;
+  const rows = combinedList();
+  return includeMerged
+    ? rows
+    : rows.filter((row) => !row.merged_into_contract_id);
 }
 
 export async function getContract(
@@ -2837,6 +2841,114 @@ export async function exportRequestActivity(
     items,
     format,
   });
+}
+
+// ---------------------------------------------------------------------------
+// PR #76 — duplicate-merge demo behavior
+//
+// The mock holds a set of merged source ids so a refreshed list /
+// detail mirrors the post-merge state. We also remember which
+// source merged into which target so the merged-detail surface
+// can render the canonical pointer. Bytes / storage internals are
+// not represented at all in demo mode — there is nothing to leak.
+// ---------------------------------------------------------------------------
+
+const sessionMergedSources = new Map<
+  string,
+  { target_contract_id: string; merged_at: string }
+>();
+
+export async function getContractDuplicateCandidates(
+  contractId: string,
+  options: ApiOptions = {},
+): Promise<import("../types/duplicateMerge").DuplicateCandidatesResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const list = combinedList();
+  const target = list.find((c) => c.id === contractId);
+  if (!target) throw new ApiError(404, "Contract not found.");
+  const candidates: import("../types/contractIntake").DuplicateContractCandidate[] =
+    list
+      .filter(
+        (c) =>
+          c.id !== contractId &&
+          !sessionMergedSources.has(c.id) &&
+          c.file_hash_sha256 === target.file_hash_sha256,
+      )
+      .slice(0, 5)
+      .map((c) => ({
+        contract_id: c.id,
+        title: c.title,
+        reason: "exact_file_hash",
+        confidence: "exact",
+        created_at: c.created_at,
+        status: c.status,
+      }));
+  return { candidates };
+}
+
+export async function mergeDuplicateContract(
+  targetContractId: string,
+  sourceContractId: string,
+  mergeNote: string | null,
+  options: ApiOptions = {},
+): Promise<import("../types/duplicateMerge").DuplicateMergeResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (sourceContractId === targetContractId) {
+    throw new ApiError(
+      400,
+      "Source and target Repository records must differ.",
+    );
+  }
+  if (sessionMergedSources.has(sourceContractId)) {
+    throw new ApiError(
+      409,
+      "This Repository record has already been merged.",
+    );
+  }
+  if (sessionMergedSources.has(targetContractId)) {
+    throw new ApiError(
+      409,
+      "The target Repository record was itself merged into another record.",
+    );
+  }
+  const list = combinedList();
+  const target = list.find((c) => c.id === targetContractId);
+  const source = list.find((c) => c.id === sourceContractId);
+  if (!target || !source) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  const mergedAt = isoNow();
+  sessionMergedSources.set(sourceContractId, {
+    target_contract_id: targetContractId,
+    merged_at: mergedAt,
+  });
+  // Mark the source contract as merged on the in-memory list, so a
+  // subsequent ``getContracts()`` filter (when callers do that) and
+  // ``getContract()`` detail call both reflect it.
+  for (const row of [...sessionList, ...MOCK_LIST]) {
+    if (row.id === sourceContractId) {
+      row.merged_into_contract_id = targetContractId;
+      row.merged_at = mergedAt;
+    }
+  }
+  const sourceDetail = sessionDetailById[sourceContractId] ?? MOCK_DETAIL_BY_ID[sourceContractId];
+  if (sourceDetail) {
+    sourceDetail.merged_into_contract_id = targetContractId;
+    sourceDetail.merged_at = mergedAt;
+  }
+  // The note text is intentionally ignored — demo mode mirrors the
+  // backend's "presence boolean only" posture.
+  void mergeNote;
+  void options;
+  return {
+    target_contract_id: targetContractId,
+    source_contract_id: sourceContractId,
+    artifacts_moved: 1,
+    merged_at: mergedAt,
+    merged_by_user_id: "00000000-0000-0000-0000-000000000000",
+    workflow_runs_attached_to_source: 0,
+    requests_attached_to_source: 0,
+  };
 }
 
 function _buildExportBlob(args: {

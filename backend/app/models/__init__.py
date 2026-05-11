@@ -142,6 +142,23 @@ class Contract(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # PR #76 — duplicate-merge bookkeeping. ``merged_into_contract_id``
+    # is NULL on the canonical record; it points at the canonical
+    # record id on the source-duplicate row. ``merged_at`` /
+    # ``merged_by_user_id`` are populated alongside it. The default
+    # Repository list filters out rows where this column is set; the
+    # detail route still renders a safe "merged into …" notice so a
+    # deep link does not 404.
+    merged_into_contract_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contracts.id", ondelete="SET NULL"), nullable=True
+    )
+    merged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    merged_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     extracted_fields: Mapped[list[ExtractedField]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )

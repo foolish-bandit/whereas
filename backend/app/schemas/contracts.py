@@ -68,6 +68,13 @@ class ContractListItemResponse(BaseModel):
     page_count: int | None
     created_at: datetime
     updated_at: datetime
+    # PR #76 — duplicate-merge bookkeeping. ``merged_into_contract_id``
+    # is None on canonical records and on records that have never
+    # been merged. The default list filters merged rows out at the
+    # query layer; these fields exist so a directly-linked merged
+    # detail page can still render a safe "merged into …" notice.
+    merged_into_contract_id: uuid.UUID | None = None
+    merged_at: datetime | None = None
 
 
 class ContractUploadResponse(ContractListItemResponse):

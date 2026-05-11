@@ -156,6 +156,22 @@ class AuditEventType(StrEnum):
     CONTRACT_ACTIVITY_EXPORTED = "contract.activity_exported"
     REQUEST_ACTIVITY_EXPORTED = "request.activity_exported"
 
+    # PR #76 — duplicate Repository records merged into a canonical
+    # record. Two paired events fire under the same merge so both
+    # subjects' timelines/audit trails see it:
+    #
+    # * ``CONTRACT_DUPLICATE_MERGED`` is written against the target
+    #   (canonical) contract — the one that gained artifacts.
+    # * ``CONTRACT_MERGED_INTO`` is written against the source
+    #   contract — the one whose row is now flagged as merged.
+    #
+    # Both payloads carry only safe identifier fields + an
+    # ``artifacts_moved`` count + a ``merge_note_present`` boolean.
+    # Raw note text, storage internals, document bytes, signer PII,
+    # and DocuSeal payloads are NEVER written.
+    CONTRACT_DUPLICATE_MERGED = "contract.duplicate_merged"
+    CONTRACT_MERGED_INTO = "contract.merged_into"
+
     LLM_REMOTE_PROVIDER_ENABLED = "llm.remote_provider.enabled"
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"
