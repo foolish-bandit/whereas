@@ -16,6 +16,7 @@ import RequestDetailPage from "./pages/RequestDetailPage";
 import RequestsPage from "./pages/RequestsPage";
 import InboxPage from "./pages/InboxPage";
 import ApprovalsLandingPage from "./pages/ApprovalsLandingPage";
+import ApprovalTasksPage from "./pages/ApprovalTasksPage";
 import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import ApprovalWorkflowTemplatesPage from "./pages/ApprovalWorkflowTemplatesPage";
 import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
@@ -117,7 +118,7 @@ function DemoApp() {
           path="approvals/policies"
           element={<ApprovalPoliciesPage />}
         />
-        <Route path="approvals/tasks" element={<InboxPage />} />
+        <Route path="approvals/tasks" element={<ApprovalTasksPage />} />
 
         {/* Legacy approval routes — kept so existing deep links and
             external bookmarks keep resolving. */}

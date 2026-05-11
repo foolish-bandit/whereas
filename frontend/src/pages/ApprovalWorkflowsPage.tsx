@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import {
@@ -16,10 +16,12 @@ import {
   DEEP_LINK_HIGHLIGHT_CLASS,
   scrollDeepLinkIntoView,
 } from "../lib/deepLinkHighlight";
+import { mountedPath } from "../lib/routes";
 import type {
   ApprovalStepCreate,
   ApprovalWorkflowRun,
   ApprovalWorkflowRunListItem,
+  ApprovalWorkflowRunStatus,
 } from "../types/approvalWorkflows";
 
 type LoadState =
@@ -39,6 +41,7 @@ function emptyStep(): DraftStep {
 }
 
 export default function ApprovalWorkflowsPage() {
+  const location = useLocation();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [includeTerminal, setIncludeTerminal] = useState(true);
 
@@ -444,21 +447,45 @@ export default function ApprovalWorkflowsPage() {
               }
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div>
-                  <p className="font-medium text-ink">{row.name}</p>
-                  <p className="text-xs text-ink-subtle">
-                    Status:{" "}
-                    <span data-testid="approval-status">{row.status}</span>
-                    {row.current_step_order
-                      ? ` · step ${row.current_step_order}`
-                      : ""}
-                    {row.request_id
-                      ? ` · request ${row.request_id.slice(0, 8)}…`
-                      : ""}
-                    {row.contract_id
-                      ? ` · contract ${row.contract_id.slice(0, 8)}…`
-                      : ""}
-                  </p>
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <p className="font-medium text-ink">{row.name}</p>
+                    <WorkflowStatusPill status={row.status} />
+                    <WorkflowSourceLabel
+                      templateId={row.template_id}
+                      detail={detailById[row.id] ?? null}
+                    />
+                  </div>
+                  <WorkflowProgressLine
+                    row={row}
+                    detail={detailById[row.id] ?? null}
+                  />
+                  <div className="flex flex-wrap gap-3 text-xs">
+                    {row.request_id && (
+                      <Link
+                        to={mountedPath(
+                          `/requests/${row.request_id}`,
+                          location.pathname,
+                        )}
+                        className="text-ink-muted underline hover:text-ink"
+                        data-testid="approval-row-request-link"
+                      >
+                        Open related request
+                      </Link>
+                    )}
+                    {row.contract_id && (
+                      <Link
+                        to={mountedPath(
+                          `/repository/${row.contract_id}`,
+                          location.pathname,
+                        )}
+                        className="text-ink-muted underline hover:text-ink"
+                        data-testid="approval-row-contract-link"
+                      >
+                        Open repository record
+                      </Link>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
                   <button
@@ -496,6 +523,92 @@ export default function ApprovalWorkflowsPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+const STATUS_PILL_STYLE: Record<ApprovalWorkflowRunStatus, string> = {
+  active: "bg-info/10 text-info border-info/40",
+  completed: "bg-success/10 text-success border-success/40",
+  rejected: "bg-danger/10 text-danger border-danger/40",
+  cancelled: "bg-canvas-muted text-ink-muted border-rule",
+};
+
+function WorkflowStatusPill({ status }: { status: string }) {
+  const key = (status as ApprovalWorkflowRunStatus) in STATUS_PILL_STYLE
+    ? (status as ApprovalWorkflowRunStatus)
+    : null;
+  const className = key
+    ? STATUS_PILL_STYLE[key]
+    : "bg-canvas-muted text-ink-muted border-rule";
+  return (
+    <span
+      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${className}`}
+      data-testid="approval-status-pill"
+    >
+      <span data-testid="approval-status">{status}</span>
+    </span>
+  );
+}
+
+function WorkflowSourceLabel({
+  templateId,
+  detail,
+}: {
+  templateId: string | null;
+  detail: ApprovalWorkflowRun | null;
+}) {
+  // We use only safely allowlisted hints — `template_id` on the list
+  // item or `metadata_json.source_approval_policy_name` on the loaded
+  // detail (PR #58 audit allowlist). No raw IDs or PII surfaced.
+  const policyName =
+    detail &&
+    typeof detail.metadata_json === "object" &&
+    detail.metadata_json !== null &&
+    typeof (detail.metadata_json as { source_approval_policy_name?: unknown })
+      .source_approval_policy_name === "string"
+      ? ((detail.metadata_json as { source_approval_policy_name?: string })
+          .source_approval_policy_name ?? "")
+      : "";
+  let label: string | null = null;
+  if (policyName) {
+    label = `From policy: ${policyName}`;
+  } else if (templateId) {
+    label = "From template";
+  }
+  if (!label) return null;
+  return (
+    <span
+      className="text-[10px] font-medium uppercase tracking-wide text-ink-subtle"
+      data-testid="approval-row-source"
+    >
+      {label}
+    </span>
+  );
+}
+
+function WorkflowProgressLine({
+  row,
+  detail,
+}: {
+  row: ApprovalWorkflowRunListItem;
+  detail: ApprovalWorkflowRun | null;
+}) {
+  // Total step count needs the loaded detail; for collapsed rows we
+  // fall back to "step N" without a denominator.
+  const totalSteps = detail?.steps?.length ?? null;
+  const current = row.current_step_order ?? null;
+  if (current === null && row.status === "active") {
+    return null;
+  }
+  if (row.status !== "active") {
+    return null;
+  }
+  return (
+    <p className="text-xs text-ink-subtle" data-testid="approval-row-progress">
+      {totalSteps !== null
+        ? `Step ${current} of ${totalSteps}`
+        : `Step ${current}`}
+    </p>
   );
 }
 
