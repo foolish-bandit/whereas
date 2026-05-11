@@ -234,14 +234,18 @@ export async function uploadContract(
   const id = `demo-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+  const explicitTitle = (input.title ?? "").trim();
+  const filename = input.file.name;
+  const intake = buildDemoIntake(filename, explicitTitle, sessionList);
   const title =
-    (input.title ?? "").trim() ||
-    input.file.name.replace(/\.[^.]+$/, "") ||
+    explicitTitle ||
+    intake.extracted_metadata?.suggested_title ||
+    filename.replace(/\.[^.]+$/, "") ||
     "Demo upload";
   const now = new Date().toISOString();
   const mime =
     input.file.type ||
-    (input.file.name.toLowerCase().endsWith(".docx")
+    (filename.toLowerCase().endsWith(".docx")
       ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       : "application/pdf");
   const item: ContractListItem = {
@@ -265,7 +269,81 @@ export async function uploadContract(
   };
   sessionList.unshift(item);
   sessionDetailById[id] = detail;
-  return { ...item, extracted_fields: [], clauses: [], message: null };
+  return {
+    ...item,
+    extracted_fields: [],
+    clauses: [],
+    message: null,
+    extracted_metadata: intake.extracted_metadata,
+    duplicate_candidates: intake.duplicate_candidates,
+  };
+}
+
+/**
+ * Demo-mode helper for the PR #66 upload-intake fields.
+ *
+ * Returns a small, deterministic ``ExtractedContractMetadata`` derived
+ * from the filename and a duplicate-candidate list pulled from the
+ * session's contract memory when the new title matches an existing
+ * one. The mock is intentionally simple — it isn't trying to mirror
+ * the backend's regex set, just to give the demo something sensible
+ * to render so reviewers can click through the UI.
+ */
+function buildDemoIntake(
+  filename: string,
+  explicitTitle: string,
+  list: ContractListItem[],
+): {
+  extracted_metadata: import("../types/contractIntake").ExtractedContractMetadata;
+  duplicate_candidates: import("../types/contractIntake").DuplicateContractCandidate[];
+} {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const normalized = stem.replace(/[_\-\.]+/g, " ").trim();
+  const suggestedTitle = normalized || null;
+  const upper = (normalized || filename).toUpperCase();
+  const typeMatch: string | null = upper.includes("AMENDMENT")
+    ? "Amendment"
+    : upper.includes("SOW") || upper.includes("STATEMENT OF WORK")
+      ? "SOW"
+      : upper.includes("NDA")
+        ? "NDA"
+        : upper.includes("DPA")
+          ? "DPA"
+          : upper.includes("MSA")
+            ? "MSA"
+            : upper.includes("EMPLOYMENT")
+              ? "Employment Agreement"
+              : null;
+  const warnings: string[] = [];
+  if (typeMatch === null) warnings.push("contract_type_unknown");
+  warnings.push("counterparty_unknown", "effective_date_unknown");
+
+  const matchTitleLower = (explicitTitle || normalized).toLowerCase();
+  const duplicate_candidates: import("../types/contractIntake").DuplicateContractCandidate[] =
+    matchTitleLower
+      ? list
+          .filter((c) => c.title.toLowerCase() === matchTitleLower)
+          .slice(0, 5)
+          .map((c) => ({
+            contract_id: c.id,
+            title: c.title,
+            reason: "similar_title" as const,
+            confidence: "possible" as const,
+            created_at: c.created_at,
+            status: c.status,
+          }))
+      : [];
+
+  return {
+    extracted_metadata: {
+      suggested_title: suggestedTitle,
+      likely_contract_type: typeMatch,
+      possible_counterparty_name: null,
+      effective_date: null,
+      warnings,
+    },
+    duplicate_candidates,
+  };
 }
 
 
@@ -1796,11 +1874,18 @@ export async function convertRequestWithUpload(
   if (trimmedType) metadata.contract_type = trimmedType;
   if (trimmedNotes) metadata.notes = trimmedNotes;
 
+  // PR #66 — demo upload-intake feedback for the convert-upload mock.
+  const intake = buildDemoIntake(filename, trimmedTitle, sessionList);
+  const finalTitle =
+    trimmedTitle ||
+    intake.extracted_metadata.suggested_title ||
+    filename.replace(/\.[^.]+$/, "") ||
+    "Untitled contract";
   const response: ConvertRequestUploadResponse = {
     request: { ...row },
     contract: {
       id: contractId,
-      title: trimmedTitle || filename.replace(/\.[^.]+$/, "") || "Untitled contract",
+      title: finalTitle,
       status: "ready",
       mime_type: mimeType,
       file_hash_sha256: "0".repeat(64),
@@ -1823,6 +1908,8 @@ export async function convertRequestWithUpload(
       metadata_json: metadata,
     },
     markdown_snapshot: null,
+    extracted_metadata: intake.extracted_metadata,
+    duplicate_candidates: intake.duplicate_candidates,
   };
 
   // Mutate session state the same way the template-conversion mock

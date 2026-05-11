@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from collections.abc import Sequence
 from io import BytesIO
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -73,6 +73,10 @@ from app.services.contract_artifacts import (
     get_latest_official_downloadable_artifact,
     get_latest_official_signable_artifact,
 )
+from app.services.contract_metadata import (
+    ExtractedContractMetadata,
+    extract_basic_contract_metadata,
+)
 from app.services.deviation_findings import (
     InvalidFindingStatusError,
     get_finding_for_org,
@@ -95,6 +99,13 @@ from app.services.document_parser import (
 from app.services.docuseal_bridge import (
     DocuSealError,
     send_document_to_docuseal,
+)
+from app.services.duplicate_detection import (
+    DEFAULT_LIMIT as DUP_DEFAULT_LIMIT,
+)
+from app.services.duplicate_detection import (
+    DuplicateCandidate,
+    find_possible_duplicate_contracts,
 )
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.playbook_loader import (
@@ -137,24 +148,28 @@ async def upload_contract(
     )
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    duplicate = await _find_duplicate(session, user.organization_id, file_hash)
-    if duplicate is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "This organization has already uploaded this file.",
-                "existing_contract_id": str(duplicate.id),
-            },
-        )
-
     parsed = _parse_or_http(file_bytes=file_bytes, filename=filename)
+
+    # PR #66 — deterministic, best-effort metadata extraction. We
+    # compute it before persisting the Contract so the chosen title
+    # honors the user > extracted-suggestion > filename precedence.
+    # Failure is non-fatal: an empty result still produces a usable
+    # response.
+    extracted_metadata = _safe_extract_metadata(
+        filename=filename,
+        mime_type=mime_type,
+        markdown_text=None,
+        plain_text=parsed.full_text,
+    )
+    chosen_title = _choose_title(title, extracted_metadata, filename)
+
     org = await _load_organization(session, user.organization_id)
     org_master_key = _load_org_key_or_http(org)
 
     contract = Contract(
         organization_id=user.organization_id,
         uploaded_by=user.id,
-        title=_derive_title(title, filename),
+        title=chosen_title,
         status=ContractStatus.UPLOADED.value,
         s3_key="pending",
         mime_type=mime_type,
@@ -164,6 +179,20 @@ async def upload_contract(
     )
     session.add(contract)
     await session.flush()
+
+    # PR #66 — warning-level duplicate candidates. Hash-collisions used
+    # to hard-block this route with a 409; the new policy surfaces them
+    # to the user instead. The new contract is excluded so it can't
+    # match itself. Failure is non-fatal.
+    duplicate_candidates = await _safe_find_duplicates(
+        session,
+        organization_id=user.organization_id,
+        file_hash_sha256=file_hash,
+        suggested_title=extracted_metadata.suggested_title,
+        counterparty_name=extracted_metadata.possible_counterparty_name,
+        filename=filename,
+        exclude_contract_id=contract.id,
+    )
 
     storage = DocumentStorage(settings)
     try:
@@ -268,7 +297,14 @@ async def upload_contract(
     )
     await _refresh_upload_response_rows(session, contract, extracted_fields, clauses)
 
-    return _upload_response(contract, extracted_fields, clauses, message=message)
+    return _upload_response(
+        contract,
+        extracted_fields,
+        clauses,
+        message=message,
+        extracted_metadata=extracted_metadata,
+        duplicate_candidates=duplicate_candidates,
+    )
 
 
 @router.get("", response_model=list[ContractListItemResponse])
@@ -1297,6 +1333,120 @@ def _derive_title(title: str | None, filename: str) -> str:
     return (stem or "Untitled contract")[:500]
 
 
+def _choose_title(
+    user_title: str | None,
+    extracted: ExtractedContractMetadata,
+    filename: str,
+) -> str:
+    """Title precedence: explicit user input wins, then the extractor's
+    suggested title, then the filename-derived fallback.
+
+    PR #66 introduces the middle tier so a filename like
+    ``Mutual_NDA_Acme_2026.pdf`` produces "Mutual NDA Acme 2026"
+    instead of the raw stem with separators preserved. The user-input
+    branch is unchanged so explicit overrides remain authoritative.
+    """
+    clean_user = (user_title or "").strip()
+    if clean_user:
+        return clean_user[:500]
+    if extracted.suggested_title:
+        return extracted.suggested_title.strip()[:500]
+    stem = os.path.splitext(os.path.basename(filename))[0].strip()
+    return (stem or "Untitled contract")[:500]
+
+
+def _safe_extract_metadata(
+    *,
+    filename: str,
+    mime_type: str | None,
+    markdown_text: str | None,
+    plain_text: str | None,
+) -> ExtractedContractMetadata:
+    """Wrap ``extract_basic_contract_metadata`` so a defective heuristic
+    can't fail the upload. The extractor already declares itself
+    non-raising; this is belt-and-braces.
+    """
+    try:
+        return extract_basic_contract_metadata(
+            filename=filename,
+            mime_type=mime_type,
+            markdown_text=markdown_text,
+            plain_text=plain_text,
+        )
+    except Exception:
+        # ``extra={"filename": ...}`` collides with Python's LogRecord
+        # built-in ``filename`` attribute and raises a KeyError inside
+        # the logging module. Use a namespaced key to avoid the
+        # collision.
+        log.exception(
+            "Contract metadata extraction raised unexpectedly; ignoring",
+            extra={
+                "upload_filename": filename,
+                "upload_mime_type": mime_type,
+            },
+        )
+        return ExtractedContractMetadata(warnings=["extractor_error"])
+
+
+async def _safe_find_duplicates(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    file_hash_sha256: str | None,
+    suggested_title: str | None,
+    counterparty_name: str | None,
+    filename: str | None,
+    exclude_contract_id: uuid.UUID | None = None,
+    limit: int = DUP_DEFAULT_LIMIT,
+) -> list[DuplicateCandidate]:
+    """Run duplicate detection; never raise, never block the upload."""
+    try:
+        return await find_possible_duplicate_contracts(
+            session,
+            organization_id=organization_id,
+            file_hash_sha256=file_hash_sha256,
+            suggested_title=suggested_title,
+            counterparty_name=counterparty_name,
+            filename=filename,
+            exclude_contract_id=exclude_contract_id,
+            limit=limit,
+        )
+    except Exception:
+        log.exception(
+            "Duplicate-candidate lookup failed; returning empty",
+            extra={"organization_id": str(organization_id)},
+        )
+        return []
+
+
+def _metadata_response(meta: ExtractedContractMetadata) -> dict[str, Any]:
+    """Project the extracted-metadata dataclass into a dict the response
+    schema validates. Surfaces only the allowlisted suggestion fields.
+    """
+    return {
+        "suggested_title": meta.suggested_title,
+        "likely_contract_type": meta.likely_contract_type,
+        "possible_counterparty_name": meta.possible_counterparty_name,
+        "effective_date": meta.effective_date,
+        "warnings": list(meta.warnings),
+    }
+
+
+def _duplicate_response(candidate: DuplicateCandidate) -> dict[str, Any]:
+    """Project a ``DuplicateCandidate`` into the response shape. Only
+    safe identifier fields appear — storage internals are not part of
+    the dataclass to begin with.
+    """
+    return {
+        "contract_id": candidate.contract_id,
+        "title": candidate.title,
+        "reason": candidate.reason,
+        "confidence": candidate.confidence,
+        "created_at": candidate.created_at,
+        "status": candidate.status,
+    }
+
+
 def _safe_input_filename(filename: str | None) -> str:
     basename = os.path.basename((filename or "").replace("\\", "/")).strip()
     return basename or "contract"
@@ -1476,6 +1626,8 @@ def _upload_response(
     clauses: Sequence[Clause],
     *,
     message: str | None,
+    extracted_metadata: ExtractedContractMetadata | None = None,
+    duplicate_candidates: Sequence[DuplicateCandidate] = (),
 ) -> ContractUploadResponse:
     data = ContractListItemResponse.model_validate(contract).model_dump()
     data["extracted_fields"] = [
@@ -1486,6 +1638,14 @@ def _upload_response(
         for clause in sorted(clauses, key=lambda c: c.ordinal)
     ]
     data["message"] = message
+    data["extracted_metadata"] = (
+        _metadata_response(extracted_metadata)
+        if extracted_metadata is not None
+        else None
+    )
+    data["duplicate_candidates"] = [
+        _duplicate_response(c) for c in duplicate_candidates
+    ]
     return ContractUploadResponse.model_validate(data)
 
 

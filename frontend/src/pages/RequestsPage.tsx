@@ -8,6 +8,7 @@ import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
+import UploadIntakeFeedback from "../components/UploadIntakeFeedback";
 import { demoPath } from "../lib/routes";
 import {
   ApiError,
@@ -229,6 +230,13 @@ export default function RequestsPage() {
     );
   }
 
+  // PR #66 — cache the upload-intake suggestions + duplicate
+  // warnings keyed by request id so the row keeps the feedback
+  // visible after the upload-convert section collapses.
+  const [uploadFeedback, setUploadFeedback] = useState<
+    Record<string, ConvertRequestUploadResponse>
+  >({});
+
   function onUploaded(response: ConvertRequestUploadResponse) {
     // Same state-swap as the template path — both intake paths end with
     // request.status='completed' and linked_contract_id set, so the UI
@@ -243,6 +251,10 @@ export default function RequestsPage() {
           }
         : prev,
     );
+    setUploadFeedback((prev) => ({
+      ...prev,
+      [response.request.id]: response,
+    }));
   }
 
   return (
@@ -448,6 +460,14 @@ export default function RequestsPage() {
                     contractId={row.linked_contract_id}
                   />
                 </div>
+              )}
+
+              {uploadFeedback[row.id] && (
+                <UploadIntakeFeedback
+                  extracted={uploadFeedback[row.id].extracted_metadata}
+                  duplicates={uploadFeedback[row.id].duplicate_candidates}
+                  dataTestId="request-upload-feedback"
+                />
               )}
 
               {row.status !== "cancelled" &&

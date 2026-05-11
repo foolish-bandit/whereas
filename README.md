@@ -157,6 +157,35 @@ Nothing about the backend Contract / Approval / Template models or their
 HTTP endpoints changed in this consolidation pass — only how they're
 labelled, grouped, and routed in the web UI.
 
+## Upload-intake intelligence (PR #66)
+
+Repository uploads and request-conversion uploads now return two
+small blocks of *visibility* alongside the persisted Contract:
+
+- **Extracted metadata** — a deterministic, no-LLM, no-OCR pass over
+  the filename + parsed body text. Surfaces a suggested title,
+  likely contract type (NDA, MSA, SOW, DPA, Amendment, …), possible
+  counterparty (when a "between X and Y" line or a recognizable
+  filename pattern matches), and an effective date when one appears
+  immediately after the literal phrase "effective date" / "as of".
+  Conservative by design: weak input yields ``null`` + a
+  ``*_unknown`` warning rather than a guess. Explicit user input
+  always wins; suggestions only fill the gaps.
+- **Duplicate candidates** — warning-only list of existing
+  contracts in the same org that look like the new upload. Exact
+  file-hash matches are flagged ``confidence='exact'``; same
+  normalized title (optionally plus counterparty) is
+  ``confidence='possible'``. Cross-org rows never appear; storage
+  internals are never surfaced. Previous releases hard-blocked
+  exact-hash matches with a 409; the new policy returns 201 + the
+  candidate list so the UI can warn without taking the decision
+  away from the user.
+
+Both features are best-effort: extraction or duplicate-lookup
+failures are logged and swallowed so the upload itself never
+blocks. The approval gate, DocuSeal flow, and existing artifact /
+markdown-snapshot semantics are unchanged.
+
 ### Clause segmentation (v1)
 
 Uploaded contracts are now segmented into clause-level units via a

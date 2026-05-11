@@ -1123,3 +1123,96 @@ fields).
   created via the request-conversion path.
 
 These follow-ups are referenced from sections 9 and 11 too; this list is the canonical one for the approval stack.
+
+## Upload-intake intelligence (PR #66)
+
+PR #66 adds two cooperating, best-effort surfaces that fire on both
+upload routes (`POST /api/contracts/upload` and
+`POST /api/requests/{id}/convert-upload`) without changing what
+those routes persist or how the rest of the system reads it:
+
+### Deterministic metadata extraction
+
+`app/services/contract_metadata.py` exports a single pure function
+`extract_basic_contract_metadata(filename, mime_type, markdown_text,
+plain_text)` returning an immutable
+`ExtractedContractMetadata(suggested_title, likely_contract_type,
+possible_counterparty_name, effective_date, warnings)`. It never
+calls an LLM, never reaches the network, and never raises — invalid
+input yields the empty result plus a `*_unknown` warning. The
+heuristics are documented in the module docstring; in summary:
+
+- **Title**: filename stem with separators normalized; Markdown H1
+  fallback when filename is empty.
+- **Contract type**: `\b`-anchored regex set, ordered so children
+  (Amendment, SOW) win over their parents (MSA) when a body
+  mentions both.
+- **Counterparty**: "between X and Y" body match (case-sensitive
+  party initials so "the parties" / "us" don't slip through) plus
+  a filename pattern of `<agreement_token> - <name>`.
+- **Effective date**: only trusted when within ~120 chars of a
+  literal "effective date" / "effective as of" / "dated this"
+  trigger. Standalone dates anywhere else in the body are too
+  ambiguous and are ignored.
+
+### Warning-level duplicate detection
+
+`app/services/duplicate_detection.py` exports
+`find_possible_duplicate_contracts(...)` returning a sorted, capped
+list of `DuplicateCandidate(contract_id, title, reason, confidence,
+created_at, status)`. Org-scoped only; the upload-in-progress is
+excluded via `exclude_contract_id`. Reasons / confidences are closed
+strings:
+
+- `exact_file_hash` → `confidence='exact'`
+- `similar_title_and_counterparty` → `confidence='possible'`
+- `similar_title` → `confidence='possible'`
+
+The new contract is **never** rejected because a duplicate exists.
+PR #66 replaces the pre-existing hard-block 409 on
+`/api/contracts/upload` with this warning-only mode. The frontend
+renders a "Possible duplicate(s) in Repository" panel with deep
+links into the matching rows.
+
+### Integration
+
+Both routes wire the services through small safe wrappers
+(`_safe_extract_metadata`, `_safe_find_duplicates`) that swallow any
+unexpected exception and return the empty result. The
+`ContractUploadResponse` and `ConvertRequestUploadResponse` schemas
+now carry `extracted_metadata` (optional) and `duplicate_candidates`
+(default empty list). Storage internals never appear — the new
+projection schemas use `extra='forbid'` plus allowlist-only
+attributes.
+
+Title precedence on both routes is now:
+**user-provided > extractor's `suggested_title` > filename stem**.
+The convert-upload path additionally honors
+**form counterparty > request.counterparty_name > extractor
+suggestion** for the artifact metadata, never overwriting the
+request row itself.
+
+### What did NOT change
+
+- No new tables. Extracted metadata lives only in the response (and
+  the artifact's `metadata_json` for the convert-upload path, which
+  already had that field).
+- Approval gate semantics and `can_send_contract_to_docuseal` are
+  unchanged.
+- DocuSeal send path is unchanged.
+- No LLM, no OCR, no Docling, no PowerSync.
+- Per-file hash uniqueness on the Repository upload route is now
+  surfaced rather than enforced; cross-org isolation is preserved.
+
+### Follow-ups
+
+- Body-text shingle / near-duplicate hashing (today we only compare
+  on file hash, normalized title, and counterparty).
+- Duplicate merge / "link to existing" workflow (today we surface
+  the candidate; the user is left to decide).
+- OCR + Docling fallback so scanned PDFs feed the same extractor.
+- Richer LLM-driven metadata correction with user confirmation.
+- Operator-confirmed metadata write-back to `Contract` rows once
+  the model carries `counterparty_name` / `contract_type`.
+- PowerSync sync rules covering the new `duplicate_candidates`
+  surface.

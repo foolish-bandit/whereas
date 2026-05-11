@@ -402,10 +402,18 @@ async def test_missing_org_wrapped_master_key_returns_409_without_storage(
     assert (await db_session.execute(select(Contract))).scalars().all() == []
 
 
-async def test_duplicate_upload_same_org_rejected_but_other_org_allowed(
+async def test_duplicate_upload_same_org_warns_but_does_not_block(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ) -> None:
+    """PR #66 — exact-hash duplicates are warning-only.
+
+    The Repository upload route used to 409 on a same-org hash match.
+    The new policy returns 201 plus a ``duplicate_candidates`` list
+    pointing at the existing contract so the UI can warn the user
+    without blocking the upload. Cross-org uploads still succeed and
+    must NOT see other orgs' rows on their candidate list.
+    """
     first = await _create_user_org(db_session, email="first@example.com")
     second = await _create_user_org(db_session, email="second@example.com")
     first_headers = _headers(first.user)
@@ -423,8 +431,22 @@ async def test_duplicate_upload_same_org_rejected_but_other_org_allowed(
         headers=first_headers,
         files=_file_tuple(),
     )
-    assert duplicate_response.status_code == 409
-    assert duplicate_response.json()["detail"]["existing_contract_id"] == first_response.json()["id"]
+    assert duplicate_response.status_code == 201, duplicate_response.text
+    body = duplicate_response.json()
+    candidates = body["duplicate_candidates"]
+    assert len(candidates) >= 1
+    # The pre-existing contract appears as an exact-hash candidate;
+    # the upload-in-progress is excluded from its own candidate list.
+    first_id = first_response.json()["id"]
+    new_id = body["id"]
+    assert any(c["contract_id"] == first_id for c in candidates)
+    assert all(c["contract_id"] != new_id for c in candidates)
+    assert all(c["reason"] == "exact_file_hash" for c in candidates)
+    assert all(c["confidence"] == "exact" for c in candidates)
+    # Storage internals never reach the response.
+    body_text = duplicate_response.text
+    assert "storage_key" not in body_text
+    assert "wrapped_dek" not in body_text
 
     other_org_response = await client.post(
         "/api/contracts/upload",
@@ -432,6 +454,8 @@ async def test_duplicate_upload_same_org_rejected_but_other_org_allowed(
         files=_file_tuple(),
     )
     assert other_org_response.status_code == 201
+    # Cross-org uploads never see the first org's matching row.
+    assert other_org_response.json()["duplicate_candidates"] == []
 
 
 async def test_parser_failure_returns_400_and_persists_no_contract(

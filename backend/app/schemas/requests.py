@@ -16,6 +16,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.contract_intake import (
+    DuplicateContractCandidateResponse,
+    ExtractedContractMetadataResponse,
+)
 from app.schemas.contracts import ContractListItemResponse
 from app.schemas.markdown import ContractMarkdownSnapshotResponse
 
@@ -139,3 +143,10 @@ class ConvertRequestUploadResponse(BaseModel):
     contract: ContractListItemResponse
     artifact: ContractArtifactResponse
     markdown_snapshot: ContractMarkdownSnapshotResponse | None = None
+    # PR #66 — same suggestion + duplicate-warning block the Repository
+    # upload returns. Either may be empty; neither blocks the
+    # conversion.
+    extracted_metadata: ExtractedContractMetadataResponse | None = None
+    duplicate_candidates: list[DuplicateContractCandidateResponse] = Field(
+        default_factory=list
+    )
