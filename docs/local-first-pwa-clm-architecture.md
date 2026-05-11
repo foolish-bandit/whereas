@@ -1643,3 +1643,12 @@ disappear the moment the user changes a selection.
 - Audit export covering `contract.downloaded`,
   `contract.artifact_downloaded`, and `contract.artifacts_compared`.
 - PowerSync sync rules covering the compare surface.
+
+
+### Repository document history PDF preview (PR #72)
+- Added per-artifact preview endpoint: `GET /api/contracts/{contract_id}/artifacts/{artifact_id}/preview`.
+- PDF artifacts are decrypted server-side and streamed inline as `application/pdf` with `Content-Disposition: inline`.
+- DOCX-to-PDF preview generation deferred in this PR (`PDF preview is not available for this file type yet.`).
+- Download remains available for retrievable artifacts and keeps existing priority/semantics.
+- No storage internals (`storage_key`, wrapped keys, private URLs) are exposed.
+- Future work: DOCX-to-PDF conversion, generated preview artifacts, visual PDF diff, thumbnails, PowerSync sync rules.

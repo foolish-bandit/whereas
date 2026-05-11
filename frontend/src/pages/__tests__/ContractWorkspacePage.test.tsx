@@ -1052,6 +1052,29 @@ describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
     });
   }
 
+  function withArtifactPreview(
+    artifacts: object[],
+    previewResponder: (artifactId: string) => Response,
+  ): void {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse(artifacts);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      const m = /\/api\/contracts\/[^/]+\/artifacts\/([^/]+)\/preview$/.exec(url);
+      if (m) return previewResponder(m[1]);
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+  }
+
   it("renders a Download version button on every history row", async () => {
     setupFetch(fetchMock, {
       artifacts: [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
@@ -1123,6 +1146,41 @@ describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
         name: /download current document/i,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("shows Preview only for PDF artifacts and unavailable copy for non-PDF", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, { ...SOURCE_ARTIFACT, mime_type: "text/plain" }],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    const previewButtons = await screen.findAllByTestId("document-history-row-preview");
+    expect(previewButtons).toHaveLength(1);
+    expect(section).toHaveTextContent("Preview unavailable for this file type");
+  });
+
+  it("clicking Preview opens and closing/unmounting revokes object URLs", async () => {
+    const createSpy = vi.spyOn(URL, "createObjectURL");
+    const revokeSpy = vi.spyOn(URL, "revokeObjectURL");
+    withArtifactPreview([SIGNED_ARTIFACT], () =>
+      new Response(new Blob(["%PDF"], { type: "application/pdf" }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'inline; filename="executed.pdf"',
+        },
+      }),
+    );
+    const { unmount } = renderPage();
+    fireEvent.click(await screen.findByTestId("document-history-row-preview"));
+    await screen.findByTestId("pdf-preview-modal");
+    expect(createSpy).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    await waitFor(() => expect(revokeSpy.mock.calls.length).toBeGreaterThanOrEqual(1));
+    fireEvent.click(await screen.findByTestId("document-history-row-preview"));
+    await screen.findByTestId("pdf-preview-modal");
+    unmount();
+    expect(revokeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows a safe inline error when the artifact download fails", async () => {

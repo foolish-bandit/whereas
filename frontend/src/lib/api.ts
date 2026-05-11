@@ -532,6 +532,21 @@ export async function downloadContractArtifact(
  * the storage internals scrub still runs as a belt-and-braces guard
  * against future regressions.
  */
+
+export async function previewContractArtifact(
+  contractId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.previewContractArtifact(contractId, artifactId, options);
+  }
+  return downloadBlob(
+    `/api/contracts/${encodeURIComponent(contractId)}/artifacts/${encodeURIComponent(artifactId)}/preview`,
+    options,
+  );
+}
+
 export async function compareContractArtifacts(
   contractId: string,
   baseArtifactId: string,

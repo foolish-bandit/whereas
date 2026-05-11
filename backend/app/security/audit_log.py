@@ -106,6 +106,7 @@ class AuditEventType(StrEnum):
     # wrapped_dek), raw bytes, raw extracted text, and signer PII are
     # NEVER recorded.
     CONTRACT_ARTIFACTS_COMPARED = "contract.artifacts_compared"
+    CONTRACT_ARTIFACT_PREVIEWED = "contract.artifact_previewed"
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"
 
