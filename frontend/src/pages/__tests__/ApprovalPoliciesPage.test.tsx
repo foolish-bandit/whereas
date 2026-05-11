@@ -35,6 +35,10 @@ function renderPage(initialEntry = "/approval-policies") {
 
 describe("ApprovalPoliciesPage", () => {
   beforeEach(() => {
+    // Reset call history so each test's assertions see a clean slate.
+    mocks.listApprovalPolicies.mockReset();
+    mocks.createApprovalPolicy.mockReset();
+    mocks.archiveApprovalPolicy.mockReset();
     mocks.listApprovalPolicies.mockImplementation(async (filters?: { include_archived?: boolean }) =>
       filters?.include_archived ? basePolicies : basePolicies.filter((p) => p.status !== "archived"),
     );
@@ -54,10 +58,13 @@ describe("ApprovalPoliciesPage", () => {
     expect(await screen.findByText("Archived Sample Policy")).toBeInTheDocument();
   });
 
-  it("submits blank criteria as null and archives", async () => {
+  it("submits blank criteria as null and archives via two-step confirm (PR #85)", async () => {
     renderPage();
     fireEvent.change(screen.getByPlaceholderText("Name"), { target: { value: "Wildcard Policy" } });
-    await screen.findByText("Legal Review");
+    // PR #85: "Legal Review" now appears both as the workflow-template
+    // option AND as the resolved template name on the existing policy
+    // row, so we wait via the option role instead of findByText.
+    await screen.findByRole("option", { name: "Legal Review" });
     fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "wftpl-legal-review" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(mocks.createApprovalPolicy).toHaveBeenCalled());
@@ -67,8 +74,46 @@ describe("ApprovalPoliciesPage", () => {
     expect(payload.priority).toBeNull();
     expect(payload.agreement_template_id).toBeNull();
 
+    // PR #85: clicking Archive opens a two-step confirm — no archive
+    // request is sent until Confirm archive is clicked.
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    expect(mocks.archiveApprovalPolicy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("approval-policy-confirm-archive"));
     await waitFor(() => expect(mocks.archiveApprovalPolicy).toHaveBeenCalled());
+  });
+
+  it("cancels the archive confirm without sending a request (PR #85)", async () => {
+    renderPage();
+    await screen.findByText("NDA Legal Review policy");
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    expect(screen.getByTestId("approval-policy-confirm-archive")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("approval-policy-cancel-archive"));
+    expect(mocks.archiveApprovalPolicy).not.toHaveBeenCalled();
+    // Archive button should be back; confirm should be gone.
+    expect(screen.getByRole("button", { name: "Archive" })).toBeInTheDocument();
+    expect(screen.queryByTestId("approval-policy-confirm-archive")).toBeNull();
+  });
+
+  it("renders a status pill, criteria chips, and workflow template name (PR #85)", async () => {
+    renderPage();
+    await screen.findByText("NDA Legal Review policy");
+    expect(screen.getByTestId("approval-policy-status-pill")).toHaveTextContent(
+      /active/i,
+    );
+    // All four criteria chips are present, defaulting to "Any" when the
+    // backend field is null.
+    expect(
+      screen.getByTestId("approval-policy-criteria-request"),
+    ).toHaveTextContent(/Request type: Any/i);
+    expect(
+      screen.getByTestId("approval-policy-criteria-contract"),
+    ).toHaveTextContent(/Contract type: Any/i);
+    expect(
+      screen.getByTestId("approval-policy-criteria-priority"),
+    ).toHaveTextContent(/Priority: Any/i);
+    expect(
+      screen.getByTestId("approval-policy-criteria-agreement"),
+    ).toHaveTextContent(/Agreement: Any/i);
   });
 
   // -------------------------------------------------------------------------

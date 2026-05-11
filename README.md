@@ -147,6 +147,16 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Approval Policies** — the rules engine at `/demo/approvals/policies`.
+  PR #85 polished this surface: proper layout (no more minified
+  one-line JSX), loading skeleton, friendly error + empty states,
+  Active / Archived status pill, criteria chips (request type,
+  contract type, priority, agreement template — each defaults to
+  "Any" when null), Manual-attach chip when `auto_attach=false`,
+  workflow-template name resolved instead of a raw ID, and a
+  two-step Archive confirm so accidental clicks don't take a rule
+  out of circulation. Existing `/demo/approvals/policies?policy_id=<id>`
+  deep-link behavior preserved (PR #61). No backend changes.
 - **Inbox** — the generic work-queue at `/demo/inbox`. PR #84 polished
   this surface to match the Approval Tasks bar: mount-aware row
   links go to the related Request detail / Repository workspace /
