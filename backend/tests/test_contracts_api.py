@@ -1803,13 +1803,26 @@ async def test_artifact_preview_pdf_inline_success(
             )
         )
     ).scalar_one()
+    # The audit details schema was widened in PR #73 (DOCX preview)
+    # to record the source MIME type plus how the PDF preview was
+    # produced ("pdf" = inline PDF bytes were already PDF;
+    # "docx" = converted via LibreOffice). The DOCX preview test
+    # exercises the converted path; this test pins the inline-PDF
+    # path. Storage internals are still asserted absent below.
     assert event.details == {
         "contract_id": str(contract_id),
         "artifact_id": str(artifact_row.id),
         "artifact_type": "original_upload",
         "filename": "signed.pdf",
-        "preview_mime_type": "application/pdf",
+        "mime_type": "application/pdf",
+        "preview_format": "pdf",
+        "conversion_source": "pdf",
     }
+    # Belt-and-braces: even the audit details must not carry storage
+    # internals. ``record_event`` rejects unknown keys at write time;
+    # this is the regression net.
+    for forbidden in ("storage_key", "wrapped_dek", "s3_key", "metadata_json"):
+        assert forbidden not in event.details
 
 
 async def test_artifact_preview_docx_success(

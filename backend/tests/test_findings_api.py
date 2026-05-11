@@ -36,6 +36,7 @@ from app.core.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     Clause,
+    ClauseTemplate,
     Contract,
     DeviationFinding,
     FindingStatus,
@@ -139,6 +140,12 @@ async def engine(postgres_container: Any | None) -> AsyncIterator[AsyncEngine]:
             Playbook.__table__,
             Contract.__table__,
             Clause.__table__,
+            # ClauseTemplate is needed by tests in
+            # ``test_clause_templates_api.py``, which re-uses this
+            # fixture set. Adding the table here keeps the sqlite
+            # fallback consistent with the postgres path (where
+            # ``Base.metadata.sorted_tables`` already covers it).
+            ClauseTemplate.__table__,
             PlaybookReviewRun.__table__,
             DeviationFinding.__table__,
         ]
