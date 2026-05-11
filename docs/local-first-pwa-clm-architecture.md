@@ -1469,7 +1469,7 @@ layers — is dropped. Tests pin the allowlist and assert that the raw
   `contract.artifact_downloaded` events.
 - PowerSync sync rules covering the Document history surface.
 
-## 6.5 Per-artifact download (PR #70)
+## Per-artifact download (PR #70)
 
 `GET /api/contracts/{contract_id}/artifacts/{artifact_id}/download`
 returns the bytes of a specific `ContractArtifact` version. The
