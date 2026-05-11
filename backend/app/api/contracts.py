@@ -35,6 +35,14 @@ from app.models import (
 )
 from app.schemas.activity import ActivityTimelineResponse
 from app.schemas.artifacts import ContractArtifactResponse
+from app.schemas.compare import (
+    ArtifactCompareRequest,
+    ArtifactCompareResponse,
+    ArtifactCompareSideResponse,
+    CompareSummaryResponse,
+    DiffBlockResponse,
+    DiffLineResponse,
+)
 from app.schemas.contract_intake import (
     ContractMetadataResponse,
     ContractMetadataUpdateRequest,
@@ -73,6 +81,12 @@ from app.security.encryption import (
 )
 from app.services import activity_timeline as activity_timeline_module
 from app.services.approval_gating import can_send_contract_to_docuseal
+from app.services.artifact_compare import (
+    CompareTextExtractionError,
+    artifact_compare_label,
+    compute_text_diff,
+    extract_comparable_text,
+)
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.contract_artifacts import (
     get_latest_official_downloadable_artifact,
@@ -1192,6 +1206,179 @@ async def download_contract_artifact(
     )
 
 
+@router.post(
+    "/{contract_id}/artifacts/compare",
+    response_model=ArtifactCompareResponse,
+)
+async def compare_contract_artifacts(
+    contract_id: uuid.UUID,
+    payload: ArtifactCompareRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ArtifactCompareResponse:
+    """Text-based comparison between two ContractArtifact versions (PR #71).
+
+    Powers the Document History "Compare versions" action. Resolution
+    rules mirror the per-artifact download endpoint so the same audit
+    posture and the same scoping invariants apply:
+
+      * Contract must belong to the caller's organization (cross-org
+        → 404 via ``_get_contract_for_org``).
+      * Both ``base_artifact_id`` and ``compare_artifact_id`` must
+        match an artifact on this contract and this organization.
+        Any miss returns 404 — the response cannot distinguish
+        "wrong artifact" from "wrong contract" from "wrong org".
+      * Each artifact must have retrievable storage metadata
+        (``storage_key`` + decryptable DEK). A miss returns 409.
+      * Extraction is best-effort via the existing MarkItDown-backed
+        converter. If either side cannot be converted to plain text,
+        the route returns 422 with a clear, side-tagged message. No
+        OCR, no Docling, no remote service, no LLM.
+
+    The response carries safe metadata only: artifact ids, types,
+    user-facing labels, filenames, and structured diff lines. The
+    extracted text is not stored; raw bytes, ``storage_key``,
+    ``wrapped_dek``, and signer PII never reach the client.
+
+    On success a ``contract.artifacts_compared`` audit event is
+    appended with the two artifact ids/types and the line-count
+    summary — never the extracted text.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    base_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.base_artifact_id,
+        organization_id=user.organization_id,
+    )
+    compare_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.compare_artifact_id,
+        organization_id=user.organization_id,
+    )
+
+    base_bytes, base_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=base_artifact,
+        allow_legacy_fallback=False,
+    )
+    compare_bytes, compare_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=compare_artifact,
+        allow_legacy_fallback=False,
+    )
+
+    warnings: list[str] = []
+    try:
+        base_extracted = extract_comparable_text(
+            file_bytes=base_bytes,
+            mime_type=base_mime,
+            filename=base_artifact.filename,
+            side="base",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The base version could not be converted to comparable text."
+            ),
+        ) from exc
+    try:
+        compare_extracted = extract_comparable_text(
+            file_bytes=compare_bytes,
+            mime_type=compare_mime,
+            filename=compare_artifact.filename,
+            side="compare",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The compare version could not be converted to comparable text."
+            ),
+        ) from exc
+    warnings.extend(base_extracted.warnings)
+    warnings.extend(compare_extracted.warnings)
+
+    # Defensive: zero the decrypted bytes references so they aren't
+    # kept around longer than needed. The plaintext lives in memory
+    # in any case while difflib runs, but after the diff we no longer
+    # need it.
+    del base_bytes, compare_bytes
+
+    diff = compute_text_diff(base_extracted.text, compare_extracted.text)
+    warnings.extend(diff.warnings)
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_ARTIFACTS_COMPARED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "base_artifact_id": str(base_artifact.id),
+            "compare_artifact_id": str(compare_artifact.id),
+            "base_artifact_type": base_artifact.artifact_type,
+            "compare_artifact_type": compare_artifact.artifact_type,
+            "added_lines": diff.summary.added_lines,
+            "removed_lines": diff.summary.removed_lines,
+            "changed_blocks": diff.summary.changed_blocks,
+        },
+    )
+
+    return ArtifactCompareResponse(
+        base=_compare_side_response(base_artifact),
+        compare=_compare_side_response(compare_artifact),
+        summary=CompareSummaryResponse(
+            added_lines=diff.summary.added_lines,
+            removed_lines=diff.summary.removed_lines,
+            changed_blocks=diff.summary.changed_blocks,
+            unchanged_lines=diff.summary.unchanged_lines,
+        ),
+        diff_blocks=[
+            DiffBlockResponse(
+                type=block.type,
+                base_line_start=block.base_line_start,
+                compare_line_start=block.compare_line_start,
+                lines=[
+                    DiffLineResponse(type=line.type, text=line.text)
+                    for line in block.lines
+                ],
+            )
+            for block in diff.diff_blocks
+        ],
+        warnings=warnings,
+    )
+
+
+def _compare_side_response(artifact: ContractArtifact) -> ArtifactCompareSideResponse:
+    """Project a ContractArtifact into a compare-panel side descriptor.
+
+    Only safe metadata travels: id, type, user-facing label, the
+    user-provided filename, and the timestamp. No ``metadata_json``,
+    no ``storage_key``, no ``wrapped_dek``.
+    """
+    return ArtifactCompareSideResponse(
+        artifact_id=artifact.id,
+        artifact_type=artifact.artifact_type,
+        label=artifact_compare_label(artifact.artifact_type, artifact.source),
+        filename=artifact.filename,
+        created_at=artifact.created_at,
+    )
+
+
 async def _resolve_downloadable_artifact(
     session: AsyncSession,
     *,
@@ -1239,6 +1426,64 @@ async def _stream_contract_artifact_download(
     Always emits the supplied audit event on success. Storage
     internals (``storage_key``, ``wrapped_dek``) are read off the
     resolved source and are never returned to the caller.
+    """
+    plaintext, mime_type = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=artifact,
+        allow_legacy_fallback=allow_legacy_fallback,
+    )
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=audit_event_type,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details=_audit_contract_details(
+            contract,
+            filename=artifact.filename if artifact is not None else None,
+            artifact_id=artifact.id if artifact is not None else None,
+            artifact_type=artifact.artifact_type if artifact is not None else None,
+        ),
+    )
+
+    return Response(
+        content=plaintext,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{_download_filename(contract, artifact=artifact)}"'
+            ),
+        },
+    )
+
+
+async def _decrypt_artifact_bytes(
+    session: AsyncSession,
+    *,
+    user: User,
+    contract: Contract,
+    artifact: ContractArtifact | None,
+    allow_legacy_fallback: bool,
+) -> tuple[bytes, str]:
+    """Resolve storage metadata, decrypt, return ``(plaintext, mime_type)``.
+
+    Extracted from the download/streaming helper so the compare
+    endpoint (PR #71) can read the bytes through the same code path
+    without writing a ``contract.artifact_downloaded`` audit event.
+    No audit is written here — the caller is responsible for emitting
+    the right event for their flow.
+
+    Storage internals (``storage_key`` / ``wrapped_dek``) stay inside
+    this function. ``HTTPException`` is raised for the same shaped
+    errors the streaming helper used to raise inline:
+
+      * 404 — artifact is required but missing (no legacy fallback).
+      * 409 — storage metadata or wrapped DEK is missing/unusable.
+      * 500 — the storage layer raised on retrieval.
     """
     if artifact is None and not allow_legacy_fallback:
         # Defensive: the per-artifact endpoint resolves the row before
@@ -1306,30 +1551,7 @@ async def _stream_contract_artifact_download(
     finally:
         del org_master_key
 
-    await record_event(
-        session,
-        organization_id=user.organization_id,
-        event_type=audit_event_type,
-        actor_user_id=user.id,
-        target_type="contract",
-        target_id=str(contract.id),
-        details=_audit_contract_details(
-            contract,
-            filename=artifact.filename if artifact is not None else None,
-            artifact_id=artifact.id if artifact is not None else None,
-            artifact_type=artifact.artifact_type if artifact is not None else None,
-        ),
-    )
-
-    return Response(
-        content=plaintext,
-        media_type=mime_type,
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{_download_filename(contract, artifact=artifact)}"'
-            ),
-        },
-    )
+    return plaintext, mime_type
 
 
 def _artifact_storage_key_with_legacy(

@@ -8,6 +8,10 @@
  *   the session, which is the only behavior worth preserving here.
  */
 import { ApiError, type DownloadResult, type UploadInput } from "./api";
+import type {
+  ArtifactCompareResponse,
+  DiffBlock,
+} from "../types/compare";
 import {
   MOCK_DETAIL_BY_ID,
   MOCK_FAILED_ID,
@@ -695,6 +699,207 @@ export async function downloadContractArtifact(
     filename,
     mimeType: "text/plain",
   };
+}
+
+/**
+ * PR #71 — demo-mode artifact compare. The real backend extracts
+ * comparable text via MarkItDown and diffs the result; demo mode
+ * synthesizes a small, deterministic redline so the panel renders
+ * end-to-end without a backend. The seed NDA's three lifecycle
+ * artifacts (source / generated / signed) each have a canned
+ * plain-text body; comparing any two yields a structured diff with
+ * realistic added/removed/context counts.
+ */
+export async function compareContractArtifacts(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<ArtifactCompareResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const detail = sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  if (!detail) {
+    throw new ApiError(404, "Contract not found.");
+  }
+  const artifacts = await getContractArtifacts(contractId, options);
+  const base = artifacts.find((a) => a.id === baseArtifactId);
+  const compareArt = artifacts.find((a) => a.id === compareArtifactId);
+  if (!base || !compareArt) {
+    throw new ApiError(404, "Artifact not found.");
+  }
+  const baseText = _demoArtifactText(base.artifact_type, detail.title);
+  const compareText = _demoArtifactText(compareArt.artifact_type, detail.title);
+  const diff = _demoDiff(baseText, compareText);
+  return {
+    base: {
+      artifact_id: base.id,
+      artifact_type: base.artifact_type,
+      label: _demoLabel(base.artifact_type),
+      filename: base.filename ?? null,
+      created_at: base.created_at,
+    },
+    compare: {
+      artifact_id: compareArt.id,
+      artifact_type: compareArt.artifact_type,
+      label: _demoLabel(compareArt.artifact_type),
+      filename: compareArt.filename ?? null,
+      created_at: compareArt.created_at,
+    },
+    summary: diff.summary,
+    diff_blocks: diff.blocks,
+    warnings: [],
+  };
+}
+
+function _demoLabel(artifactType: string): string {
+  switch (artifactType) {
+    case "original_upload":
+      return "Source file";
+    case "generated_docx":
+      return "Generated Word document";
+    case "signed_pdf":
+      return "Signed PDF";
+    case "redline":
+      return "Redline";
+    case "attachment":
+      return "Attachment";
+    case "exhibit":
+      return "Exhibit";
+    default:
+      return "File";
+  }
+}
+
+function _demoArtifactText(artifactType: string, title: string): string {
+  // Each lifecycle stage gets a slightly different canned body so the
+  // demo diff shows realistic added/removed/changed lines without
+  // needing real document conversion.
+  const heading = `# ${title}`;
+  if (artifactType === "signed_pdf") {
+    return [
+      heading,
+      "",
+      "Section 1. Term.",
+      "The Agreement is for two (2) years from the Effective Date.",
+      "Section 2. Confidentiality.",
+      "Each party shall hold the other party's Confidential Information in strict confidence.",
+      "Signed by both parties.",
+      "",
+    ].join("\n");
+  }
+  if (artifactType === "generated_docx") {
+    return [
+      heading,
+      "",
+      "Section 1. Term.",
+      "The Agreement is for two (2) years from the Effective Date.",
+      "Section 2. Confidentiality.",
+      "Each party shall hold the other party's Confidential Information in strict confidence.",
+      "",
+    ].join("\n");
+  }
+  // Source / original / other → use the more conservative one-year
+  // template so the compare panel has something to surface.
+  return [
+    heading,
+    "",
+    "Section 1. Term.",
+    "The Agreement is for one (1) year from the Effective Date.",
+    "Section 2. Confidentiality.",
+    "Each party shall hold Confidential Information in confidence.",
+    "",
+  ].join("\n");
+}
+
+function _demoDiff(
+  baseText: string,
+  compareText: string,
+): { summary: ArtifactCompareResponse["summary"]; blocks: DiffBlock[] } {
+  // Small handwritten LCS-equivalent: line-by-line walk. Good enough
+  // for the demo's canned text, which we control. Production diffs
+  // come from the backend.
+  const baseLines = baseText.replace(/\r\n/g, "\n").split("\n");
+  const compareLines = compareText.replace(/\r\n/g, "\n").split("\n");
+  const blocks: DiffBlock[] = [];
+  let summary = {
+    added_lines: 0,
+    removed_lines: 0,
+    changed_blocks: 0,
+    unchanged_lines: 0,
+  };
+  let i = 0;
+  let j = 0;
+  while (i < baseLines.length || j < compareLines.length) {
+    const baseLine = baseLines[i];
+    const compareLine = compareLines[j];
+    if (i < baseLines.length && j < compareLines.length && baseLine === compareLine) {
+      const block: DiffBlock = {
+        type: "context",
+        base_line_start: i + 1,
+        compare_line_start: j + 1,
+        lines: [],
+      };
+      while (
+        i < baseLines.length &&
+        j < compareLines.length &&
+        baseLines[i] === compareLines[j]
+      ) {
+        block.lines.push({ type: "context", text: baseLines[i] });
+        summary.unchanged_lines += 1;
+        i += 1;
+        j += 1;
+      }
+      blocks.push(block);
+      continue;
+    }
+    if (
+      i < baseLines.length &&
+      j < compareLines.length &&
+      baseLine !== compareLine
+    ) {
+      blocks.push({
+        type: "changed",
+        base_line_start: i + 1,
+        compare_line_start: j + 1,
+        lines: [
+          { type: "removed", text: baseLine },
+          { type: "added", text: compareLine },
+        ],
+      });
+      summary = {
+        ...summary,
+        added_lines: summary.added_lines + 1,
+        removed_lines: summary.removed_lines + 1,
+        changed_blocks: summary.changed_blocks + 1,
+      };
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if (i < baseLines.length) {
+      blocks.push({
+        type: "removed",
+        base_line_start: i + 1,
+        compare_line_start: j + 1,
+        lines: [{ type: "removed", text: baseLine }],
+      });
+      summary = { ...summary, removed_lines: summary.removed_lines + 1 };
+      i += 1;
+      continue;
+    }
+    if (j < compareLines.length) {
+      blocks.push({
+        type: "added",
+        base_line_start: i + 1,
+        compare_line_start: j + 1,
+        lines: [{ type: "added", text: compareLine }],
+      });
+      summary = { ...summary, added_lines: summary.added_lines + 1 };
+      j += 1;
+      continue;
+    }
+  }
+  return { summary, blocks };
 }
 
 function _applyCannedDeactivations<T extends { id: string; is_active: boolean }>(

@@ -332,9 +332,87 @@ The current/default download priority and the
 ``GET /api/contracts/{id}/download`` endpoint are unchanged by this
 PR; only the per-version surface is new.
 
-Follow-ups tracked: redline comparison view, generated PDF preview,
-artifact diff / version compare, audit export, and PowerSync sync
-rules.
+Follow-ups tracked: text-based version comparison (delivered in PR
+#71, below), official DOCX redline generation, generated PDF preview,
+side-by-side viewer, artifact diff / version compare, audit export,
+and PowerSync sync rules.
+
+## Redline / version compare foundation (PR #71)
+
+The Document History panel can now produce a **text comparison**
+between any two ``ContractArtifact`` versions on the same Repository
+record. The action lives under the version list: pick a *base* and a
+*compare* version, click **Compare**, and the panel renders an
+added/removed/changed-block summary plus a structured line-by-line
+diff. The header's **Download current document** action and the
+per-row **Download version** action are unchanged; comparison is
+visibility only.
+
+User-facing copy is deliberate:
+
+- The panel header is **Text comparison**, not "redline."
+- A subtitle reads *Preview comparison only — not an official
+  redline*, with a follow-up sentence pointing users at the
+  per-version download for a Word-style redline.
+- Warnings (text truncation, diff truncation) are mapped from opaque
+  service-layer tags to human-readable notices before they reach the
+  DOM.
+
+Backend:
+
+- ``POST /api/contracts/{contract_id}/artifacts/compare`` takes
+  ``{base_artifact_id, compare_artifact_id}`` and returns a structured
+  diff with safe metadata on each side (artifact id, type, label,
+  filename, created_at).
+- Org + contract scoped. Both ids must match an artifact on the
+  path contract and on the caller's organization; any miss returns
+  404 (no "wrong artifact" vs "wrong contract" oracle). An artifact
+  with missing storage metadata returns 409.
+- Text extraction reuses the existing MarkItDown-backed converter
+  (``app.services.document_markdown``). When either side cannot be
+  converted to plain text the route returns 422 with a user-facing
+  message — **no** OCR / Docling / LLM / remote-service fallback. No
+  redline artifact is created, no markdown snapshot is persisted,
+  and the extracted text never leaves the request scope.
+- Diff is computed with stdlib ``difflib`` (``SequenceMatcher``).
+  Inputs are capped at 200,000 characters per side; the rendered
+  diff is capped at 1,000 lines total. The summary counts are
+  computed against the full opcode stream so they remain accurate
+  even when the preview is truncated; truncation surfaces via the
+  ``warnings`` list (``base_text_truncated`` /
+  ``compare_text_truncated`` / ``diff_lines_truncated``).
+- A dedicated ``contract.artifacts_compared`` audit event is
+  written on success with the two artifact ids/types and the line
+  counts. Storage internals (``storage_key`` / ``wrapped_dek``),
+  raw bytes, extracted text, and signer PII are never recorded.
+
+Frontend:
+
+- ``compareContractArtifacts(contractId, baseArtifactId,
+  compareArtifactId)`` in ``lib/api.ts``; demo mode is fully wired
+  (``mockApi.compareContractArtifacts``) so the panel renders
+  end-to-end on the demo build.
+- The Document History panel renders the compare controls only
+  when at least two artifacts exist for the contract.
+- The compare result panel renders summary cards (Added / Removed /
+  Changed blocks / Unchanged) and a monospaced diff with
+  add/remove/context line styling. Stale results are dropped the
+  moment the user changes a side.
+
+Constraints preserved by this PR:
+
+- No artifact semantics, taxonomy, or schema changes.
+- No change to download priority, the per-artifact download
+  endpoint, approval gate, or DocuSeal behavior.
+- No persisted redline artifact and no markdown-snapshot rows are
+  created by the compare flow.
+- No OCR, Docling, LLM, remote-service, or PowerSync usage.
+
+Follow-ups tracked: official DOCX redline generation,
+side-by-side viewer, generated PDF preview, artifact diff /
+version compare beyond text, persisted redline artifacts,
+Docling/OCR fallback for image-only PDFs, audit export, and
+PowerSync sync rules.
 
 ### Clause segmentation (v1)
 

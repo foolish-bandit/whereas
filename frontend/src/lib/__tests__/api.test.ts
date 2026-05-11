@@ -11,6 +11,7 @@ import {
 import {
   ApiError,
   MissingDevUserError,
+  compareContractArtifacts,
   createDevSetup,
   downloadContract,
   downloadContractArtifact,
@@ -226,6 +227,114 @@ describe("api client", () => {
     it("throws MissingDevUserError before calling fetch when no dev user is set", async () => {
       await expect(
         downloadContractArtifact("c-1", "art-1"),
+      ).rejects.toBeInstanceOf(MissingDevUserError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("compareContractArtifacts (PR #71)", () => {
+    const RESPONSE = {
+      base: {
+        artifact_id: "art-base",
+        artifact_type: "original_upload",
+        label: "Source file",
+        filename: "source.pdf",
+        created_at: "2026-05-01T00:00:00Z",
+      },
+      compare: {
+        artifact_id: "art-compare",
+        artifact_type: "signed_pdf",
+        label: "Signed PDF",
+        filename: "signed.pdf",
+        created_at: "2026-05-03T00:00:00Z",
+      },
+      summary: {
+        added_lines: 1,
+        removed_lines: 1,
+        changed_blocks: 1,
+        unchanged_lines: 5,
+      },
+      diff_blocks: [
+        {
+          type: "changed",
+          base_line_start: 2,
+          compare_line_start: 2,
+          lines: [
+            { type: "removed", text: "one (1) year" },
+            { type: "added", text: "two (2) years" },
+          ],
+        },
+      ],
+      warnings: [],
+    };
+
+    it("POSTs both artifact ids and returns the parsed response", async () => {
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify(RESPONSE), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await compareContractArtifacts(
+        "c-1",
+        "art-base",
+        "art-compare",
+      );
+      expect(result.summary.added_lines).toBe(1);
+      expect(result.diff_blocks[0].lines[0].type).toBe("removed");
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain(
+        "/api/contracts/c-1/artifacts/compare",
+      );
+      expect((init as RequestInit).method).toBe("POST");
+      const body = JSON.parse((init as RequestInit).body as string);
+      expect(body).toEqual({
+        base_artifact_id: "art-base",
+        compare_artifact_id: "art-compare",
+      });
+    });
+
+    it("maps a 422 conversion failure to ApiError with the detail", async () => {
+      setDevUserId(VALID_UUID);
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "The base version could not be converted to comparable text.",
+          }),
+          {
+            status: 422,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+      await expect(
+        compareContractArtifacts("c-1", "a", "b"),
+      ).rejects.toMatchObject({
+        name: "ApiError",
+        status: 422,
+        message:
+          "The base version could not be converted to comparable text.",
+      });
+    });
+
+    it("scrubs storage_key if the backend leaks one (defensive)", async () => {
+      setDevUserId(VALID_UUID);
+      const naughty = { ...RESPONSE, storage_key: "documents/secret.enc" };
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify(naughty), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      const result = await compareContractArtifacts("c-1", "a", "b");
+      expect(result).not.toHaveProperty("storage_key");
+    });
+
+    it("throws MissingDevUserError before calling fetch when no dev user is set", async () => {
+      await expect(
+        compareContractArtifacts("c-1", "a", "b"),
       ).rejects.toBeInstanceOf(MissingDevUserError);
       expect(fetchMock).not.toHaveBeenCalled();
     });

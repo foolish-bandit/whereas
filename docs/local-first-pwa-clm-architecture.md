@@ -1534,3 +1534,112 @@ and raw bytes are never persisted to the audit log.
 - Storage internals exposure — `storage_key` and `wrapped_dek` are
   still stripped at the schema layer and re-scrubbed by the api
   client.
+
+## Redline / version compare foundation (PR #71)
+
+The Document History panel can produce a text-based **comparison**
+between any two `ContractArtifact` rows on the same Repository
+record. This is the foundation for the long-term redline workflow;
+the v1 cut deliberately stays text-only and visibility-only. No
+official DOCX redline is generated, no `redline` artifact is
+persisted, and the extracted text never leaves the request scope.
+
+### Endpoint + scoping
+
+`POST /api/contracts/{contract_id}/artifacts/compare` takes
+`{base_artifact_id, compare_artifact_id}` and returns a structured
+diff payload. Resolution mirrors the per-artifact download endpoint
+exactly so the same security invariants apply:
+
+1. Resolve the contract by `(contract_id, organization_id)`. A miss
+   returns 404 via the existing `_get_contract_for_org` helper.
+2. Resolve each artifact by `(id, contract_id, organization_id)`
+   through the same `_resolve_downloadable_artifact` helper used by
+   `/artifacts/{artifact_id}/download`. Any miss returns 404 so
+   callers cannot distinguish "wrong artifact" from "wrong
+   contract" from "wrong org."
+3. Each side's bytes are decrypted through the shared
+   `_decrypt_artifact_bytes` helper (extracted from the download
+   path in this PR). If `storage_key` is missing/`"pending"` or the
+   wrapped DEK is missing, the route returns 409. No legacy
+   `Contract.s3_key` fallback.
+
+### Extraction + diff
+
+Comparable text is produced by `extract_comparable_text` in
+`app.services.artifact_compare`. It wraps the existing
+`convert_document_to_markdown` (MarkItDown-backed) converter. There
+is **no fallback** to `parse_document` / Docling / OCR / a remote
+service / an LLM — if MarkItDown is not installed or cannot handle
+the input, the route returns 422 with a user-facing message and the
+frontend renders the error inline. Inputs are capped at 200,000
+characters per side; longer documents are truncated with a
+side-tagged warning (`base_text_truncated` /
+`compare_text_truncated`).
+
+The diff itself is `difflib.SequenceMatcher.get_opcodes()` walked
+twice:
+
+- Once over the full opcode stream to compute the wire summary
+  (`added_lines`, `removed_lines`, `changed_blocks`,
+  `unchanged_lines`).
+- Once to emit `DiffBlock` rows. `equal` → `context`, `insert` →
+  `added`, `delete` → `removed`, `replace` → `changed` (with
+  alternating `removed` / `added` `DiffLine` children). Emission
+  stops at `DEFAULT_MAX_LINES = 1_000`; truncation surfaces via
+  the `diff_lines_truncated` warning. Summary counts remain
+  accurate against the full diff.
+
+### Response payload
+
+The wire shape lives in `app.schemas.compare`. Each side returns
+only safe metadata — `artifact_id`, `artifact_type`, a user-facing
+`label` resolved by `artifact_compare_label` (which the frontend's
+`compareOptionLabel` mirrors), `filename`, and `created_at`. No
+`storage_key`, no `wrapped_dek`, no raw bytes, no `metadata_json`.
+
+### Audit
+
+A successful comparison appends a `contract.artifacts_compared`
+event with the two artifact ids, the two artifact types, and the
+add/remove/change line counts. The extracted text and storage
+internals are never persisted to the audit log.
+
+### Frontend
+
+The `CompareVersionsPanel` lives inside the Document History
+section and is only rendered when at least two artifacts exist for
+the contract. Two dropdowns select base + compare; the Compare
+button is disabled until two distinct artifacts are picked. The
+result panel renders summary cards (Added / Removed / Changed
+blocks / Unchanged) plus a monospaced unified diff. The panel is
+labelled **Text comparison** — not "redline" — and points users at
+the per-version download for a full Word redline. Stale results
+disappear the moment the user changes a selection.
+
+### What did NOT change
+
+- Artifact taxonomy or schema. No `redline` row is created by this
+  flow.
+- Markdown snapshot persistence. The compare path does not write
+  `ContractMarkdownSnapshot` rows; text extraction is on demand.
+- Default download priority, per-artifact download semantics, or
+  approval gate / DocuSeal behavior.
+- Storage internals exposure — same scrub posture as the rest of
+  the artifact surface.
+
+### Follow-ups
+
+- Official DOCX redline generation (true tracked-changes output)
+  and a saved `redline` `ContractArtifact` once the operator
+  experience is settled.
+- Side-by-side viewer alongside the inline unified diff.
+- Generated PDF preview alongside DOCX.
+- Artifact diff / version compare beyond text (image-only PDFs,
+  binary attachments).
+- A Docling/OCR fallback for image-only PDFs — opt-in, with the
+  same self-host / no-remote-service constraints as the rest of
+  the conversion pipeline.
+- Audit export covering `contract.downloaded`,
+  `contract.artifact_downloaded`, and `contract.artifacts_compared`.
+- PowerSync sync rules covering the compare surface.

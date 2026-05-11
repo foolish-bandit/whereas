@@ -16,6 +16,7 @@ import UploadReviewPanel from "../components/UploadReviewPanel";
 import {
   ApiError,
   MissingDevUserError,
+  compareContractArtifacts,
   downloadContract,
   downloadContractArtifact,
   getContract,
@@ -50,6 +51,7 @@ import type {
 } from "../types/contracts";
 import type { ContractMetadataView } from "../types/contractIntake";
 import type { ReviewRunDetail } from "../types/findings";
+import type { ArtifactCompareResponse } from "../types/compare";
 import type {
   DocuSealSigner,
   ContractApprovalGate,
@@ -76,6 +78,25 @@ type ArtifactDownloadStateMap = Record<
   string,
   { kind: "downloading" } | { kind: "error"; message: string } | undefined
 >;
+
+/**
+ * PR #71 — text-based version compare state for the Document History
+ * panel. Lives next to the artifacts list because the comparison only
+ * makes sense in the context of two artifacts on the same Repository
+ * record. The base/compare selections are stored as artifact ids
+ * (not the artifact objects themselves) so they survive a refresh of
+ * the underlying artifacts list.
+ */
+type CompareSelection = {
+  baseId: string | null;
+  compareId: string | null;
+};
+
+type CompareState =
+  | { kind: "idle" }
+  | { kind: "comparing" }
+  | { kind: "loaded"; result: ArtifactCompareResponse }
+  | { kind: "error"; message: string };
 
 type SidebarTab = "metadata" | "clauses" | "review";
 
@@ -105,6 +126,11 @@ export default function ContractWorkspacePage() {
   });
   const [artifactDownloads, setArtifactDownloads] =
     useState<ArtifactDownloadStateMap>({});
+  const [compareSelection, setCompareSelection] = useState<CompareSelection>({
+    baseId: null,
+    compareId: null,
+  });
+  const [compareState, setCompareState] = useState<CompareState>({ kind: "idle" });
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
   // Full artifact list drives the lifecycle strip, the Files section,
   // the Current-document label, and the Details origin copy. Mirrors
@@ -314,6 +340,39 @@ export default function ContractWorkspacePage() {
     }
   }
 
+  async function onCompareArtifacts() {
+    if (!contract) return;
+    const { baseId, compareId } = compareSelection;
+    if (!baseId || !compareId || baseId === compareId) return;
+    setCompareState({ kind: "comparing" });
+    try {
+      const result = await compareContractArtifacts(
+        contract.id,
+        baseId,
+        compareId,
+      );
+      setCompareState({ kind: "loaded", result });
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError
+          ? err.message
+          : err instanceof ApiError
+            ? err.message
+            : "Comparison failed unexpectedly.";
+      setCompareState({ kind: "error", message });
+    }
+  }
+
+  function onCompareSelectionChange(next: CompareSelection) {
+    setCompareSelection(next);
+    // Drop the previous compare result the moment the user changes a
+    // side — keeping it around would show a stale diff against the
+    // currently-selected artifacts.
+    if (compareState.kind !== "idle") {
+      setCompareState({ kind: "idle" });
+    }
+  }
+
   if (state.kind === "loading") {
     return (
       <div>
@@ -455,6 +514,10 @@ export default function ContractWorkspacePage() {
         state={artifactsState}
         artifactDownloads={artifactDownloads}
         onDownloadArtifact={onDownloadArtifact}
+        compareSelection={compareSelection}
+        compareState={compareState}
+        onCompareSelectionChange={onCompareSelectionChange}
+        onCompare={onCompareArtifacts}
       />
     </div>
   );
@@ -850,31 +913,37 @@ function DetailRow({
 }
 
 /**
- * Document history (PR #69, extended in PR #70) — replaces the older
- * flat "Files" listing. Renders every safe ContractArtifact in
- * chronological order (newest first), marks the priority-winning
- * artifact as the current document to mirror the backend's download
- * priority, and falls back to a legacy-row notice when the contract
- * has no artifacts at all (e.g. uploaded before artifact tracking
- * landed).
+ * Document history (PR #69, extended in PR #70 / #71) — replaces the
+ * older flat "Files" listing. Renders every safe ContractArtifact in
+ * chronological order, marks the priority-winning artifact as the
+ * current document to mirror the backend's download priority, and
+ * exposes per-version download (PR #70) plus text-based version
+ * compare (PR #71).
  *
- * Per-artifact downloads (PR #70) are exposed via a "Download version"
- * button on each row; the header's "Download current document" action
- * stays the load-bearing affordance for the current priority winner.
- * Per-row downloads call the dedicated per-artifact endpoint, which is
- * org + contract scoped server-side and decrypts through the same
- * storage path — no presigned URLs and no storage internals are
- * exposed.
+ * The compare panel is intentionally narrow: it shows added/removed
+ * line counts and a structured diff over extracted text. It is not
+ * an official Word redline — downloading both versions is still the
+ * authoritative path for legal review. The user-facing copy spells
+ * that out so the panel cannot be mistaken for a real redline.
  */
 function DocumentHistorySection({
   state,
   artifactDownloads,
   onDownloadArtifact,
+  compareSelection,
+  compareState,
+  onCompareSelectionChange,
+  onCompare,
 }: {
   state: ArtifactsState;
   artifactDownloads: ArtifactDownloadStateMap;
   onDownloadArtifact: (artifact: ContractArtifact) => void;
+  compareSelection: CompareSelection;
+  compareState: CompareState;
+  onCompareSelectionChange: (next: CompareSelection) => void;
+  onCompare: () => void;
 }) {
+  const artifacts = state.kind === "loaded" ? state.artifacts : [];
   return (
     <section
       className="mt-6 rounded border border-rule p-4"
@@ -903,22 +972,33 @@ function DocumentHistorySection({
         </p>
       )}
       {state.kind === "loaded" &&
-        (state.artifacts.length === 0 ? (
+        (artifacts.length === 0 ? (
           <LegacyFallbackRow />
         ) : (
-          <ol
-            className="mt-3 divide-y divide-rule text-xs"
-            data-testid="document-history-list"
-          >
-            {getArtifactHistoryItems(state.artifacts).map((item) => (
-              <DocumentHistoryRow
-                key={item.artifact.id}
-                item={item}
-                downloadState={artifactDownloads[item.artifact.id]}
-                onDownload={onDownloadArtifact}
+          <>
+            <ol
+              className="mt-3 divide-y divide-rule text-xs"
+              data-testid="document-history-list"
+            >
+              {getArtifactHistoryItems(artifacts).map((item) => (
+                <DocumentHistoryRow
+                  key={item.artifact.id}
+                  item={item}
+                  downloadState={artifactDownloads[item.artifact.id]}
+                  onDownload={onDownloadArtifact}
+                />
+              ))}
+            </ol>
+            {artifacts.length >= 2 && (
+              <CompareVersionsPanel
+                artifacts={artifacts}
+                selection={compareSelection}
+                state={compareState}
+                onSelectionChange={onCompareSelectionChange}
+                onCompare={onCompare}
               />
-            ))}
-          </ol>
+            )}
+          </>
         ))}
     </section>
   );
@@ -1021,6 +1101,277 @@ function DocumentHistoryRow({
       </div>
     </li>
   );
+}
+
+/**
+ * PR #71 — text-based version compare. Renders two dropdowns plus a
+ * Compare button; when a compare succeeds, the structured diff
+ * returned by ``compareContractArtifacts`` drops in below the
+ * dropdowns. Explicitly labeled "Text comparison" — not an official
+ * redline — because text extraction is best-effort and we don't
+ * generate a tracked-changes DOCX yet.
+ */
+function CompareVersionsPanel({
+  artifacts,
+  selection,
+  state,
+  onSelectionChange,
+  onCompare,
+}: {
+  artifacts: readonly ContractArtifact[];
+  selection: CompareSelection;
+  state: CompareState;
+  onSelectionChange: (next: CompareSelection) => void;
+  onCompare: () => void;
+}) {
+  const canCompare =
+    selection.baseId !== null &&
+    selection.compareId !== null &&
+    selection.baseId !== selection.compareId &&
+    state.kind !== "comparing";
+  return (
+    <div
+      className="mt-5 rounded border border-rule bg-canvas-subtle p-3"
+      data-testid="document-history-compare-panel"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-xs font-medium text-ink">Text comparison</h3>
+        <p className="text-[11px] text-ink-subtle">
+          Preview comparison only — not an official redline.
+        </p>
+      </div>
+      <p className="mt-1 text-[11px] text-ink-subtle">
+        Pick two versions to see a line-by-line text diff. Download the
+        files if you need a full Word redline.
+      </p>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col text-[11px] text-ink-muted">
+          Base version
+          <select
+            className="mt-0.5 rounded border border-rule bg-canvas px-2 py-1 text-xs text-ink"
+            data-testid="compare-base-select"
+            value={selection.baseId ?? ""}
+            onChange={(e) =>
+              onSelectionChange({
+                ...selection,
+                baseId: e.target.value || null,
+              })
+            }
+          >
+            <option value="">Select a version…</option>
+            {artifacts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {compareOptionLabel(a)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-[11px] text-ink-muted">
+          Compare version
+          <select
+            className="mt-0.5 rounded border border-rule bg-canvas px-2 py-1 text-xs text-ink"
+            data-testid="compare-target-select"
+            value={selection.compareId ?? ""}
+            onChange={(e) =>
+              onSelectionChange({
+                ...selection,
+                compareId: e.target.value || null,
+              })
+            }
+          >
+            <option value="">Select a version…</option>
+            {artifacts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {compareOptionLabel(a)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={onCompare}
+          disabled={!canCompare}
+          data-testid="compare-versions-button"
+          className="inline-flex items-center justify-center rounded border border-ink bg-ink px-3 py-1.5 text-xs font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {state.kind === "comparing" ? "Comparing…" : "Compare"}
+        </button>
+      </div>
+      {state.kind === "error" && (
+        <p
+          className="mt-3 text-[11px] text-danger"
+          data-testid="compare-versions-error"
+        >
+          {state.message}
+        </p>
+      )}
+      {state.kind === "loaded" && <CompareResultPanel result={state.result} />}
+    </div>
+  );
+}
+
+function CompareResultPanel({ result }: { result: ArtifactCompareResponse }) {
+  return (
+    <div className="mt-4" data-testid="compare-versions-result">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <CompareSideHeader side="base" descriptor={result.base} />
+        <CompareSideHeader side="compare" descriptor={result.compare} />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-ink sm:grid-cols-4">
+        <CompareSummaryCard label="Added" value={result.summary.added_lines} testId="compare-summary-added" />
+        <CompareSummaryCard label="Removed" value={result.summary.removed_lines} testId="compare-summary-removed" />
+        <CompareSummaryCard label="Changed blocks" value={result.summary.changed_blocks} testId="compare-summary-changed" />
+        <CompareSummaryCard label="Unchanged" value={result.summary.unchanged_lines} testId="compare-summary-unchanged" />
+      </div>
+      {result.warnings.length > 0 && (
+        <ul
+          className="mt-3 space-y-1 text-[11px] text-ink-subtle"
+          data-testid="compare-versions-warnings"
+        >
+          {result.warnings.map((warning) => (
+            <li key={warning}>{compareWarningCopy(warning)}</li>
+          ))}
+        </ul>
+      )}
+      <div
+        className="mt-3 max-h-96 overflow-auto rounded border border-rule bg-canvas font-mono text-[11px]"
+        data-testid="compare-versions-diff"
+      >
+        {result.diff_blocks.length === 0 ? (
+          <p className="p-3 text-ink-subtle">No differences detected.</p>
+        ) : (
+          result.diff_blocks.map((block, idx) => (
+            <div
+              key={`${block.base_line_start}-${block.compare_line_start}-${idx}`}
+              data-testid={`compare-block-${block.type}`}
+              className="border-b border-rule last:border-b-0"
+            >
+              {block.lines.map((line, lineIdx) => (
+                <div
+                  key={lineIdx}
+                  className={
+                    line.type === "added"
+                      ? "bg-emerald-50 px-2 py-0.5 text-emerald-900"
+                      : line.type === "removed"
+                        ? "bg-rose-50 px-2 py-0.5 text-rose-900"
+                        : "px-2 py-0.5 text-ink-muted"
+                  }
+                  data-testid={`compare-line-${line.type}`}
+                >
+                  <span className="mr-2 select-none">
+                    {line.type === "added"
+                      ? "+"
+                      : line.type === "removed"
+                        ? "−"
+                        : " "}
+                  </span>
+                  {line.text || " "}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CompareSideHeader({
+  side,
+  descriptor,
+}: {
+  side: "base" | "compare";
+  descriptor: ArtifactCompareResponse["base"];
+}) {
+  return (
+    <div
+      className="rounded border border-rule bg-canvas p-2"
+      data-testid={`compare-side-${side}`}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-ink-subtle">
+        {side === "base" ? "Base" : "Compare"}
+      </p>
+      <p className="mt-0.5 text-xs font-medium text-ink">{descriptor.label}</p>
+      {descriptor.filename && (
+        <p
+          className="truncate text-[11px] text-ink-muted"
+          title={descriptor.filename}
+        >
+          {descriptor.filename}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CompareSummaryCard({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: number;
+  testId: string;
+}) {
+  return (
+    <div
+      className="rounded border border-rule bg-canvas p-2"
+      data-testid={testId}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-ink-subtle">
+        {label}
+      </p>
+      <p className="mt-0.5 text-base font-medium text-ink">{value}</p>
+    </div>
+  );
+}
+
+function compareOptionLabel(artifact: ContractArtifact): string {
+  // Mirrors backend ``artifact_compare_label`` so the dropdown text
+  // matches the panel header. Falls back to a generic bucket for
+  // unknown types so we never render the raw ``artifact_type`` enum.
+  const base = (() => {
+    switch (artifact.artifact_type) {
+      case "original_upload":
+        return artifact.source === "request_upload"
+          ? "Uploaded agreement"
+          : "Source file";
+      case "generated_docx":
+        return "Generated Word document";
+      case "signed_pdf":
+        return "Signed PDF";
+      case "redline":
+        return "Redline";
+      case "attachment":
+        return "Attachment";
+      case "exhibit":
+        return "Exhibit";
+      default:
+        return "File";
+    }
+  })();
+  if (artifact.filename) {
+    return `${base} — ${artifact.filename}`;
+  }
+  return base;
+}
+
+function compareWarningCopy(warning: string): string {
+  // Map known opaque warning tags to user-friendly copy. Unknown
+  // tags fall through to a generic notice so we never render
+  // service-layer internals to legal users.
+  switch (warning) {
+    case "base_text_truncated":
+      return "Base version: only the first portion was compared (the document exceeds the size limit).";
+    case "compare_text_truncated":
+      return "Compare version: only the first portion was compared (the document exceeds the size limit).";
+    case "diff_lines_truncated":
+      return "The diff was truncated; download the files for a full redline.";
+    case "diff_blocks_truncated":
+      return "Too many change blocks to render; download the files for a full redline.";
+    default:
+      return "Some portions of the comparison were truncated.";
+  }
 }
 
 function LegacyFallbackRow() {
