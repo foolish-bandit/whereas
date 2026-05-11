@@ -13,6 +13,7 @@ import type {
   ContractMarkdownSnapshot,
   UploadContractResponse,
 } from "../types/contracts";
+import type { ArtifactCompareResponse } from "../types/compare";
 import type {
   PlaybookDetail,
   PlaybookSummary,
@@ -521,6 +522,43 @@ export async function downloadContractArtifact(
     )}/download`,
     options,
   );
+}
+
+/**
+ * PR #71 — text-based artifact version compare.
+ *
+ * Calls the org + contract scoped compare endpoint and returns the
+ * structured diff payload. The response carries safe metadata only;
+ * the storage internals scrub still runs as a belt-and-braces guard
+ * against future regressions.
+ */
+export async function compareContractArtifacts(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<ArtifactCompareResponse> {
+  if (isDemoMode()) {
+    return mockApi.compareContractArtifacts(
+      contractId,
+      baseArtifactId,
+      compareArtifactId,
+      options,
+    );
+  }
+  const data = await call<ArtifactCompareResponse>(
+    `/api/contracts/${encodeURIComponent(contractId)}/artifacts/compare`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_artifact_id: baseArtifactId,
+        compare_artifact_id: compareArtifactId,
+      }),
+    },
+    options,
+  );
+  return scrubSecrets(data);
 }
 
 async function downloadBlob(

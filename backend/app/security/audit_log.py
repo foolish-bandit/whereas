@@ -98,6 +98,14 @@ class AuditEventType(StrEnum):
     # contract, the artifact, the artifact_type, and the filename;
     # storage_key / wrapped_dek / raw bytes are NEVER recorded.
     CONTRACT_ARTIFACT_DOWNLOADED = "contract.artifact_downloaded"
+    # PR #71 — text-based version comparison from the Document History
+    # view. Emitted on a successful compare. Payload identifies the
+    # contract and the two artifacts, plus the added/removed line
+    # counts so an operator can see a compare happened without seeing
+    # the source/extracted text itself. Storage internals (storage_key,
+    # wrapped_dek), raw bytes, raw extracted text, and signer PII are
+    # NEVER recorded.
+    CONTRACT_ARTIFACTS_COMPARED = "contract.artifacts_compared"
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"
 

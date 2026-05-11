@@ -14,9 +14,11 @@ import {
   __resetMockState,
   convertRequestToContract,
   createRequest,
+  compareContractArtifacts,
   downloadContract,
   downloadContractArtifact,
   generateAgreementFromTemplate,
+  getContractArtifacts,
   getContract,
   getContractApprovalGate,
   getContractClauses,
@@ -165,6 +167,46 @@ describe("mockApi", () => {
   it("downloadContractArtifact (PR #70) returns 404 for unknown contract id", async () => {
     await expect(
       downloadContractArtifact("does-not-exist", "art-1"),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("compareContractArtifacts (PR #71) returns a structured diff for two demo artifacts", async () => {
+    const artifacts = await getContractArtifacts(MOCK_NDA_ID);
+    expect(artifacts.length).toBeGreaterThanOrEqual(2);
+    const source = artifacts.find((a) => a.artifact_type === "original_upload")!;
+    const signed = artifacts.find((a) => a.artifact_type === "signed_pdf")!;
+    const result = await compareContractArtifacts(
+      MOCK_NDA_ID,
+      source.id,
+      signed.id,
+    );
+    expect(result.base.artifact_id).toBe(source.id);
+    expect(result.compare.artifact_id).toBe(signed.id);
+    expect(result.base.label).toBe("Source file");
+    expect(result.compare.label).toBe("Signed PDF");
+    // Canned bodies differ in the term and confidentiality language,
+    // so there should be at least one changed block + a context block.
+    const types = result.diff_blocks.map((b) => b.type);
+    expect(types).toContain("changed");
+    expect(types).toContain("context");
+    expect(result.summary.added_lines).toBeGreaterThan(0);
+    expect(result.summary.removed_lines).toBeGreaterThan(0);
+    // No storage internals in the JSON serialization.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("storage_key");
+    expect(serialized).not.toContain("wrapped_dek");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("compareContractArtifacts (PR #71) returns 404 for unknown contract id", async () => {
+    await expect(
+      compareContractArtifacts("does-not-exist", "a", "b"),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("compareContractArtifacts (PR #71) returns 404 for unknown artifact id", async () => {
+    await expect(
+      compareContractArtifacts(MOCK_NDA_ID, "missing-1", "missing-2"),
     ).rejects.toBeInstanceOf(ApiError);
   });
 

@@ -1373,3 +1373,291 @@ describe("ContractWorkspacePage Send to DocuSeal", () => {
     expect(html).not.toContain("wrapped_master_key");
   });
 });
+
+describe("ContractWorkspacePage compare versions (PR #71)", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  const SOURCE_ARTIFACT = {
+    ...ARTIFACT,
+    id: "44444444-4444-4444-8444-444444444444",
+    artifact_type: "original_upload",
+    filename: "source.pdf",
+    source: "user_upload",
+    created_at: "2026-05-01T00:00:00Z",
+  };
+  const SIGNED_ARTIFACT = {
+    ...ARTIFACT,
+    id: "55555555-5555-4555-8555-555555555555",
+    artifact_type: "signed_pdf",
+    filename: "executed.pdf",
+    mime_type: "application/pdf",
+    source: "docuseal",
+    created_at: "2026-05-03T00:00:00Z",
+  };
+
+  const HAPPY_COMPARE_BODY = {
+    base: {
+      artifact_id: SOURCE_ARTIFACT.id,
+      artifact_type: "original_upload",
+      label: "Source file",
+      filename: "source.pdf",
+      created_at: "2026-05-01T00:00:00Z",
+    },
+    compare: {
+      artifact_id: SIGNED_ARTIFACT.id,
+      artifact_type: "signed_pdf",
+      label: "Signed PDF",
+      filename: "executed.pdf",
+      created_at: "2026-05-03T00:00:00Z",
+    },
+    summary: {
+      added_lines: 3,
+      removed_lines: 2,
+      changed_blocks: 1,
+      unchanged_lines: 12,
+    },
+    diff_blocks: [
+      {
+        type: "context",
+        base_line_start: 1,
+        compare_line_start: 1,
+        lines: [{ type: "context", text: "Section 1. Term." }],
+      },
+      {
+        type: "changed",
+        base_line_start: 2,
+        compare_line_start: 2,
+        lines: [
+          { type: "removed", text: "Term: one (1) year." },
+          { type: "added", text: "Term: two (2) years." },
+        ],
+      },
+    ],
+    warnings: [],
+  };
+
+  function withCompare(
+    artifacts: object[],
+    compareResponse: object,
+    {
+      compareStatus = 200,
+    }: { compareStatus?: number } = {},
+  ): void {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse(artifacts);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      if (
+        url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts/compare`) &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(compareResponse, compareStatus);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+  }
+
+  it("renders the Compare versions panel with both dropdowns and a disabled Compare button by default", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    renderPage();
+    const panel = await screen.findByTestId(
+      "document-history-compare-panel",
+    );
+    expect(panel).toHaveTextContent(/text comparison/i);
+    expect(panel).toHaveTextContent(/not an official redline/i);
+    expect(screen.getByTestId("compare-base-select")).toBeInTheDocument();
+    expect(screen.getByTestId("compare-target-select")).toBeInTheDocument();
+    const button = screen.getByTestId("compare-versions-button");
+    expect(button).toBeDisabled();
+  });
+
+  it("does not render the compare panel when there is only one artifact (no second version to compare)", async () => {
+    withCompare([SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    renderPage();
+    await screen.findByTestId("contract-files-section");
+    expect(
+      screen.queryByTestId("document-history-compare-panel"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("enables Compare once two distinct versions are selected and fires the API", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    const baseSelect = screen.getByTestId("compare-base-select") as HTMLSelectElement;
+    const compareSelect = screen.getByTestId("compare-target-select") as HTMLSelectElement;
+    const button = screen.getByTestId("compare-versions-button");
+
+    // Picking the same artifact on both sides keeps the button
+    // disabled — comparing a version to itself is a degenerate case.
+    fireEvent.change(baseSelect, { target: { value: SOURCE_ARTIFACT.id } });
+    fireEvent.change(compareSelect, { target: { value: SOURCE_ARTIFACT.id } });
+    expect(button).toBeDisabled();
+
+    fireEvent.change(compareSelect, { target: { value: SIGNED_ARTIFACT.id } });
+    expect(button).not.toBeDisabled();
+
+    fireEvent.click(button);
+
+    const result = await screen.findByTestId("compare-versions-result");
+    expect(result).toHaveTextContent(/source file/i);
+    expect(result).toHaveTextContent(/signed pdf/i);
+
+    // The compare POST went to the per-artifact compare route with the
+    // two ids the user selected.
+    const compareCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith(`/api/contracts/${CONTRACT_ID}/artifacts/compare`),
+    );
+    expect(compareCall).toBeDefined();
+    const body = JSON.parse(
+      (compareCall![1] as RequestInit).body as string,
+    );
+    expect(body.base_artifact_id).toBe(SOURCE_ARTIFACT.id);
+    expect(body.compare_artifact_id).toBe(SIGNED_ARTIFACT.id);
+  });
+
+  it("renders summary cards and a structured diff with added/removed lines", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-versions-button"));
+    await screen.findByTestId("compare-versions-result");
+    expect(screen.getByTestId("compare-summary-added")).toHaveTextContent("3");
+    expect(screen.getByTestId("compare-summary-removed")).toHaveTextContent("2");
+    expect(screen.getByTestId("compare-summary-changed")).toHaveTextContent("1");
+    expect(screen.getByTestId("compare-summary-unchanged")).toHaveTextContent("12");
+    // Diff rendered with one context block and one changed block.
+    expect(screen.getByTestId("compare-block-context")).toBeInTheDocument();
+    expect(screen.getByTestId("compare-block-changed")).toBeInTheDocument();
+    // Added + removed lines render their text.
+    const added = screen.getByText(/Term: two \(2\) years\./);
+    const removed = screen.getByText(/Term: one \(1\) year\./);
+    expect(added).toBeInTheDocument();
+    expect(removed).toBeInTheDocument();
+  });
+
+  it("renders a user-friendly notice for diff-truncated warnings (never the raw tag)", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], {
+      ...HAPPY_COMPARE_BODY,
+      warnings: ["diff_lines_truncated"],
+    });
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-versions-button"));
+    const warnings = await screen.findByTestId("compare-versions-warnings");
+    // User-facing copy, never the raw tag.
+    expect(warnings).toHaveTextContent(/truncated/i);
+    expect(warnings.textContent ?? "").not.toContain("diff_lines_truncated");
+  });
+
+  it("shows a safe inline error when the conversion fails (422)", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      { detail: "The base version could not be converted to comparable text." },
+      { compareStatus: 422 },
+    );
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-versions-button"));
+    const error = await screen.findByTestId("compare-versions-error");
+    expect(error.textContent ?? "").toMatch(
+      /could not be converted to comparable text/i,
+    );
+    // No service-layer / converter internals.
+    expect(error.textContent ?? "").not.toMatch(/markitdown/i);
+    expect(error.textContent ?? "").not.toMatch(/storage_key/);
+    expect(error.textContent ?? "").not.toMatch(/wrapped_dek/);
+  });
+
+  it("never surfaces storage_key / wrapped_dek / raw metadata in the DOM after a compare", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-versions-button"));
+    await screen.findByTestId("compare-versions-result");
+    const html = document.body.innerHTML;
+    expect(html).not.toContain("storage_key");
+    expect(html).not.toContain("wrapped_dek");
+    expect(html).not.toContain("presigned_url");
+  });
+
+  it("clears a stale compare result when the user picks a different version", async () => {
+    withCompare(
+      [SIGNED_ARTIFACT, SOURCE_ARTIFACT],
+      HAPPY_COMPARE_BODY,
+    );
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-versions-button"));
+    await screen.findByTestId("compare-versions-result");
+    // Change one side — the stale result should disappear.
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: "" },
+    });
+    expect(
+      screen.queryByTestId("compare-versions-result"),
+    ).not.toBeInTheDocument();
+  });
+});
