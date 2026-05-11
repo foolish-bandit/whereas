@@ -15,6 +15,7 @@ import {
   convertRequestToContract,
   createRequest,
   downloadContract,
+  downloadContractArtifact,
   generateAgreementFromTemplate,
   getContract,
   getContractApprovalGate,
@@ -146,6 +147,25 @@ describe("mockApi", () => {
     expect(result.mimeType).toBe("text/plain");
     expect(result.filename).toMatch(/\.demo\.txt$/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("downloadContractArtifact (PR #70) returns a per-version placeholder Blob", async () => {
+    const artifactId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const result = await downloadContractArtifact(MOCK_NDA_ID, artifactId);
+    expect(result.blob).toBeInstanceOf(Blob);
+    expect(result.blob.size).toBeGreaterThan(0);
+    expect(result.mimeType).toBe("text/plain");
+    expect(result.filename).toMatch(/\.demo\.txt$/);
+    // The synthetic filename references the artifact id so users can
+    // distinguish multiple version downloads in demo mode.
+    expect(result.filename).toContain(artifactId.slice(0, 8));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("downloadContractArtifact (PR #70) returns 404 for unknown contract id", async () => {
+    await expect(
+      downloadContractArtifact("does-not-exist", "art-1"),
+    ).rejects.toBeInstanceOf(ApiError);
   });
 
   it("aborts cleanly when the AbortSignal fires", async () => {

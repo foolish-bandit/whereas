@@ -1129,21 +1129,148 @@ async def download_contract(
         contract_id=contract.id,
         organization_id=user.organization_id,
     )
-    storage_key = (
-        artifact.storage_key
-        if artifact is not None and artifact.storage_key
-        else contract.s3_key
+    return await _stream_contract_artifact_download(
+        session,
+        user=user,
+        contract=contract,
+        artifact=artifact,
+        audit_event_type=AuditEventType.CONTRACT_DOWNLOADED,
+        allow_legacy_fallback=True,
     )
-    mime_type = (
-        artifact.mime_type
-        if artifact is not None and artifact.mime_type
-        else contract.mime_type
+
+
+@router.get("/{contract_id}/artifacts/{artifact_id}/download")
+async def download_contract_artifact(
+    contract_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Download a specific ContractArtifact version (PR #70).
+
+    Used by the Document History row's "Download version" action so
+    users can pull a specific source upload, generated DOCX, signed
+    PDF, redline, exhibit, or attachment rather than only the current
+    priority-winning document.
+
+    Resolution rules:
+      * Contract must belong to the caller's organization (cross-org
+        access returns 404 via ``_get_contract_for_org``).
+      * The artifact must match ``artifact_id``, belong to this
+        contract, and belong to the same organization — any miss
+        returns 404, matching the contract-not-found shape so callers
+        cannot distinguish "wrong artifact" from "wrong contract".
+      * No legacy ``Contract.s3_key`` fallback — this endpoint is
+        per-artifact, so a request for a specific artifact_id that
+        has no retrievable storage metadata returns 409 instead of
+        silently serving a different file.
+
+    Decryption uses the same storage + AAD logic as the contract
+    download endpoint via ``_stream_contract_artifact_download``;
+    no presigned URLs are produced and no storage internals
+    (``storage_key``, ``wrapped_dek``) are echoed to the client.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
     )
-    wrapped_dek_bytes = (
-        artifact.wrapped_dek
-        if artifact is not None and artifact.wrapped_dek is not None
-        else contract.wrapped_dek
+    artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=artifact_id,
+        organization_id=user.organization_id,
     )
+    return await _stream_contract_artifact_download(
+        session,
+        user=user,
+        contract=contract,
+        artifact=artifact,
+        audit_event_type=AuditEventType.CONTRACT_ARTIFACT_DOWNLOADED,
+        allow_legacy_fallback=False,
+    )
+
+
+async def _resolve_downloadable_artifact(
+    session: AsyncSession,
+    *,
+    contract_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    organization_id: uuid.UUID,
+) -> ContractArtifact:
+    """Fetch a ContractArtifact for the per-artifact download endpoint.
+
+    Org scoped + contract scoped. A miss on any of (artifact_id,
+    contract_id, organization_id) is treated as 404 so the caller
+    cannot distinguish "no such artifact" from "artifact belongs to
+    another contract" from "artifact belongs to another org".
+    """
+    stmt = select(ContractArtifact).where(
+        ContractArtifact.id == artifact_id,
+        ContractArtifact.contract_id == contract_id,
+        ContractArtifact.organization_id == organization_id,
+    )
+    result = await session.execute(stmt)
+    artifact = result.scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+    return artifact
+
+
+async def _stream_contract_artifact_download(
+    session: AsyncSession,
+    *,
+    user: User,
+    contract: Contract,
+    artifact: ContractArtifact | None,
+    audit_event_type: AuditEventType,
+    allow_legacy_fallback: bool,
+) -> Response:
+    """Decrypt an artifact's bytes and return them as an attachment Response.
+
+    Shared by the contract download endpoint and the per-artifact
+    download endpoint. When ``artifact`` is ``None`` and
+    ``allow_legacy_fallback`` is true, falls back to
+    ``Contract.s3_key`` / ``Contract.wrapped_dek`` / ``Contract.mime_type``
+    (legacy pre-artifact path); when ``allow_legacy_fallback`` is
+    false a missing artifact raises 404.
+
+    Always emits the supplied audit event on success. Storage
+    internals (``storage_key``, ``wrapped_dek``) are read off the
+    resolved source and are never returned to the caller.
+    """
+    if artifact is None and not allow_legacy_fallback:
+        # Defensive: the per-artifact endpoint resolves the row before
+        # calling this helper, so this branch only fires if a future
+        # caller forgets to do that.
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+
+    if allow_legacy_fallback:
+        storage_key = _artifact_storage_key_with_legacy(contract, artifact)
+        wrapped_dek_bytes = _artifact_wrapped_dek_with_legacy(contract, artifact)
+        mime_type = _artifact_content_type_with_legacy(contract, artifact)
+    else:
+        # No legacy fallback: the per-artifact endpoint requires the
+        # artifact row itself to carry retrievable storage metadata.
+        # ``signed_pdf`` rows write their own wrapped DEK; older
+        # ``original_upload`` / ``generated_docx`` rows leave
+        # ``artifact.wrapped_dek`` NULL and rely on
+        # ``Contract.wrapped_dek``. That fallback is safe here because
+        # the artifact is verified to belong to this contract.
+        assert artifact is not None
+        storage_key = artifact.storage_key
+        wrapped_dek_bytes = (
+            artifact.wrapped_dek
+            if artifact.wrapped_dek is not None
+            else contract.wrapped_dek
+        )
+        mime_type = artifact.mime_type or contract.mime_type
+    if not storage_key or storage_key == "pending":
+        raise HTTPException(
+            status_code=409,
+            detail="Artifact has no retrievable storage metadata.",
+        )
     if wrapped_dek_bytes is None:
         raise HTTPException(
             status_code=409, detail="Contract encryption metadata is missing."
@@ -1152,12 +1279,13 @@ async def download_contract(
     # AAD must match what was used at ``store_encrypted`` time. Older
     # artifacts (and the legacy ``Contract.s3_key`` blob) were encrypted
     # under ``document_id=str(contract.id)``. Per-artifact-DEK rows
-    # (``signed_pdf`` from PR #45) use a unique document id derived
-    # from the storage key. We can recover that id deterministically
-    # because ``DocumentStorage._s3_key_for`` uses
-    # ``documents/{document_id}.enc`` for every blob.
+    # (``signed_pdf`` from PR #45, and any future per-artifact DEK
+    # writers) use a unique document id derived from the storage key.
     if artifact is not None and artifact.wrapped_dek is not None and artifact.storage_key:
-        decrypt_document_id = _document_id_from_storage_key(artifact.storage_key) or str(contract.id)
+        decrypt_document_id = (
+            _document_id_from_storage_key(artifact.storage_key)
+            or str(contract.id)
+        )
     else:
         decrypt_document_id = str(contract.id)
 
@@ -1172,14 +1300,16 @@ async def download_contract(
             org_master_key=org_master_key,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Could not retrieve encrypted document.") from e
+        raise HTTPException(
+            status_code=500, detail="Could not retrieve encrypted document."
+        ) from e
     finally:
         del org_master_key
 
     await record_event(
         session,
         organization_id=user.organization_id,
-        event_type=AuditEventType.CONTRACT_DOWNLOADED,
+        event_type=audit_event_type,
         actor_user_id=user.id,
         target_type="contract",
         target_id=str(contract.id),
@@ -1187,6 +1317,7 @@ async def download_contract(
             contract,
             filename=artifact.filename if artifact is not None else None,
             artifact_id=artifact.id if artifact is not None else None,
+            artifact_type=artifact.artifact_type if artifact is not None else None,
         ),
     )
 
@@ -1199,6 +1330,40 @@ async def download_contract(
             ),
         },
     )
+
+
+def _artifact_storage_key_with_legacy(
+    contract: Contract,
+    artifact: ContractArtifact | None,
+) -> str | None:
+    """Pick the storage key for the legacy-fallback download path.
+
+    Used by the contract-level download endpoint where a contract
+    without any artifact rows still has to resolve through
+    ``Contract.s3_key``. The per-artifact endpoint does NOT use this
+    helper — it requires the storage key to live on the artifact.
+    """
+    if artifact is not None and artifact.storage_key:
+        return artifact.storage_key
+    return contract.s3_key
+
+
+def _artifact_wrapped_dek_with_legacy(
+    contract: Contract,
+    artifact: ContractArtifact | None,
+) -> bytes | None:
+    if artifact is not None and artifact.wrapped_dek is not None:
+        return artifact.wrapped_dek
+    return contract.wrapped_dek
+
+
+def _artifact_content_type_with_legacy(
+    contract: Contract,
+    artifact: ContractArtifact | None,
+) -> str:
+    if artifact is not None and artifact.mime_type:
+        return artifact.mime_type
+    return contract.mime_type
 
 
 
@@ -1824,6 +1989,7 @@ def _audit_contract_details(
     *,
     filename: str | None,
     artifact_id: uuid.UUID | None = None,
+    artifact_type: str | None = None,
 ) -> dict[str, object]:
     details: dict[str, object] = {
         "contract_id": str(contract.id),
@@ -1836,6 +2002,8 @@ def _audit_contract_details(
         details["filename"] = filename
     if artifact_id is not None:
         details["artifact_id"] = str(artifact_id)
+    if artifact_type is not None:
+        details["artifact_type"] = artifact_type
     return details
 
 

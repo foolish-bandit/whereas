@@ -17,6 +17,7 @@ import {
   ApiError,
   MissingDevUserError,
   downloadContract,
+  downloadContractArtifact,
   getContract,
   getContractArtifacts,
   getContractApprovalGate,
@@ -65,6 +66,17 @@ type DownloadState =
   | { kind: "downloading" }
   | { kind: "error"; message: string };
 
+/**
+ * PR #70 — per-artifact download state keyed by artifact id. The
+ * Document History row can render an inline "Download version" button
+ * that maintains its own busy/error state independent of the header's
+ * "Download current document" action.
+ */
+type ArtifactDownloadStateMap = Record<
+  string,
+  { kind: "downloading" } | { kind: "error"; message: string } | undefined
+>;
+
 type SidebarTab = "metadata" | "clauses" | "review";
 
 type ArtifactsState =
@@ -91,6 +103,8 @@ export default function ContractWorkspacePage() {
   const [downloadState, setDownloadState] = useState<DownloadState>({
     kind: "idle",
   });
+  const [artifactDownloads, setArtifactDownloads] =
+    useState<ArtifactDownloadStateMap>({});
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
   // Full artifact list drives the lifecycle strip, the Files section,
   // the Current-document label, and the Details origin copy. Mirrors
@@ -261,6 +275,45 @@ export default function ContractWorkspacePage() {
     }
   }
 
+  async function onDownloadArtifact(artifact: ContractArtifact) {
+    if (!contract) return;
+    setArtifactDownloads((prev) => ({
+      ...prev,
+      [artifact.id]: { kind: "downloading" },
+    }));
+    try {
+      const result = await downloadContractArtifact(contract.id, artifact.id);
+      const ext = mimeExtension(artifact.mime_type ?? contract.mime_type);
+      const filename =
+        result.filename ??
+        sanitizeFilename(artifact.filename ?? contract.title, ext);
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setArtifactDownloads((prev) => {
+        const next = { ...prev };
+        delete next[artifact.id];
+        return next;
+      });
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError
+          ? err.message
+          : err instanceof ApiError
+            ? err.message
+            : "Download failed unexpectedly.";
+      setArtifactDownloads((prev) => ({
+        ...prev,
+        [artifact.id]: { kind: "error", message },
+      }));
+    }
+  }
+
   if (state.kind === "loading") {
     return (
       <div>
@@ -398,7 +451,11 @@ export default function ContractWorkspacePage() {
         <ActivityTimeline kind="contract" contractId={state.contract.id} />
       </section>
 
-      <DocumentHistorySection state={artifactsState} />
+      <DocumentHistorySection
+        state={artifactsState}
+        artifactDownloads={artifactDownloads}
+        onDownloadArtifact={onDownloadArtifact}
+      />
     </div>
   );
 }
@@ -529,8 +586,9 @@ function RepositoryHeader({
             className="mt-2 text-xs text-ink-subtle"
             data-testid="repository-current-document-legacy"
           >
-            Legacy original — uploaded before artifact tracking. Download
-            still resolves from the contract record.
+            Legacy original — uploaded before artifact tracking. The
+            Download current document action still resolves from the
+            contract record.
           </p>
         )}
       </div>
@@ -543,7 +601,7 @@ function RepositoryHeader({
         >
           {downloadState.kind === "downloading"
             ? "Preparing…"
-            : "Download original"}
+            : "Download current document"}
         </button>
         {downloadState.kind === "error" && (
           <p className="max-w-xs text-xs text-danger sm:text-right">
@@ -574,7 +632,7 @@ interface LifecycleSlotDescriptor {
 
 function DocumentLifecycleStrip({ contract, state }: LifecycleStripProps) {
   // While loading or on a hard error we just hide the strip. The
-  // header's Download original button is the load-bearing affordance.
+  // header's Download current document button is the load-bearing affordance.
   if (state.kind !== "loaded") return null;
   const { artifacts } = state;
 
@@ -792,20 +850,31 @@ function DetailRow({
 }
 
 /**
- * Document history (PR #69) — replaces the older flat "Files" listing.
- * Renders every safe ContractArtifact in chronological order (newest
- * first), marks the priority-winning artifact as the current document
- * to mirror the backend's download priority, and falls back to a
- * legacy-row notice when the contract has no artifacts at all (e.g.
- * uploaded before artifact tracking landed).
+ * Document history (PR #69, extended in PR #70) — replaces the older
+ * flat "Files" listing. Renders every safe ContractArtifact in
+ * chronological order (newest first), marks the priority-winning
+ * artifact as the current document to mirror the backend's download
+ * priority, and falls back to a legacy-row notice when the contract
+ * has no artifacts at all (e.g. uploaded before artifact tracking
+ * landed).
  *
- * Per-artifact downloads are deliberately not surfaced here yet — the
- * backend's download endpoint is contract-scoped, and per-artifact
- * download would require a dedicated, safety-reviewed route. The
- * header's Download original action still resolves the current
- * document; this section is visibility only.
+ * Per-artifact downloads (PR #70) are exposed via a "Download version"
+ * button on each row; the header's "Download current document" action
+ * stays the load-bearing affordance for the current priority winner.
+ * Per-row downloads call the dedicated per-artifact endpoint, which is
+ * org + contract scoped server-side and decrypts through the same
+ * storage path — no presigned URLs and no storage internals are
+ * exposed.
  */
-function DocumentHistorySection({ state }: { state: ArtifactsState }) {
+function DocumentHistorySection({
+  state,
+  artifactDownloads,
+  onDownloadArtifact,
+}: {
+  state: ArtifactsState;
+  artifactDownloads: ArtifactDownloadStateMap;
+  onDownloadArtifact: (artifact: ContractArtifact) => void;
+}) {
   return (
     <section
       className="mt-6 rounded border border-rule p-4"
@@ -814,8 +883,8 @@ function DocumentHistorySection({ state }: { state: ArtifactsState }) {
       <h2 className="text-sm font-medium text-ink">Document history</h2>
       <p className="mt-1 text-xs text-ink-subtle">
         Every file recorded against this Repository record, newest first.
-        The Download original action in the header always fetches the
-        current official document.
+        Use Download version to retrieve a specific version; the header
+        action always returns the current document.
       </p>
       {state.kind === "loading" && (
         <p
@@ -842,7 +911,12 @@ function DocumentHistorySection({ state }: { state: ArtifactsState }) {
             data-testid="document-history-list"
           >
             {getArtifactHistoryItems(state.artifacts).map((item) => (
-              <DocumentHistoryRow key={item.artifact.id} item={item} />
+              <DocumentHistoryRow
+                key={item.artifact.id}
+                item={item}
+                downloadState={artifactDownloads[item.artifact.id]}
+                onDownload={onDownloadArtifact}
+              />
             ))}
           </ol>
         ))}
@@ -850,8 +924,19 @@ function DocumentHistorySection({ state }: { state: ArtifactsState }) {
   );
 }
 
-function DocumentHistoryRow({ item }: { item: ArtifactHistoryItem }) {
+function DocumentHistoryRow({
+  item,
+  downloadState,
+  onDownload,
+}: {
+  item: ArtifactHistoryItem;
+  downloadState: ArtifactDownloadStateMap[string];
+  onDownload: (artifact: ContractArtifact) => void;
+}) {
   const { artifact } = item;
+  const isDownloading = downloadState?.kind === "downloading";
+  const errorMessage =
+    downloadState?.kind === "error" ? downloadState.message : null;
   return (
     <li
       className="grid gap-1 py-2.5 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_auto] sm:items-baseline"
@@ -913,7 +998,27 @@ function DocumentHistoryRow({ item }: { item: ArtifactHistoryItem }) {
           ))}
         </div>
       </div>
-      <div className="text-ink-subtle sm:text-right">{item.originCopy}</div>
+      <div className="flex flex-col items-start gap-1 text-ink-subtle sm:items-end sm:text-right">
+        {item.originCopy && <span>{item.originCopy}</span>}
+        <button
+          type="button"
+          onClick={() => onDownload(artifact)}
+          disabled={isDownloading}
+          className="inline-flex items-center justify-center rounded border border-rule px-2 py-1 text-[11px] font-medium text-ink hover:bg-canvas-subtle disabled:cursor-not-allowed disabled:opacity-60"
+          data-testid="document-history-row-download"
+          data-artifact-id={artifact.id}
+        >
+          {isDownloading ? "Preparing…" : "Download version"}
+        </button>
+        {errorMessage && (
+          <p
+            className="max-w-xs text-[11px] text-danger sm:text-right"
+            data-testid="document-history-row-download-error"
+          >
+            {errorMessage}
+          </p>
+        )}
+      </div>
     </li>
   );
 }
@@ -942,8 +1047,8 @@ function LegacyFallbackRow() {
           </span>
         </div>
         <p className="mt-1 text-ink-subtle">
-          Stored before artifact tracking. The Download original action
-          still resolves to this file.
+          Stored before artifact tracking. The Download current document
+          action still resolves to this file.
         </p>
       </li>
     </ol>
