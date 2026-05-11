@@ -63,6 +63,11 @@ import type {
 } from "../types/requests";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
 import type { ActivityTimelineResponse } from "../types/activity";
+import type {
+  DuplicateCandidatesResponse,
+  DuplicateMergeRequest,
+  DuplicateMergeResponse,
+} from "../types/duplicateMerge";
 import type { DashboardSummary } from "../types/dashboard";
 import type {
   InboxItem,
@@ -1504,6 +1509,69 @@ export async function exportRequestActivity(
     `/api/requests/${encodeURIComponent(requestId)}/activity/export?format=${encodeURIComponent(format)}`,
     options,
   );
+}
+
+/**
+ * PR #76 — fetch possible duplicate Repository records for an
+ * existing contract. The detail page calls this lazily so the
+ * merge affordance only loads when the user opens the duplicate
+ * section. Server scrubs storage internals; we run the defensive
+ * scrub anyway.
+ */
+export async function getContractDuplicateCandidates(
+  contractId: string,
+  options: ApiOptions = {},
+): Promise<DuplicateCandidatesResponse> {
+  if (isDemoMode()) {
+    return mockApi.getContractDuplicateCandidates(contractId, options);
+  }
+  const data = await call<DuplicateCandidatesResponse>(
+    `/api/contracts/${encodeURIComponent(contractId)}/duplicate-candidates`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * PR #76 — merge a source duplicate Repository record into the
+ * target (canonical) record. The server does not delete files; the
+ * source row stays in the database with a merged-into pointer so
+ * deep links keep resolving.
+ *
+ * Errors surface as ``ApiError`` with these statuses:
+ * - 400: same-record merge (source equals target)
+ * - 404: cross-org / missing source or target
+ * - 409: source or target already merged
+ */
+export async function mergeDuplicateContract(
+  targetContractId: string,
+  sourceContractId: string,
+  mergeNote?: string | null,
+  options: ApiOptions = {},
+): Promise<DuplicateMergeResponse> {
+  const payload: DuplicateMergeRequest = {
+    source_contract_id: sourceContractId,
+    ...(mergeNote ? { merge_note: mergeNote } : {}),
+  };
+  if (isDemoMode()) {
+    return mockApi.mergeDuplicateContract(
+      targetContractId,
+      sourceContractId,
+      mergeNote ?? null,
+      options,
+    );
+  }
+  const data = await call<DuplicateMergeResponse>(
+    `/api/contracts/${encodeURIComponent(targetContractId)}/merge-duplicate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
 }
 
 // ---------------------------------------------------------------------------

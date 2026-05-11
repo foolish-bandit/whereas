@@ -20,6 +20,15 @@ export interface ContractListItem {
   page_count: number | null;
   created_at: string;
   updated_at: string;
+  /**
+   * PR #76 — when set, this Repository record has been merged into
+   * another record (the canonical one). The default list filters
+   * these out; detail pages still resolve and render a safe merged
+   * notice. Older API responses that don't carry the field treat it
+   * as null/absent.
+   */
+  merged_into_contract_id?: string | null;
+  merged_at?: string | null;
 }
 
 export type ExtractedFieldValue = unknown;
