@@ -1374,7 +1374,100 @@ so the UI cannot drift from the backend resolver.
 
 - Richer file comparison / redline view (artifact diff).
 - Generated PDF preview alongside the DOCX.
-- Artifact version history (timeline of each artifact_type slot).
 - A deeper design-system pass (still tracked from the navigation
   consolidation PR).
 - PowerSync sync rules covering the Repository detail surface.
+
+## Artifact version history (PR #69)
+
+PR #68 introduced the document lifecycle strip and the Files list.
+PR #69 turns the Files list into a proper **Document history** —
+still on the same Repository detail page, still backed by the same
+`GET /api/contracts/{id}/artifacts` endpoint, but with explicit
+chronological order, a single "Current document" marker, official
+badges, allowlisted metadata chips, and a legacy-fallback row for
+contracts that pre-date artifact tracking. No backend, schema,
+download priority, or approval / DocuSeal semantics changed.
+
+### Layout
+
+The Document history section sits below the Activity timeline and
+above no other section. Each row renders only safe fields:
+
+- the user-facing artifact label (never the raw `artifact_type`);
+- filename (truncated with a tooltip), MIME label, size, added date;
+- source chip from the existing `artifactSourceChip` helper;
+- origin sentence from `artifactOriginCopy`;
+- metadata chips, restricted to an allowlist (`template_name`,
+  `request_id`, `upload_source`, `docuseal_submission_id`,
+  `signed_at`); and
+- a "Current document" badge on the row representing the priority
+  winner, and an "Official" badge on rows with `is_official = true`.
+
+Rows are sorted by `created_at` (newest first) with an `id` tie-break
+so the order is stable across renders. The legacy fallback path
+renders a single row labelled "Legacy source file" with the same
+"Current document" badge, so the section never collapses to an empty
+panel.
+
+### Current document marker
+
+`isCurrentArtifact(a, artifacts)` in `lib/artifacts.ts` is the single
+source of truth on the client. It mirrors the backend's download
+priority exactly:
+
+1. Signed PDF
+2. Generated Word document
+3. Source file (`original_upload`)
+4. Legacy fallback (no `ContractArtifact` rows yet)
+
+Tests pin the order so the marker cannot drift from the resolver in
+`backend/app/api/contracts.py` (see §6.2). Per-artifact downloads are
+deliberately not exposed; the header's "Download original" action
+remains the only download path and continues to resolve through the
+contract-scoped endpoint.
+
+### Safe metadata rendering
+
+`safeArtifactMetadataChips(artifact)` is the only call site that
+reads `metadata_json` values for display. It returns chips only for
+allowlisted keys:
+
+- `generated_docx` + `template_name` → "Template: <name>"
+- `original_upload + request_upload` + `request_id` → "From request"
+- `original_upload` + `upload_source = request_conversion` → "From
+  request" (only if a `request_id` chip is not already present)
+- `signed_pdf` + `signed_at` → "Signed <iso8601>"
+- `signed_pdf` + `docuseal_submission_id` → "DocuSeal submission"
+  (the raw submission id is never rendered)
+
+Anything outside the allowlist — `notes`, `variable_keys`,
+`variable_keys_blank`, `template_id`, `docuseal_event_id`, plus the
+storage internals already stripped at the schema and api-client
+layers — is dropped. Tests pin the allowlist and assert that the raw
+`metadata_json` cannot reach the DOM.
+
+### What did NOT change
+
+- Backend: no new routes, no schema change, no migration. The
+  existing `GET /api/contracts/{id}/artifacts` endpoint is reused
+  as-is.
+- Artifact semantics or taxonomy.
+- Download priority (still resolved server-side; the UI just mirrors
+  the order in the badge).
+- Approval gate semantics, DocuSeal behavior, signature flow.
+- Storage / encryption fields are not exposed in this surface
+  (`storage_key` / `wrapped_dek` stripped at schema + `scrubSecrets`
+  in `lib/api.ts`).
+
+### Follow-ups
+
+- Per-artifact download endpoint (`GET /api/contracts/{id}/
+  artifacts/{artifact_id}/download`). Currently deferred — adding it
+  safely needs an org-scoped lookup, the artifact-aware DEK path,
+  and audit hooks. Until then the header's Download action stays
+  the only download path.
+- Redline comparison view across artifact versions.
+- Generated PDF preview alongside the DOCX.
+- Artifact diff / version compare.
+- PowerSync sync rules covering the Document history surface.

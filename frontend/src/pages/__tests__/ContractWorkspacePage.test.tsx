@@ -764,6 +764,226 @@ describe("ContractWorkspacePage Repository detail polish (PR #68)", () => {
   });
 });
 
+describe("ContractWorkspacePage Document history (PR #69)", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  const SOURCE_ARTIFACT = {
+    ...ARTIFACT,
+    id: "44444444-4444-4444-8444-444444444444",
+    artifact_type: "original_upload",
+    filename: "source.pdf",
+    source: "user_upload",
+    created_at: "2026-05-01T00:00:00Z",
+  };
+  const GENERATED_ARTIFACT = {
+    ...ARTIFACT,
+    id: "66666666-6666-4666-8666-666666666666",
+    artifact_type: "generated_docx",
+    filename: "draft.docx",
+    mime_type:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    source: "template_generation",
+    created_at: "2026-05-02T00:00:00Z",
+    metadata_json: { template_id: "tpl-1", template_name: "Mutual NDA" },
+  };
+  const SIGNED_ARTIFACT = {
+    ...ARTIFACT,
+    id: "55555555-5555-4555-8555-555555555555",
+    artifact_type: "signed_pdf",
+    filename: "executed.pdf",
+    mime_type: "application/pdf",
+    source: "docuseal",
+    created_at: "2026-05-03T00:00:00Z",
+    metadata_json: {
+      docuseal_submission_id: "sub-OPAQUE-LONG-ID",
+      signed_at: "2026-05-03T00:00:00Z",
+    },
+  };
+
+  it("renders the Document history section heading + chronological rows", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, GENERATED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    expect(section).toHaveTextContent(/document history/i);
+    const list = await screen.findByTestId("document-history-list");
+    const rows = list.querySelectorAll('[data-testid="contract-files-row"]');
+    expect(rows).toHaveLength(3);
+    // Newest first: signed -> generated -> original.
+    expect(rows[0].getAttribute("data-artifact-id")).toBe(SIGNED_ARTIFACT.id);
+    expect(rows[1].getAttribute("data-artifact-id")).toBe(GENERATED_ARTIFACT.id);
+    expect(rows[2].getAttribute("data-artifact-id")).toBe(SOURCE_ARTIFACT.id);
+  });
+
+  it("marks signed PDF as the current document over generated and source", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, GENERATED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const list = await screen.findByTestId("document-history-list");
+    const badges = list.querySelectorAll(
+      '[data-testid="document-history-current-badge"]',
+    );
+    expect(badges).toHaveLength(1);
+    const currentRow = list.querySelector(
+      `[data-artifact-id="${SIGNED_ARTIFACT.id}"]`,
+    );
+    expect(currentRow?.getAttribute("data-current")).toBe("true");
+    expect(currentRow).toContainElement(badges[0] as HTMLElement);
+  });
+
+  it("marks the generated Word document as current when no signed PDF exists", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [GENERATED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    const list = await screen.findByTestId("document-history-list");
+    const badge = list.querySelector(
+      '[data-testid="document-history-current-badge"]',
+    );
+    expect(badge).not.toBeNull();
+    const currentRow = list.querySelector(
+      `[data-artifact-id="${GENERATED_ARTIFACT.id}"]`,
+    );
+    expect(currentRow?.getAttribute("data-current")).toBe("true");
+  });
+
+  it("marks the source file as current when only original_upload exists", async () => {
+    setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
+    renderPage();
+    const list = await screen.findByTestId("document-history-list");
+    const currentRow = list.querySelector(
+      `[data-artifact-id="${SOURCE_ARTIFACT.id}"]`,
+    );
+    expect(currentRow?.getAttribute("data-current")).toBe("true");
+  });
+
+  it("renders the legacy fallback row when the contract has no artifacts", async () => {
+    setupFetch(fetchMock, { artifacts: [] });
+    renderPage();
+    const legacy = await screen.findByTestId(
+      "document-history-legacy-row",
+    );
+    expect(legacy).toHaveTextContent(/legacy source file/i);
+    expect(legacy).toHaveTextContent(/stored before artifact tracking/i);
+    expect(
+      screen.getByTestId("document-history-current-badge"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders an Official badge on official artifacts", async () => {
+    setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
+    renderPage();
+    const list = await screen.findByTestId("document-history-list");
+    expect(
+      list.querySelector('[data-testid="document-history-official-badge"]'),
+    ).not.toBeNull();
+  });
+
+  it("renders user-friendly source chips for each artifact origin", async () => {
+    const REQUEST_UPLOAD = {
+      ...ARTIFACT,
+      id: "77777777-7777-4777-8777-777777777777",
+      artifact_type: "original_upload",
+      source: "request_upload",
+      filename: "counterparty.pdf",
+      created_at: "2026-04-30T00:00:00Z",
+      metadata_json: {
+        request_id: "req-1",
+        upload_source: "request_conversion",
+      },
+    };
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, GENERATED_ARTIFACT, REQUEST_UPLOAD],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    // Source chip text (artifactSourceChip):
+    expect(section).toHaveTextContent(/From DocuSeal/i);
+    expect(section).toHaveTextContent(/From template/i);
+    expect(section).toHaveTextContent(/From request/i);
+    // Origin copy sentences (artifactOriginCopy):
+    expect(section).toHaveTextContent(/Signed through DocuSeal/i);
+    expect(section).toHaveTextContent(/Generated from template/i);
+    expect(section).toHaveTextContent(/Converted from request upload/i);
+  });
+
+  it("renders allowlisted metadata chips and never the raw metadata_json", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, GENERATED_ARTIFACT],
+    });
+    renderPage();
+    const section = await screen.findByTestId("contract-files-section");
+    // Allowlisted chips render.
+    expect(
+      screen.getByTestId("document-history-meta-template_name"),
+    ).toHaveTextContent(/Mutual NDA/);
+    expect(
+      screen.getByTestId("document-history-meta-docuseal_submission_id"),
+    ).toBeInTheDocument();
+    // The raw submission id is opaque and is never surfaced.
+    expect(section.textContent ?? "").not.toContain("sub-OPAQUE-LONG-ID");
+    // template_id (raw uuid) is never rendered.
+    expect(section.textContent ?? "").not.toContain("tpl-1");
+  });
+
+  it("never surfaces storage_key / wrapped_dek / raw metadata_json keys in the DOM", async () => {
+    const NAUGHTY = {
+      ...SIGNED_ARTIFACT,
+      storage_key: "s3://internal/whoops",
+      wrapped_dek: "00".repeat(32),
+      metadata_json: {
+        docuseal_submission_id: "sub-1",
+        signer_email: "secret@example.com",
+        notes: "internal commentary",
+      },
+    };
+    setupFetch(fetchMock, { artifacts: [NAUGHTY] });
+    renderPage();
+    await screen.findByTestId("contract-files-section");
+    const html = document.body.innerHTML;
+    expect(html).not.toContain("storage_key");
+    expect(html).not.toContain("wrapped_dek");
+    expect(html).not.toContain("s3://internal");
+    expect(html).not.toContain("secret@example.com");
+    expect(html).not.toContain("internal commentary");
+  });
+
+  it("still renders the existing lifecycle strip and preview alongside history", async () => {
+    setupFetch(fetchMock, {
+      artifacts: [SIGNED_ARTIFACT, GENERATED_ARTIFACT, SOURCE_ARTIFACT],
+    });
+    renderPage();
+    await screen.findByTestId("document-lifecycle-strip");
+    expect(
+      screen.getByTestId("contract-preview-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("contract-files-section"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the document history section on both /contracts/:id and /repository/:id routes", async () => {
+    setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
+    renderPage(`/repository/${CONTRACT_ID}`);
+    expect(
+      await screen.findByTestId("contract-files-section"),
+    ).toHaveTextContent(/document history/i);
+  });
+});
+
 describe("ContractWorkspacePage Send to DocuSeal", () => {
   let fetchMock: Mock;
 

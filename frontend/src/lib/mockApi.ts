@@ -10,6 +10,7 @@
 import { ApiError, type DownloadResult, type UploadInput } from "./api";
 import {
   MOCK_DETAIL_BY_ID,
+  MOCK_FAILED_ID,
   MOCK_LIST,
   MOCK_MARKDOWN_BY_CONTRACT_ID,
   MOCK_NDA_ID,
@@ -209,10 +210,15 @@ export async function getContractArtifacts(
     throw new ApiError(404, "Contract not found.");
   }
   // Demo mode synthesizes a small artifact lifecycle so the
-  // Repository detail view exercises the full lifecycle strip in
-  // demo mode. The seed NDA gets all three stages (uploaded source,
-  // generated Word document, signed PDF); other rows just get the
-  // single original upload.
+  // Repository detail view exercises the full lifecycle strip + the
+  // PR #69 document-history surface end to end. The seed NDA gets
+  // all three stages (uploaded source, generated Word document,
+  // signed PDF). The failed-upload demo intentionally returns no
+  // artifacts so the legacy-fallback row is exercised. Other rows
+  // just get a single original upload.
+  if (id === MOCK_FAILED_ID) {
+    return [];
+  }
   const original: ContractArtifact = {
     id: `${id}-artifact-original`,
     contract_id: id,

@@ -169,3 +169,145 @@ export function artifactSourceChip(
       return null;
   }
 }
+
+/**
+ * Pick the priority-winning artifact for the current document marker.
+ * Mirrors the backend download-priority order exactly so the badge
+ * matches what ``downloadContract`` actually fetches.
+ */
+function priorityArtifact(
+  artifacts: readonly ContractArtifact[],
+): ContractArtifact | null {
+  return (
+    artifacts.find((a) => a.artifact_type === "signed_pdf") ??
+    artifacts.find((a) => a.artifact_type === "generated_docx") ??
+    artifacts.find((a) => a.artifact_type === "original_upload") ??
+    null
+  );
+}
+
+/**
+ * True iff ``artifact`` is the artifact the Download action would
+ * resolve to right now. Used by the document history view to draw
+ * exactly one "Current document" badge.
+ */
+export function isCurrentArtifact(
+  artifact: ContractArtifact,
+  artifacts: readonly ContractArtifact[],
+): boolean {
+  const winner = priorityArtifact(artifacts);
+  return winner != null && winner.id === artifact.id;
+}
+
+/**
+ * One row in the document-history view. Pre-computed so the renderer
+ * does not have to re-derive priority / sort order / metadata chips
+ * for every render.
+ */
+export interface ArtifactHistoryItem {
+  artifact: ContractArtifact;
+  displayLabel: string;
+  originCopy: string | null;
+  sourceChip: string | null;
+  isCurrent: boolean;
+  metadataChips: readonly ArtifactMetadataChip[];
+}
+
+export interface ArtifactMetadataChip {
+  key: string;
+  label: string;
+}
+
+// Allowlist of ``metadata_json`` keys safe to surface in the UI:
+// ``template_name``, ``request_id``, ``upload_source``,
+// ``docuseal_submission_id``, ``signed_at``. Everything else is
+// dropped — we never render ``metadata_json`` wholesale because it
+// can carry user-provided notes, internal variable_keys, or other
+// context that has not been audited for display. The branches in
+// ``safeArtifactMetadataChips`` below are the only readers of
+// ``metadata_json`` values for display.
+
+function pickString(meta: Record<string, unknown>, key: string): string | null {
+  const value = meta[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * Render a safe set of metadata chips for a single artifact. Pulls
+ * from the ``SAFE_METADATA_KEYS`` allowlist only; anything outside
+ * the allowlist is ignored. Returns ``[]`` when no chips apply.
+ */
+export function safeArtifactMetadataChips(
+  artifact: ContractArtifact,
+): ArtifactMetadataChip[] {
+  const meta = (artifact.metadata_json ?? {}) as Record<string, unknown>;
+  const chips: ArtifactMetadataChip[] = [];
+  // Template generation: surface the template name (NOT the id).
+  if (artifact.artifact_type === "generated_docx") {
+    const name = pickString(meta, "template_name");
+    if (name) chips.push({ key: "template_name", label: `Template: ${name}` });
+  }
+  // Request conversion: surface the originating request (id is opaque
+  // but stable; we link it from the request workspace already).
+  if (artifact.source === "request_upload") {
+    const reqId = pickString(meta, "request_id");
+    if (reqId) chips.push({ key: "request_id", label: "From request" });
+  }
+  if (artifact.artifact_type === "original_upload") {
+    const uploadSource = pickString(meta, "upload_source");
+    if (uploadSource === "request_conversion" && !chips.some((c) => c.key === "request_id")) {
+      chips.push({ key: "upload_source", label: "From request" });
+    }
+  }
+  // Signed PDF: signed_at is small and useful; the submission id is
+  // long and opaque so we only show a short marker that DocuSeal
+  // produced this artifact rather than the raw id.
+  if (artifact.artifact_type === "signed_pdf") {
+    const signedAt = pickString(meta, "signed_at");
+    if (signedAt) chips.push({ key: "signed_at", label: `Signed ${signedAt}` });
+    const sub = pickString(meta, "docuseal_submission_id");
+    if (sub) chips.push({ key: "docuseal_submission_id", label: "DocuSeal submission" });
+  }
+  return chips;
+}
+
+function createdAtMs(artifact: ContractArtifact): number {
+  const t = Date.parse(artifact.created_at);
+  // Anything unparseable sorts last; matches "no timestamp" being the
+  // legacy/unknown case.
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+/**
+ * Build the document-history rows for the workspace. Sorted newest
+ * first by ``created_at`` (with id tie-break so the order is stable),
+ * priority-winner flagged with ``isCurrent``, and metadata pre-scrubbed
+ * through the safe allowlist.
+ */
+export function getArtifactHistoryItems(
+  artifacts: readonly ContractArtifact[],
+): ArtifactHistoryItem[] {
+  const winner = priorityArtifact(artifacts);
+  return artifacts
+    .slice()
+    .sort((a, b) => {
+      const dt = createdAtMs(b) - createdAtMs(a);
+      if (dt !== 0) return dt;
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+    })
+    .map((artifact) => ({
+      artifact,
+      displayLabel: artifactDisplayLabel(artifact.artifact_type, artifact.source),
+      originCopy: artifactOriginCopy(artifact),
+      sourceChip: artifactSourceChip(artifact),
+      isCurrent: winner != null && winner.id === artifact.id,
+      metadataChips: safeArtifactMetadataChips(artifact),
+    }));
+}
+
+/**
+ * Re-export ``formatBytes`` under the PR-#69 name. Keeps the helper
+ * surface area in one place so a future change to size formatting can
+ * be made without crawling the workspace page.
+ */
+export { formatBytes as formatFileSize } from "./format";
