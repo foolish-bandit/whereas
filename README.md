@@ -147,6 +147,11 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Sidebar** — top-level navigation. PR #86 added a small overdue
+  badge next to the *Approvals* entry sourced from the existing
+  dashboard summary (`overdue_approval_steps`). The badge is
+  best-effort: if the count can't be fetched the sidebar still
+  renders normally with no badge. No backend changes.
 - **Approval Policies** — the rules engine at `/demo/approvals/policies`.
   PR #85 polished this surface: proper layout (no more minified
   one-line JSX), loading skeleton, friendly error + empty states,

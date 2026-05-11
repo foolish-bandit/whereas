@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
+import { getDashboardSummary } from "../lib/api";
 import { demoPath } from "../lib/routes";
 
 // Top-level navigation. Sub-surfaces (Inbox, Agreement Templates,
@@ -26,7 +27,21 @@ interface SidebarProps {
   onClose: () => void;
 }
 
+/**
+ * Per-nav-entry overdue counts, sourced from the dashboard summary
+ * endpoint (PR #86). The sidebar surfaces these as small badges so a
+ * pending overdue approval is obvious from anywhere in the app.
+ *
+ * The fetch is best-effort: if it fails, the sidebar still renders
+ * with no badges so navigation is never blocked.
+ */
+interface OverdueCounts {
+  approvalSteps: number;
+}
+
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const [overdue, setOverdue] = useState<OverdueCounts | null>(null);
+
   // Close the mobile drawer when the user presses Escape, and lock
   // body scroll while the drawer is open so the underlying page
   // doesn't shift around behind the overlay.
@@ -44,15 +59,39 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     };
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    let aborted = false;
+    getDashboardSummary()
+      .then((summary) => {
+        if (aborted) return;
+        if (summary && summary.counts) {
+          setOverdue({
+            approvalSteps: summary.counts.overdue_approval_steps,
+          });
+        }
+      })
+      .catch(() => {
+        // Best-effort — the sidebar must keep rendering even if the
+        // counts can't be fetched (no dev user, network error, etc.).
+      });
+    return () => {
+      aborted = true;
+    };
+  }, []);
+
   return (
     <>
-      <DesktopSidebar />
-      <MobileDrawer isOpen={isOpen} onClose={onClose} />
+      <DesktopSidebar overdue={overdue} />
+      <MobileDrawer
+        isOpen={isOpen}
+        onClose={onClose}
+        overdue={overdue}
+      />
     </>
   );
 }
 
-function DesktopSidebar() {
+function DesktopSidebar({ overdue }: { overdue: OverdueCounts | null }) {
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-rule bg-canvas md:flex">
       <div className="flex h-14 items-center border-b border-rule px-5">
@@ -64,7 +103,7 @@ function DesktopSidebar() {
           Whereas
         </Link>
       </div>
-      <NavList />
+      <NavList overdue={overdue} />
       <div className="border-t border-rule px-5 py-4 text-xs text-ink-subtle">
         <p>Self-hosted workspace</p>
         <p className="mt-1">v0.0.1 · pre-release</p>
@@ -76,9 +115,11 @@ function DesktopSidebar() {
 function MobileDrawer({
   isOpen,
   onClose,
+  overdue,
 }: {
   isOpen: boolean;
   onClose: () => void;
+  overdue: OverdueCounts | null;
 }) {
   return (
     <div
@@ -136,7 +177,7 @@ function MobileDrawer({
             </svg>
           </button>
         </div>
-        <NavList onNavigate={onClose} />
+        <NavList onNavigate={onClose} overdue={overdue} />
         <div className="border-t border-rule px-5 py-4 text-xs text-ink-subtle">
           <p>Self-hosted workspace</p>
           <p className="mt-1">v0.0.1 · pre-release</p>
@@ -169,8 +210,15 @@ const NAV_EXTRA_MATCHES: Record<string, string[]> = {
   [demoPath("/clause-manager")]: [demoPath("/clause-library")],
 };
 
-function NavList({ onNavigate }: { onNavigate?: () => void } = {}) {
+function NavList({
+  onNavigate,
+  overdue,
+}: {
+  onNavigate?: () => void;
+  overdue?: OverdueCounts | null;
+}) {
   const { pathname } = useLocation();
+  const approvalsBadge = overdue?.approvalSteps ?? 0;
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3 text-sm">
       {NAV.map((item) => {
@@ -178,6 +226,8 @@ function NavList({ onNavigate }: { onNavigate?: () => void } = {}) {
         const matchesExtra = extras.some(
           (p) => pathname === p || pathname.startsWith(`${p}/`),
         );
+        const isApprovals = item.to === demoPath("/approvals");
+        const showBadge = isApprovals && approvalsBadge > 0;
         return (
           <NavLink
             key={item.to}
@@ -185,14 +235,25 @@ function NavList({ onNavigate }: { onNavigate?: () => void } = {}) {
             onClick={onNavigate}
             className={({ isActive }) =>
               [
-                "rounded px-3 py-2 transition-colors",
+                "flex items-center justify-between rounded px-3 py-2 transition-colors",
                 isActive || matchesExtra
                   ? "bg-canvas-muted font-medium text-ink"
                   : "text-ink-muted hover:bg-canvas-muted hover:text-ink",
               ].join(" ")
             }
           >
-            {item.label}
+            <span>{item.label}</span>
+            {showBadge && (
+              <span
+                className="rounded bg-danger px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-canvas"
+                data-testid="sidebar-overdue-badge"
+                aria-label={`${approvalsBadge} overdue approval ${
+                  approvalsBadge === 1 ? "step" : "steps"
+                }`}
+              >
+                {approvalsBadge}
+              </span>
+            )}
           </NavLink>
         );
       })}
