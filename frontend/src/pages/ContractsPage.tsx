@@ -14,12 +14,22 @@ type LoadState =
   | { kind: "loaded"; contracts: ContractListItem[] }
   | { kind: "error"; title: string; description: string };
 
+type SortOrder = "newest" | "oldest" | "title_asc";
+
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "all", label: "All statuses" },
   { value: "ready", label: "Ready" },
   { value: "extracting", label: "Extracting" },
   { value: "uploaded", label: "Uploaded" },
+  { value: "sent_for_signature", label: "Out for signature" },
+  { value: "executed", label: "Executed" },
   { value: "failed", label: "Extraction failed" },
+];
+
+const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "title_asc", label: "Title A→Z" },
 ];
 
 export default function ContractsPage() {
@@ -27,11 +37,13 @@ export default function ContractsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [sort, setSort] = useState<SortOrder>("newest");
+  const [includeMerged, setIncludeMerged] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
     setState({ kind: "loading" });
-    getContracts({ signal: controller.signal })
+    getContracts({ signal: controller.signal, include_merged: includeMerged })
       .then((contracts) => setState({ kind: "loaded", contracts }))
       .catch((err) => {
         if (controller.signal.aborted) return;
@@ -59,7 +71,7 @@ export default function ContractsPage() {
         });
       });
     return () => controller.abort();
-  }, []);
+  }, [includeMerged]);
 
   const types = useMemo(() => {
     if (state.kind !== "loaded") return [];
@@ -70,7 +82,7 @@ export default function ContractsPage() {
   const filtered = useMemo(() => {
     if (state.kind !== "loaded") return [];
     const q = search.trim().toLowerCase();
-    return state.contracts.filter((c) => {
+    const rows = state.contracts.filter((c) => {
       if (statusFilter !== "all" && c.status !== statusFilter) return false;
       if (typeFilter !== "all" && c.mime_type !== typeFilter) return false;
       if (q) {
@@ -79,7 +91,16 @@ export default function ContractsPage() {
       }
       return true;
     });
-  }, [state, search, statusFilter, typeFilter]);
+    const sorted = [...rows];
+    if (sort === "newest") {
+      sorted.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    } else if (sort === "oldest") {
+      sorted.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    } else if (sort === "title_asc") {
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+    }
+    return sorted;
+  }, [state, search, statusFilter, typeFilter, sort]);
 
   return (
     <div data-testid="repository-page">
@@ -108,12 +129,14 @@ export default function ContractsPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by title…"
             className="flex-1 min-w-[200px] rounded border border-rule bg-canvas px-3 py-1.5 text-sm placeholder:text-ink-subtle focus:border-accent-ring focus:outline-none"
+            data-testid="repository-search"
           />
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
             aria-label="Filter by status"
+            data-testid="repository-filter-status"
           >
             {STATUS_FILTERS.map((s) => (
               <option key={s.value} value={s.value}>
@@ -126,6 +149,7 @@ export default function ContractsPage() {
             onChange={(e) => setTypeFilter(e.target.value)}
             className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
             aria-label="Filter by type"
+            data-testid="repository-filter-type"
           >
             <option value="all">All types</option>
             {types.map((t) => (
@@ -134,6 +158,31 @@ export default function ContractsPage() {
               </option>
             ))}
           </select>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOrder)}
+            className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
+            aria-label="Sort by"
+            data-testid="repository-sort"
+          >
+            {SORT_OPTIONS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          <label
+            className="flex items-center gap-2 text-xs text-ink-subtle"
+            data-testid="repository-include-merged-label"
+          >
+            <input
+              type="checkbox"
+              checked={includeMerged}
+              onChange={(e) => setIncludeMerged(e.target.checked)}
+              data-testid="repository-include-merged"
+            />
+            Show merged
+          </label>
         </div>
       )}
 

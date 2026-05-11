@@ -147,6 +147,13 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Repository** — the agreement list at `/demo/repository` (legacy
+  `/demo/contracts` still resolves). PR #81 added the missing
+  `Out for signature` and `Executed` options to the status filter,
+  a sort dropdown (Newest / Oldest / Title A→Z), a "Show merged"
+  toggle wired to the `?include_merged=true` API param from PR #76,
+  and a `Merged` chip on rows whose Repository record has been merged
+  into another. No backend changes.
 - **Clause Manager** — approved clauses, fallback language, and reusable
   drafting guidance. PR #80 polished this surface: loading / error /
   empty states, an Active / Archived status pill, an "Add a clause"

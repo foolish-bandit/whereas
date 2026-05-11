@@ -8,6 +8,18 @@ interface ContractTableProps {
   contracts: ContractListItem[];
 }
 
+function MergedChip() {
+  return (
+    <span
+      className="rounded border border-rule bg-canvas-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted"
+      data-testid="repository-merged-chip"
+      title="This record has been merged into another Repository record."
+    >
+      Merged
+    </span>
+  );
+}
+
 export default function ContractTable({ contracts }: ContractTableProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
@@ -27,6 +39,7 @@ export default function ContractTable({ contracts }: ContractTableProps) {
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
               <StatusBadge status={c.status} />
+              {c.merged_into_contract_id && <MergedChip />}
               <span>{mimeLabel(c.mime_type)}</span>
               {c.page_count != null && <span>{c.page_count} pages</span>}
             </div>
@@ -68,7 +81,10 @@ export default function ContractTable({ contracts }: ContractTableProps) {
                   </p>
                 </td>
                 <td className="px-4 py-3 align-top">
-                  <StatusBadge status={c.status} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge status={c.status} />
+                    {c.merged_into_contract_id && <MergedChip />}
+                  </div>
                 </td>
                 <td className="px-4 py-3 align-top text-ink-muted">
                   {mimeLabel(c.mime_type)}

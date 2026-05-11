@@ -287,12 +287,24 @@ function scrubSecrets<T>(value: T): T {
   return value;
 }
 
+export interface GetContractsOptions extends ApiOptions {
+  /**
+   * When true, list rows that have been merged into another Repository
+   * record (PR #76). Default is false; the backend filters them out
+   * server-side.
+   */
+  include_merged?: boolean;
+}
+
 export async function getContracts(
-  options: ApiOptions = {},
+  options: GetContractsOptions = {},
 ): Promise<ContractListItem[]> {
   if (isDemoMode()) return mockApi.getContracts(options);
+  const params = new URLSearchParams();
+  if (options.include_merged) params.set("include_merged", "true");
+  const qs = params.toString();
   const data = await call<ContractListItem[]>(
-    "/api/contracts",
+    `/api/contracts${qs ? `?${qs}` : ""}`,
     { method: "GET" },
     options,
   );
