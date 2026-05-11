@@ -101,7 +101,7 @@ describe("UploadReviewPanel", () => {
     const link = screen.getByTestId("upload-review-duplicate-link");
     expect(link).toHaveAttribute(
       "href",
-      `/demo/contracts/${SAMPLE_DUPLICATE.contract_id}`,
+      `/demo/repository/${SAMPLE_DUPLICATE.contract_id}`,
     );
   });
 

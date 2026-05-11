@@ -29,7 +29,7 @@ export default function ContractTable({ contracts }: ContractTableProps) {
         {contracts.map((c) => (
           <li key={c.id} className="px-4 py-3 text-sm">
             <Link
-              to={`/demo/contracts/${c.id}`}
+              to={`/demo/repository/${c.id}`}
               className="block font-medium text-ink hover:underline"
             >
               {c.title}
@@ -71,7 +71,7 @@ export default function ContractTable({ contracts }: ContractTableProps) {
               >
                 <td className="px-4 py-3 align-top">
                   <Link
-                    to={`/demo/contracts/${c.id}`}
+                    to={`/demo/repository/${c.id}`}
                     className="font-medium text-ink hover:underline"
                   >
                     {c.title}

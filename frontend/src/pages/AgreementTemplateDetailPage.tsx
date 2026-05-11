@@ -450,7 +450,7 @@ export default function AgreementTemplateDetailPage() {
               </p>
               <div className="mt-2 flex flex-wrap gap-3 text-xs">
                 <Link
-                  to={demoPath(`/contracts/${genResult.contract.id}`)}
+                  to={demoPath(`/repository/${genResult.contract.id}`)}
                   className="underline"
                   data-testid="agreement-template-generate-contract-link"
                 >

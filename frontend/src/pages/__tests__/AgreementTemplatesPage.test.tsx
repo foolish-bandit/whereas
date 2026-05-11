@@ -382,7 +382,7 @@ describe("AgreementTemplateDetailPage", () => {
     const link = screen.getByTestId("agreement-template-generate-contract-link");
     expect(link).toHaveAttribute(
       "href",
-      `/demo/contracts/${GENERATED_CONTRACT_ID}`,
+      `/demo/repository/${GENERATED_CONTRACT_ID}`,
     );
     expect(document.body.textContent ?? "").not.toContain("storage_key");
     expect(document.body.textContent ?? "").not.toContain("should-not-be-here");
