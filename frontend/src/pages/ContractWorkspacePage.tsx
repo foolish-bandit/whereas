@@ -1207,12 +1207,11 @@ function CompareVersionsPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-xs font-medium text-ink">Text comparison</h3>
         <p className="text-[11px] text-ink-subtle">
-          Preview comparison only — not an official redline.
+          This is a text comparison preview, not an official Word redline.
         </p>
       </div>
       <p className="mt-1 text-[11px] text-ink-subtle">
-        Pick two versions to see a line-by-line text diff. Download the
-        files if you need a full Word redline.
+        Select exactly two versions to compare their extracted text side by side.
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <label className="flex flex-col text-[11px] text-ink-muted">
@@ -1264,7 +1263,7 @@ function CompareVersionsPanel({
           data-testid="compare-versions-button"
           className="inline-flex items-center justify-center rounded border border-ink bg-ink px-3 py-1.5 text-xs font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {state.kind === "comparing" ? "Comparing…" : "Compare"}
+          {state.kind === "comparing" ? "Comparing…" : "Compare selected versions"}
         </button>
       </div>
       {state.kind === "error" && (
@@ -1317,25 +1316,9 @@ function CompareResultPanel({ result }: { result: ArtifactCompareResponse }) {
               className="border-b border-rule last:border-b-0"
             >
               {block.lines.map((line, lineIdx) => (
-                <div
-                  key={lineIdx}
-                  className={
-                    line.type === "added"
-                      ? "bg-emerald-50 px-2 py-0.5 text-emerald-900"
-                      : line.type === "removed"
-                        ? "bg-rose-50 px-2 py-0.5 text-rose-900"
-                        : "px-2 py-0.5 text-ink-muted"
-                  }
-                  data-testid={`compare-line-${line.type}`}
-                >
-                  <span className="mr-2 select-none">
-                    {line.type === "added"
-                      ? "+"
-                      : line.type === "removed"
-                        ? "−"
-                        : " "}
-                  </span>
-                  {line.text || " "}
+                <div key={lineIdx} className="grid grid-cols-2" data-testid={`compare-line-${line.type}`}>
+                  <div className={line.type === "removed" ? "bg-rose-50 px-2 py-0.5 text-rose-900" : "px-2 py-0.5 text-ink-muted"}>{line.type === "removed" ? line.text || " " : " "}</div>
+                  <div className={line.type === "added" ? "bg-emerald-50 px-2 py-0.5 text-emerald-900" : "px-2 py-0.5 text-ink-muted"}>{line.type === "added" ? line.text || " " : line.type === "context" ? line.text || " " : " "}</div>
                 </div>
               ))}
             </div>
@@ -1359,7 +1342,7 @@ function CompareSideHeader({
       data-testid={`compare-side-${side}`}
     >
       <p className="text-[10px] uppercase tracking-wide text-ink-subtle">
-        {side === "base" ? "Base" : "Compare"}
+        {side === "base" ? "Left version" : "Right version"}
       </p>
       <p className="mt-0.5 text-xs font-medium text-ink">{descriptor.label}</p>
       {descriptor.filename && (
