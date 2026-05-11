@@ -1282,11 +1282,99 @@ backend ever auto-merges or deletes candidates.
 ### Follow-ups
 
 - Duplicate merge / "link to existing" workflow.
-- Contract detail page surfaces the confirmed
-  counterparty / contract type / effective date inline.
-- Metadata write-back to Contract columns once the model carries
-  `counterparty_name` / `contract_type`.
 - User-confirmed extraction history (today only the latest patch
   is captured via the audit row; values aren't journalled).
 - OCR + Docling fallback for scanned uploads.
 - PowerSync sync rules covering the new metadata surface.
+
+## Repository detail polish + document lifecycle view (PR #68)
+
+A UI/UX-only pass on the Repository detail page (`ContractWorkspacePage`).
+No backend behavior, artifact semantics, approval gate semantics,
+download priority, DocuSeal flow, or storage layout changed. The
+goal: when a user opens a Repository record, they should immediately
+understand what the agreement is, which document is official right
+now, whether it was uploaded / generated / signed, and what the next
+action is.
+
+### Layout
+
+The Repository detail page is now organized as stacked sections:
+
+1. **Header** — title (sourced from the merged metadata view added in
+   PR #67), status badge, contract type and counterparty when known,
+   a one-line "Current document: <label>" hint, and the existing
+   Download original primary action.
+2. **Document lifecycle strip** — a four-card row showing the four
+   slots the workspace cares about:
+   - Source file (`original_upload`, with the `request_upload`
+     source flavor rendered as "Uploaded agreement")
+   - Generated Word document (`generated_docx`)
+   - Signed PDF (`signed_pdf`)
+   - Text preview (the Markdown working snapshot)
+   Each card flips between a "present" / "missing" visual state and
+   shows the artifact's added date and MIME label. Raw `artifact_type`
+   enum values never appear in user-facing copy.
+3. **Send to DocuSeal** — unchanged from PR #45 onwards. Still gated
+   by the existing approval-gate response and the override surface
+   from PR #54–#61.
+4. **Preview** — the existing Markdown ↔ View original toggle plus
+   the metadata/clauses/review sidebar tabs from prior PRs.
+5. **Details** — read-only field list (Title, Status, Contract type,
+   Counterparty, Effective date, Added, Last updated, Source). The
+   Source field is filled in from a small whitelist of safe
+   `metadata_json` keys via `pickPrimaryOriginCopy`:
+   - `original_upload + user_upload` → "Uploaded directly"
+   - `original_upload + request_upload` → "Converted from request upload"
+   - `generated_docx` with `metadata_json.template_name` →
+     "Generated from template “…”"
+   - `signed_pdf` → "Signed through DocuSeal"
+   An "Edit details" action reuses the existing `UploadReviewPanel`
+   to invoke the PR #67 metadata PATCH endpoint; no new API surface.
+6. **Activity** — unchanged: existing `ActivityTimeline`.
+7. **Files** — listing of every `ContractArtifact` returned by the
+   existing `GET /api/contracts/{id}/artifacts` endpoint. Each row
+   shows the user-facing label, filename, MIME type, size, added
+   date, source chip ("Uploaded" / "From request" / "From template"
+   / "From DocuSeal"), and the origin sentence. The list reads only
+   the safe fields already exposed by the schema — `storage_key` /
+   `wrapped_dek` are not on the wire (see `app/schemas/artifacts.py`)
+   and the `scrubSecrets` belt-and-suspenders in `lib/api.ts`
+   guarantees the UI cannot render them even if a regression slipped
+   them onto the response.
+
+### Current document priority
+
+The "Current document" hint and the lifecycle strip mirror the same
+priority the backend download endpoint uses (see §6.2):
+
+1. Signed PDF
+2. Generated Word document
+3. Source file
+4. Legacy fallback (the workspace renders a quiet "Legacy original"
+   notice for contracts that predate the artifact model)
+
+`pickCurrentDocumentLabel(artifacts)` in `lib/artifacts.ts` is the
+single source of truth on the frontend. Tests pin the priority order
+so the UI cannot drift from the backend resolver.
+
+### What did NOT change
+
+- Artifact taxonomy or semantics
+  (`original_upload` / `generated_docx` / `signed_pdf`).
+- Download endpoint priority.
+- Approval gate response shape or DocuSeal flow.
+- Upload, request → upload conversion, or template generation paths.
+- Markdown snapshot pipeline.
+- The legacy `/demo/contracts[/:id]` route alias still resolves
+  (and the workspace now also responds at `/demo/repository/:id`,
+  matching the Repository navigation introduced in PR #63).
+
+### Follow-ups
+
+- Richer file comparison / redline view (artifact diff).
+- Generated PDF preview alongside the DOCX.
+- Artifact version history (timeline of each artifact_type slot).
+- A deeper design-system pass (still tracked from the navigation
+  consolidation PR).
+- PowerSync sync rules covering the Repository detail surface.

@@ -12,6 +12,7 @@ import {
   MOCK_DETAIL_BY_ID,
   MOCK_LIST,
   MOCK_MARKDOWN_BY_CONTRACT_ID,
+  MOCK_NDA_ID,
   MOCK_PLAYBOOK_DETAIL_BY_ID,
   MOCK_PLAYBOOK_LIST,
   MOCK_REVIEW_BY_KEY,
@@ -207,24 +208,63 @@ export async function getContractArtifacts(
   if (!detail) {
     throw new ApiError(404, "Contract not found.");
   }
-  // Demo mode synthesizes a single original_upload artifact off the
-  // contract row so the workspace can render the metadata strip.
-  return [
-    {
-      id: `${id}-artifact`,
-      contract_id: id,
-      artifact_type: "original_upload",
-      storage_backend: "s3",
-      filename: `${detail.title}.${detail.mime_type === "application/pdf" ? "pdf" : "docx"}`,
-      mime_type: detail.mime_type,
-      file_hash_sha256: detail.file_hash_sha256,
-      size_bytes: null,
-      source: "user_upload",
-      is_official: true,
-      created_at: detail.created_at,
-      metadata_json: null,
+  // Demo mode synthesizes a small artifact lifecycle so the
+  // Repository detail view exercises the full lifecycle strip in
+  // demo mode. The seed NDA gets all three stages (uploaded source,
+  // generated Word document, signed PDF); other rows just get the
+  // single original upload.
+  const original: ContractArtifact = {
+    id: `${id}-artifact-original`,
+    contract_id: id,
+    artifact_type: "original_upload",
+    storage_backend: "s3",
+    filename: `${detail.title}.${detail.mime_type === "application/pdf" ? "pdf" : "docx"}`,
+    mime_type: detail.mime_type,
+    file_hash_sha256: detail.file_hash_sha256,
+    size_bytes: null,
+    source: "user_upload",
+    is_official: true,
+    created_at: detail.created_at,
+    metadata_json: null,
+  };
+  if (id !== MOCK_NDA_ID) {
+    return [original];
+  }
+  const generated: ContractArtifact = {
+    id: `${id}-artifact-generated`,
+    contract_id: id,
+    artifact_type: "generated_docx",
+    storage_backend: "s3",
+    filename: `${detail.title}.docx`,
+    mime_type:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    file_hash_sha256: detail.file_hash_sha256,
+    size_bytes: null,
+    source: "template_generation",
+    is_official: true,
+    created_at: detail.created_at,
+    metadata_json: {
+      template_id: "11111111-1111-4111-8111-111111111111",
+      template_name: "Mutual NDA template",
     },
-  ];
+  };
+  const signed: ContractArtifact = {
+    id: `${id}-artifact-signed`,
+    contract_id: id,
+    artifact_type: "signed_pdf",
+    storage_backend: "s3",
+    filename: `${detail.title}.signed.pdf`,
+    mime_type: "application/pdf",
+    file_hash_sha256: detail.file_hash_sha256,
+    size_bytes: null,
+    source: "docuseal",
+    is_official: true,
+    created_at: detail.updated_at,
+    metadata_json: { docuseal_submission_id: "demo-submission-1" },
+  };
+  // Listing order: newest first, matching the real backend's
+  // ``created_at desc`` ordering.
+  return [signed, generated, original];
 }
 
 export async function uploadContract(

@@ -57,6 +57,16 @@ const SNAPSHOT = {
   created_at: "2026-05-08T00:00:00Z",
 };
 
+const METADATA_VIEW = {
+  contract_id: CONTRACT_ID,
+  title: CONTRACT_DETAIL.title,
+  counterparty_name: null,
+  contract_type: null,
+  effective_date: null,
+  updated_at: CONTRACT_DETAIL.updated_at,
+  changed_fields: [],
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -66,12 +76,18 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function setupFetch(
   fetchMock: Mock,
-  options: { snapshot?: object | null; artifacts?: object[] } = {},
+  options: {
+    snapshot?: object | null;
+    artifacts?: object[];
+    metadata?: object | null;
+  } = {},
 ) {
   const snapshot =
     "snapshot" in options ? options.snapshot ?? null : SNAPSHOT;
   const artifacts =
     "artifacts" in options ? options.artifacts ?? [] : [ARTIFACT];
+  const metadata =
+    "metadata" in options ? options.metadata : METADATA_VIEW;
   fetchMock.mockImplementation(async (url: string) => {
     if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
       return snapshot
@@ -81,6 +97,11 @@ function setupFetch(
     if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
       return jsonResponse(artifacts);
     }
+    if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+      return metadata
+        ? jsonResponse(metadata)
+        : jsonResponse({ detail: "not found" }, 404);
+    }
     if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
       return jsonResponse(CONTRACT_DETAIL);
     }
@@ -88,12 +109,16 @@ function setupFetch(
   });
 }
 
-function renderPage() {
+function renderPage(path: string = `/contracts/${CONTRACT_ID}`) {
   return render(
-    <MemoryRouter initialEntries={[`/contracts/${CONTRACT_ID}`]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route
           path="/contracts/:id"
+          element={<ContractWorkspacePage />}
+        />
+        <Route
+          path="/repository/:id"
           element={<ContractWorkspacePage />}
         />
       </Routes>
@@ -132,7 +157,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(buttons[1]).toHaveAttribute("aria-pressed", "false");
     expect(buttons[1].textContent).toMatch(/view original/i);
 
-    // The header still exposes the original-artifact action.
+    // The header still exposes the Download original action.
     expect(
       screen.getByRole("button", { name: /download original/i }),
     ).toBeInTheDocument();
@@ -157,26 +182,52 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(screen.getByText("Some plain text body.")).toBeInTheDocument();
   });
 
-  it("renders the original artifact metadata strip when an artifact is returned", async () => {
+  it("renders the document lifecycle strip with each slot's user-facing label", async () => {
     setupFetch(fetchMock);
     renderPage();
-    const strip = await screen.findByTestId("original-artifact-strip");
-    expect(strip).toHaveTextContent(/original artifact/i);
-    expect(strip).toHaveTextContent(/official/i);
-    expect(strip).toHaveTextContent("vendor-msa.pdf");
-    expect(strip).toHaveTextContent(/pdf/i);
+    const strip = await screen.findByTestId("document-lifecycle-strip");
+    expect(strip).toHaveTextContent(/document lifecycle/i);
+    // User-facing labels — never the raw artifact_type names.
+    expect(strip).toHaveTextContent(/source file/i);
+    expect(strip).toHaveTextContent(/generated word document/i);
+    expect(strip).toHaveTextContent(/signed pdf/i);
+    expect(strip).toHaveTextContent(/text preview/i);
+
+    // Strip itself must not surface the on-disk artifact_type enum
+    // values (those belong to dev/debug surfaces only).
+    expect(strip.textContent ?? "").not.toMatch(/original_upload/);
+    expect(strip.textContent ?? "").not.toMatch(/generated_docx/);
+    expect(strip.textContent ?? "").not.toMatch(/signed_pdf/);
+
+    // Original upload slot is "present"; generated/signed are "missing".
+    expect(
+      screen.getByTestId("lifecycle-slot-original_upload"),
+    ).toHaveAttribute("data-state", "present");
+    expect(
+      screen.getByTestId("lifecycle-slot-generated_docx"),
+    ).toHaveAttribute("data-state", "missing");
+    expect(
+      screen.getByTestId("lifecycle-slot-signed_pdf"),
+    ).toHaveAttribute("data-state", "missing");
   });
 
-  it("renders a legacy fallback strip when the artifacts list is empty", async () => {
+  it("shows 'Current document: Source file' when only an original upload exists", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    const label = await screen.findByTestId("repository-current-document");
+    expect(label).toHaveTextContent(/current document/i);
+    expect(label).toHaveTextContent(/source file/i);
+  });
+
+  it("falls back to a legacy-original notice when the artifacts list is empty", async () => {
     setupFetch(fetchMock, { artifacts: [] });
     renderPage();
     const legacy = await screen.findByTestId(
-      "original-artifact-strip-legacy",
+      "repository-current-document-legacy",
     );
     expect(legacy).toHaveTextContent(/legacy original/i);
-    // The official strip must not render when no artifact exists.
     expect(
-      screen.queryByTestId("original-artifact-strip"),
+      screen.queryByTestId("repository-current-document"),
     ).not.toBeInTheDocument();
     // Download original action stays available either way.
     expect(
@@ -184,7 +235,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     ).toBeInTheDocument();
   });
 
-  it("prefers signed_pdf over original_upload in the artifact strip", async () => {
+  it("prefers signed_pdf over generated_docx and original_upload in the current document label", async () => {
     const SIGNED = {
       ...ARTIFACT,
       id: "55555555-5555-4555-8555-555555555555",
@@ -193,25 +244,60 @@ describe("ContractWorkspacePage markdown integration", () => {
       mime_type: "application/pdf",
       source: "docuseal",
     };
-    setupFetch(fetchMock, { artifacts: [SIGNED, ARTIFACT] });
+    const GENERATED = {
+      ...ARTIFACT,
+      id: "66666666-6666-4666-8666-666666666666",
+      artifact_type: "generated_docx",
+      filename: "draft.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      source: "template_generation",
+    };
+    setupFetch(fetchMock, { artifacts: [SIGNED, GENERATED, ARTIFACT] });
     renderPage();
-    const strip = await screen.findByTestId("signed-artifact-strip");
-    expect(strip).toHaveTextContent(/signed artifact/i);
-    expect(strip).toHaveTextContent("executed-msa.signed.pdf");
-    expect(strip).toHaveTextContent(/signed/i);
-    // The "original" strip must NOT also render — only one strip.
+    const label = await screen.findByTestId("repository-current-document");
+    expect(label).toHaveTextContent(/signed pdf/i);
+    expect(label).not.toHaveTextContent(/generated word document/i);
+    expect(label).not.toHaveTextContent(/source file/i);
+    // Lifecycle strip shows all three as present.
     expect(
-      screen.queryByTestId("original-artifact-strip"),
-    ).not.toBeInTheDocument();
+      screen.getByTestId("lifecycle-slot-signed_pdf"),
+    ).toHaveAttribute("data-state", "present");
+    expect(
+      screen.getByTestId("lifecycle-slot-generated_docx"),
+    ).toHaveAttribute("data-state", "present");
+    expect(
+      screen.getByTestId("lifecycle-slot-original_upload"),
+    ).toHaveAttribute("data-state", "present");
   });
 
-  it("renders neither artifact strip when the artifacts API fails", async () => {
+  it("prefers generated_docx over original_upload when no signed PDF is present", async () => {
+    const GENERATED = {
+      ...ARTIFACT,
+      id: "66666666-6666-4666-8666-666666666666",
+      artifact_type: "generated_docx",
+      filename: "draft.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      source: "template_generation",
+    };
+    setupFetch(fetchMock, { artifacts: [GENERATED, ARTIFACT] });
+    renderPage();
+    const label = await screen.findByTestId("repository-current-document");
+    expect(label).toHaveTextContent(/generated word document/i);
+    expect(label).not.toHaveTextContent(/signed pdf/i);
+  });
+
+  it("hides the lifecycle strip when the artifacts API fails", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
         return jsonResponse(SNAPSHOT);
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
         return jsonResponse({ detail: "boom" }, 500);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
@@ -232,17 +318,15 @@ describe("ContractWorkspacePage markdown integration", () => {
       return jsonResponse({ detail: "unexpected" }, 500);
     });
     renderPage();
-    // Workspace still renders the Markdown preview; the artifact
-    // failure is silent.
     await screen.findByRole("heading", {
       level: 1,
       name: "Workspace markdown",
     });
     expect(
-      screen.queryByTestId("original-artifact-strip"),
+      screen.queryByTestId("document-lifecycle-strip"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("original-artifact-strip-legacy"),
+      screen.queryByTestId("repository-current-document"),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /download original/i }),
@@ -267,6 +351,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
         return jsonResponse({ allowed: false, code: "active_approval_workflows", request_id: "r1", blocking_workflow_ids: ["w1"], completed_workflow_ids: [], active_count: 1, rejected_count: 0, cancelled_count: 0, completed_count: 0 });
@@ -292,6 +377,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
         return jsonResponse({
@@ -378,6 +464,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
         return jsonResponse({
@@ -405,6 +492,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
         return jsonResponse({
@@ -467,6 +555,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) {
         return jsonResponse({
@@ -508,6 +597,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) return jsonResponse({ detail: "gate unavailable" }, 500);
       return jsonResponse({ detail: "unexpected" }, 500);
@@ -526,6 +616,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(CONTRACT_DETAIL);
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/approval-gate`)) return jsonResponse({ detail: "gate unavailable" }, 500);
       return jsonResponse({ detail: "unexpected" }, 500);
@@ -536,6 +627,141 @@ describe("ContractWorkspacePage markdown integration", () => {
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
   });
 
+});
+
+describe("ContractWorkspacePage Repository detail polish (PR #68)", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  it("renders the Repository detail header with Repository terminology", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    const header = await screen.findByTestId("repository-detail-header");
+    expect(header).toBeInTheDocument();
+    // Back link uses Repository terminology rather than 'Contracts'.
+    const back = screen.getByRole("link", { name: /back to repository/i });
+    expect(back).toBeInTheDocument();
+    expect(back).toHaveAttribute("href", "/demo/repository");
+  });
+
+  it("renders the Details section with safe metadata + the Edit details action", async () => {
+    setupFetch(fetchMock, {
+      metadata: {
+        ...METADATA_VIEW,
+        counterparty_name: "Globex",
+        contract_type: "MSA",
+        effective_date: "2026-05-01",
+      },
+    });
+    renderPage();
+    const details = await screen.findByTestId("contract-details-section");
+    expect(details).toHaveTextContent(/Counterparty/i);
+    expect(details).toHaveTextContent(/Globex/);
+    expect(details).toHaveTextContent(/Contract type/i);
+    expect(details).toHaveTextContent(/MSA/);
+    expect(details).toHaveTextContent(/Effective date/i);
+    expect(details).toHaveTextContent("2026-05-01");
+    // Source uses friendly origin copy derived from the artifact.
+    expect(details).toHaveTextContent(/Uploaded directly/);
+    expect(
+      screen.getByTestId("contract-details-edit"),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the Edit details panel and reuses the upload-review form", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    const editBtn = await screen.findByTestId("contract-details-edit");
+    fireEvent.click(editBtn);
+    expect(
+      await screen.findByTestId("contract-details-edit-panel"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("upload-review-title")).toBeInTheDocument();
+  });
+
+  it("renders the Files section using user-friendly artifact labels (no raw artifact_type names)", async () => {
+    const SIGNED = {
+      ...ARTIFACT,
+      id: "55555555-5555-4555-8555-555555555555",
+      artifact_type: "signed_pdf",
+      filename: "executed.pdf",
+      mime_type: "application/pdf",
+      source: "docuseal",
+      metadata_json: { docuseal_submission_id: "sub-1" },
+    };
+    setupFetch(fetchMock, { artifacts: [SIGNED, ARTIFACT] });
+    renderPage();
+    const files = await screen.findByTestId("contract-files-section");
+    expect(files).toHaveTextContent(/Source file/i);
+    expect(files).toHaveTextContent(/Signed PDF/i);
+    // Raw internal type names must not leak to the user-facing list.
+    expect(files.textContent ?? "").not.toMatch(/original_upload/);
+    expect(files.textContent ?? "").not.toMatch(/signed_pdf/);
+    // Filenames + origin copy are visible.
+    expect(files).toHaveTextContent("vendor-msa.pdf");
+    expect(files).toHaveTextContent("executed.pdf");
+    expect(files).toHaveTextContent(/Signed through DocuSeal/i);
+    expect(files).toHaveTextContent(/Uploaded directly/i);
+  });
+
+  it("never leaks storage_key, wrapped_dek, or signer PII into the Files list", async () => {
+    // The backend strips these at the schema layer and the api client
+    // re-scrubs them, but we belt-and-suspenders here: even if a
+    // malformed payload carried them, the UI must not surface them.
+    const NAUGHTY = {
+      ...ARTIFACT,
+      // These shouldn't be on the wire — assert the UI doesn't render
+      // them even if they sneak through.
+      storage_key: "s3://internal/whoops",
+      wrapped_dek: "00".repeat(32),
+      metadata_json: {
+        docuseal_submission_id: "sub-1",
+        signer_email: "secret@example.com",
+      },
+    };
+    setupFetch(fetchMock, { artifacts: [NAUGHTY] });
+    renderPage();
+    await screen.findByTestId("contract-files-section");
+    const html = document.body.innerHTML;
+    expect(html).not.toContain("storage_key");
+    expect(html).not.toContain("wrapped_dek");
+    expect(html).not.toContain("s3://internal");
+    expect(html).not.toContain("secret@example.com");
+  });
+
+  it("renders the existing activity timeline section", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    expect(
+      await screen.findByTestId("contract-activity-section"),
+    ).toBeInTheDocument();
+  });
+
+  it("still renders the Send to DocuSeal panel", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+    expect(
+      await screen.findByTestId("send-to-docuseal"),
+    ).toBeInTheDocument();
+  });
+
+  it("works on the /repository/:id route alias", async () => {
+    setupFetch(fetchMock);
+    renderPage(`/repository/${CONTRACT_ID}`);
+    expect(
+      await screen.findByTestId("repository-detail-header"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("ContractWorkspacePage Send to DocuSeal", () => {
@@ -567,6 +793,9 @@ describe("ContractWorkspacePage Send to DocuSeal", () => {
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
         return jsonResponse([generatedArtifact]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
@@ -656,6 +885,9 @@ describe("ContractWorkspacePage Send to DocuSeal", () => {
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
         return jsonResponse([ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
       }
       if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
         return jsonResponse(CONTRACT_DETAIL);
