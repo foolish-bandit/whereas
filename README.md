@@ -127,10 +127,20 @@ Top-level navigation:
   records. Backed by the same backend `Contract` APIs; the legacy
   `/demo/contracts` route is preserved as an alias of `/demo/repository`.
 - **Requests** — the natural place to start work. The Requests workspace
-  surfaces cards for *New request*, *Start from template*, *Agreement
-  templates* (template management lives here, reachable at
-  `/demo/requests/templates` and the legacy `/demo/agreement-templates`),
-  and the *Request queue*.
+  surfaces cards for *New request*, *Start from template*, *Upload
+  third-party agreement*, *Agreement templates* (template management
+  lives here, reachable at `/demo/requests/templates` and the legacy
+  `/demo/agreement-templates`), and the *Request queue*. A request can
+  become a Repository contract via two intake paths:
+  - generating a draft from an `AgreementTemplate` and rendered variable
+    values (PR #48), or
+  - uploading a third-party agreement file (PDF/DOCX) — counterparty
+    paper, signed exhibit, or external draft — which is stored as the
+    new contract's official `original_upload` artifact (PR #65).
+  Both paths leave the request `linked_contract_id` set and the open
+  `request_review` inbox item resolved in the same transaction. The
+  approval gate / policy matching / DocuSeal send semantics apply
+  unchanged.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
 - **Clause Manager** — approved clauses, fallback language, and reusable

@@ -143,3 +143,67 @@ export interface ConvertRequestToContractResponse {
   } | null;
   variables_used: string[];
 }
+
+/**
+ * Body for ``POST /api/requests/{id}/convert-upload`` (PR #65).
+ *
+ * The endpoint is multipart/form-data: the API client builds a
+ * ``FormData`` from this shape so the request includes the file part
+ * plus the optional metadata fields below as form values.
+ */
+export interface ConvertRequestUploadInput {
+  file: File;
+  /** Optional Contract title; falls back to the derived filename. */
+  title?: string | null;
+  counterparty_name?: string | null;
+  contract_type?: string | null;
+  notes?: string | null;
+  signal?: AbortSignal;
+}
+
+/**
+ * Response shape for ``POST /api/requests/{id}/convert-upload``.
+ *
+ * Same projections used by the template-conversion response, minus
+ * ``variables_used`` (there are no template variables on this path).
+ * Storage / encryption fields are excluded by construction at the
+ * schema layer.
+ */
+export interface ConvertRequestUploadResponse {
+  request: ContractRequest;
+  contract: {
+    id: string;
+    title: string;
+    status: string;
+    mime_type: string;
+    file_hash_sha256: string;
+    page_count: number | null;
+    created_at: string;
+    updated_at: string;
+  };
+  artifact: {
+    id: string;
+    contract_id: string;
+    artifact_type: "original_upload" | string;
+    storage_backend: string;
+    filename: string | null;
+    mime_type: string | null;
+    file_hash_sha256: string | null;
+    size_bytes: number | null;
+    source: "request_upload" | string | null;
+    is_official: boolean;
+    created_at: string;
+    metadata_json: Record<string, unknown> | null;
+  };
+  markdown_snapshot: {
+    id: string;
+    contract_id: string;
+    markdown_text: string;
+    source_kind: string;
+    converter_name: string;
+    converter_version: string | null;
+    conversion_status: string;
+    conversion_warnings: unknown[] | null;
+    created_at: string;
+  } | null;
+}

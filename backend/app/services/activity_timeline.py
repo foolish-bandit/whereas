@@ -53,6 +53,14 @@ _CONTRACT_EVENT_TYPES = (
     AuditEventType.CONTRACT_SENT_FOR_SIGNATURE.value,
     AuditEventType.CONTRACT_EXECUTED.value,
 )
+# PR #65 — events whose ``target_type='request'`` and ``target_id`` is
+# the ``ContractRequest.id``. So far there is only the "converted via
+# upload" event from the request-conversion-by-upload path; future
+# request-lifecycle events should be added here so the request
+# timeline picks them up automatically.
+_REQUEST_EVENT_TYPES = (
+    AuditEventType.REQUEST_CONVERTED_BY_UPLOAD.value,
+)
 
 
 async def _list_workflow_run_ids_for_request(
@@ -99,8 +107,9 @@ async def load_request_activity(
     limit: int = DEFAULT_LIMIT,
 ) -> list[ActivityTimelineItem]:
     """Timeline for a request: approval events for runs attached to it
-    (or to its linked contract), plus DocuSeal events on the linked
-    contract.
+    (or to its linked contract), DocuSeal events on the linked
+    contract, plus request-lifecycle events on the request itself
+    (PR #65: ``request.converted_by_upload``).
     """
     workflow_run_ids = await _list_workflow_run_ids_for_request(session, request)
     contract_ids: list[str] = []
@@ -111,6 +120,7 @@ async def load_request_activity(
         organization_id=request.organization_id,
         approval_workflow_run_ids=workflow_run_ids,
         contract_ids=contract_ids,
+        request_ids=[str(request.id)],
         limit=limit,
     )
 
@@ -130,6 +140,7 @@ async def load_contract_activity(
         organization_id=contract.organization_id,
         approval_workflow_run_ids=workflow_run_ids,
         contract_ids=[str(contract.id)],
+        request_ids=[],
         limit=limit,
     )
 
@@ -140,13 +151,18 @@ async def _query_events(
     organization_id: uuid.UUID,
     approval_workflow_run_ids: list[str],
     contract_ids: list[str],
+    request_ids: list[str],
     limit: int,
 ) -> list[ActivityTimelineItem]:
     """Build the OR predicate, run the single audit-events query, and
     project the rows into ``ActivityTimelineItem`` instances.
     """
     bounded_limit = max(1, min(MAX_LIMIT, limit))
-    if not approval_workflow_run_ids and not contract_ids:
+    if (
+        not approval_workflow_run_ids
+        and not contract_ids
+        and not request_ids
+    ):
         return []
 
     predicates = []
@@ -161,6 +177,12 @@ async def _query_events(
             (AuditEvent.event_type.in_(_CONTRACT_EVENT_TYPES))
             & (AuditEvent.target_type == "contract")
             & (AuditEvent.target_id.in_(contract_ids))
+        )
+    if request_ids:
+        predicates.append(
+            (AuditEvent.event_type.in_(_REQUEST_EVENT_TYPES))
+            & (AuditEvent.target_type == "request")
+            & (AuditEvent.target_id.in_(request_ids))
         )
     where_clause = predicates[0] if len(predicates) == 1 else or_(*predicates)
 
@@ -249,6 +271,15 @@ def _title_for(row: AuditEvent, details: dict[str, Any]) -> str:
         return "Sent to DocuSeal for signature"
     if et == AuditEventType.CONTRACT_EXECUTED.value:
         return "Signed contract received from DocuSeal"
+    if et == AuditEventType.REQUEST_CONVERTED_BY_UPLOAD.value:
+        filename = (
+            details.get("filename")
+            if isinstance(details.get("filename"), str)
+            else None
+        )
+        if filename:
+            return f"Request converted to Repository by upload: {filename}"
+        return "Request converted to Repository by upload"
     return et
 
 

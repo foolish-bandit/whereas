@@ -769,4 +769,198 @@ describe("RequestsPage", () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // PR #65 — request → Repository conversion via uploaded file
+  // -------------------------------------------------------------------------
+
+  const REQ_OPEN_NO_LINK = {
+    ...SAMPLE_REQUEST,
+    id: "req-upload",
+    title: "Upload-eligible request",
+    counterparty_name: "Acme",
+    contract_type: "NDA",
+    linked_template_id: null,
+    linked_contract_id: null,
+  };
+
+  const REQ_CANCELLED = {
+    ...SAMPLE_REQUEST,
+    id: "req-cancel",
+    title: "Cancelled request",
+    status: "cancelled" as const,
+  };
+
+  const REQ_ALREADY_LINKED = {
+    ...SAMPLE_REQUEST,
+    id: "req-linked",
+    title: "Already linked",
+    status: "completed" as const,
+    linked_contract_id: "contract-existing",
+  };
+
+  const UPLOAD_RESPONSE = {
+    request: {
+      ...REQ_OPEN_NO_LINK,
+      status: "completed",
+      linked_contract_id: "contract-new",
+    },
+    contract: {
+      id: "contract-new",
+      title: "Acme NDA — countersigned",
+      status: "ready",
+      mime_type: "application/pdf",
+      file_hash_sha256: "0".repeat(64),
+      page_count: 1,
+      created_at: "2026-05-10T16:00:00Z",
+      updated_at: "2026-05-10T16:00:00Z",
+    },
+    artifact: {
+      id: "art-upload-1",
+      contract_id: "contract-new",
+      artifact_type: "original_upload",
+      storage_backend: "s3",
+      filename: "counterparty.pdf",
+      mime_type: "application/pdf",
+      file_hash_sha256: "0".repeat(64),
+      size_bytes: 42,
+      source: "request_upload",
+      is_official: true,
+      created_at: "2026-05-10T16:00:00Z",
+      metadata_json: {
+        request_id: "req-upload",
+        upload_source: "request_conversion",
+        counterparty_name: "Acme",
+        contract_type: "NDA",
+      },
+    },
+    markdown_snapshot: null,
+  };
+
+  function fakePdfFile(name = "counterparty.pdf"): File {
+    return new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], name, {
+      type: "application/pdf",
+    });
+  }
+
+  it("renders the upload-convert toggle for an eligible request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([REQ_OPEN_NO_LINK]));
+    renderPage();
+    await screen.findByText("Upload-eligible request");
+    expect(
+      screen.getByTestId("request-upload-convert-toggle"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the upload-convert section for cancelled requests", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([REQ_CANCELLED]));
+    // Cancelled rows aren't shown by default; toggle to surface them.
+    renderPage();
+    fireEvent.click(screen.getByLabelText(/Show cancelled/i));
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("request-upload-convert-toggle"),
+      ).toBeNull();
+    });
+  });
+
+  it("hides the upload-convert section once a contract is already linked", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([REQ_ALREADY_LINKED]));
+    renderPage();
+    await screen.findByText("Already linked");
+    expect(
+      screen.queryByTestId("request-upload-convert-toggle"),
+    ).toBeNull();
+    // The existing "Linked contract" affordance still renders.
+    expect(
+      screen.getByTestId("request-converted-link"),
+    ).toBeInTheDocument();
+  });
+
+  it("uploads a file, swaps the row to completed, and surfaces the Repository link", async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (
+        url.includes("/api/requests/req-upload/convert-upload") &&
+        init?.method === "POST"
+      ) {
+        // The body must be a FormData with the file part attached.
+        expect(init.body).toBeInstanceOf(FormData);
+        return jsonResponse(UPLOAD_RESPONSE, 201);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([REQ_OPEN_NO_LINK]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Upload-eligible request");
+
+    fireEvent.click(screen.getByTestId("request-upload-convert-toggle"));
+
+    const fileInput = screen.getByTestId(
+      "request-upload-convert-file",
+    ) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [fakePdfFile()] },
+    });
+
+    fireEvent.click(screen.getByTestId("request-upload-convert-submit"));
+
+    await waitFor(() => {
+      const row = screen.getByTestId("requests-row");
+      expect(within(row).getByTestId("request-status").textContent).toBe(
+        "completed",
+      );
+    });
+    const link = await screen.findByTestId(
+      "request-convert-contract-link",
+    );
+    expect(link).toHaveAttribute("href", "/demo/contracts/contract-new");
+    // Storage internals never make it into the rendered DOM.
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
+  });
+
+  it("renders a safe error state when the backend rejects the upload", async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (
+        url.includes("/api/requests/req-upload/convert-upload") &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          { detail: "Uploaded file is empty." },
+          400,
+        );
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([REQ_OPEN_NO_LINK]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Upload-eligible request");
+
+    fireEvent.click(screen.getByTestId("request-upload-convert-toggle"));
+    const fileInput = screen.getByTestId(
+      "request-upload-convert-file",
+    ) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [fakePdfFile("empty.pdf")] },
+    });
+    fireEvent.click(screen.getByTestId("request-upload-convert-submit"));
+
+    expect(
+      await screen.findByTestId("request-upload-convert-error"),
+    ).toHaveTextContent(/empty/i);
+    // The row's status did NOT flip — the failure preserved state.
+    expect(screen.getByTestId("request-status").textContent).toBe("open");
+  });
+
+  it("renders the workspace card pointing at uploading third-party agreements", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    renderPage();
+    const card = await screen.findByTestId("requests-card-upload");
+    expect(card).toBeInTheDocument();
+    expect(card.textContent ?? "").toMatch(/third-party agreement/i);
+  });
 });

@@ -52,6 +52,8 @@ import type {
   ContractRequestUpdateRequest,
   ConvertRequestToContractRequest,
   ConvertRequestToContractResponse,
+  ConvertRequestUploadInput,
+  ConvertRequestUploadResponse,
   ListContractRequestFilters,
 } from "../types/requests";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
@@ -1222,6 +1224,42 @@ export async function convertRequestToContract(
       body: JSON.stringify(payload),
     },
     options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Convert an open request into a Repository contract by uploading a
+ * third-party / counterparty agreement file (PR #65). Multipart POST
+ * — backend stores the file, creates an ``original_upload``
+ * ``ContractArtifact`` with ``source='request_upload'``, links the
+ * new contract back to the request, and resolves the request_review
+ * inbox item in the same transaction.
+ */
+export async function convertRequestWithUpload(
+  id: string,
+  input: ConvertRequestUploadInput,
+): Promise<ConvertRequestUploadResponse> {
+  if (isDemoMode()) return mockApi.convertRequestWithUpload(id, input);
+  const formData = new FormData();
+  formData.append("file", input.file);
+  const trimmedTitle = (input.title ?? "").trim();
+  if (trimmedTitle) formData.append("title", trimmedTitle);
+  const trimmedCounterparty = (input.counterparty_name ?? "").trim();
+  if (trimmedCounterparty) {
+    formData.append("counterparty_name", trimmedCounterparty);
+  }
+  const trimmedType = (input.contract_type ?? "").trim();
+  if (trimmedType) formData.append("contract_type", trimmedType);
+  const trimmedNotes = (input.notes ?? "").trim();
+  if (trimmedNotes) formData.append("notes", trimmedNotes);
+  const data = await call<ConvertRequestUploadResponse>(
+    `/api/requests/${encodeURIComponent(id)}/convert-upload`,
+    {
+      method: "POST",
+      body: formData,
+    },
+    { signal: input.signal },
   );
   return scrubSecrets(data);
 }
