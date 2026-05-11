@@ -122,121 +122,125 @@ there is sent anywhere.
 The web UI is organized as a CLM workspace, not a database-table list.
 Top-level navigation:
 
-- **Dashboard** — at-a-glance counts and recent activity.
-- **Repository** — all agreements, drafts, signed documents, and contract
-  records. Backed by the same backend `Contract` APIs; the legacy
-  `/demo/contracts` route is preserved as an alias of `/demo/repository`.
-- **Requests** — the natural place to start work. The Requests workspace
-  surfaces cards for *New request*, *Start from template*, *Upload
-  third-party agreement*, *Agreement templates* (template management
-  lives here, reachable at `/demo/requests/templates` and the legacy
-  `/demo/agreement-templates`), and the *Request queue*. Each Request
-  also has a detail workspace at `/demo/requests/:id` with intake
-  metadata, approval status, matching Approval Policies, active
-  Approval Workflows, conversion actions, linked Repository context,
-  activity timeline, and activity export controls. A request can
-  become a Repository record via two intake paths:
-  - generating a draft from an `AgreementTemplate` and rendered variable
-    values (PR #48), or
-  - uploading a third-party agreement file (PDF/DOCX) — counterparty
-    paper, signed exhibit, or external draft — which is stored as the
-    new Repository record's Source file (PR #65).
-  Both paths leave the request `linked_contract_id` set and the open
-  `request_review` inbox item resolved in the same transaction. The
-  Request detail workspace does not change approval gate, approval
-  policy matching, DocuSeal send, or artifact priority semantics.
-- **Playbooks** — review standards, fallback positions, and deviation
-  rules for contract review.
-- **Repository URL consistency** — PR #88 renamed all internal links
-  that pointed at the legacy `/demo/contracts/:id` alias to
-  `/demo/repository/:id` (Upload success CTA, merged-notice link,
-  duplicate-candidate links in Upload feedback / review, generated-
-  contract link on the Agreement template detail page, the Repository
-  list table rows). The legacy alias is preserved so old bookmarks
-  and the Sidebar's active-state highlighting keep working.
-- **Agreement Templates** — `/demo/requests/templates`. PR #87 polished
-  the list page: real LoadingSkeleton (replacing the plain "Loading
-  templates…" text), Active / Archived status pill, template-type
-  chip, mount-aware row links (so `/demo/requests/templates/:id`
-  and standalone `/requests/templates/:id` both resolve correctly),
-  formatted "Updated" date hint, and friendlier empty-state copy
-  for the include-archived case. ErrorState replaces the inline
-  red text. No backend changes.
-- **Sidebar** — top-level navigation. PR #86 added a small overdue
-  badge next to the *Approvals* entry sourced from the existing
-  dashboard summary (`overdue_approval_steps`). The badge is
-  best-effort: if the count can't be fetched the sidebar still
-  renders normally with no badge. No backend changes.
-- **Approval Policies** — the rules engine at `/demo/approvals/policies`.
-  PR #85 polished this surface: proper layout (no more minified
-  one-line JSX), loading skeleton, friendly error + empty states,
-  Active / Archived status pill, criteria chips (request type,
-  contract type, priority, agreement template — each defaults to
-  "Any" when null), Manual-attach chip when `auto_attach=false`,
-  workflow-template name resolved instead of a raw ID, and a
-  two-step Archive confirm so accidental clicks don't take a rule
-  out of circulation. Existing `/demo/approvals/policies?policy_id=<id>`
-  deep-link behavior preserved (PR #61). No backend changes.
-- **Inbox** — the generic work-queue at `/demo/inbox`. PR #84 polished
-  this surface to match the Approval Tasks bar: mount-aware row
-  links go to the related Request detail / Repository workspace /
-  Agreement template when those ids are present, item type and
-  status render as small chips (no more inline `request_review · …`
-  text), an overdue badge appears when an open item is past its
-  due date, and a server-side item-type filter joins the existing
-  status filter. Better empty-state copy when filters yield no rows.
-  No backend changes; approval items still belong on `/demo/approvals/tasks`.
-- **Repository workspace** — the per-contract surface at
-  `/demo/repository/:id` (legacy `/demo/contracts/:id`). PR #83 added
-  a lifecycle status banner above the Document lifecycle strip:
-  green "Executed" callout with the signed-PDF date when
-  `status=executed`, info-toned "Out for signature" callout when
-  `status=sent_for_signature`, nothing otherwise. The banner is
-  informational — the header's "Download current document" button
-  already prefers `signed_pdf` for executed contracts. No backend
-  changes; no signer PII or DocuSeal secrets in the banner.
-- **Dashboard** — the entry point at `/demo/dashboard`. PR #82 polished
-  this surface: a conditional "Needs attention" banner when overdue
-  approval steps or inbox items exist (with a CTA to the right
-  triage surface), grouped + clickable count tiles (Request pipeline /
-  Repository / Approvals / Inbox & templates), per-row deep links to
-  the specific Request detail and Repository workspace pages, a
-  loading skeleton, and friendlier "Pending by assignee" labels (no
-  more raw `<code>` user IDs). No backend changes.
-- **Repository** — the agreement list at `/demo/repository` (legacy
-  `/demo/contracts` still resolves). PR #81 added the missing
-  `Out for signature` and `Executed` options to the status filter,
-  a sort dropdown (Newest / Oldest / Title A→Z), a "Show merged"
-  toggle wired to the `?include_merged=true` API param from PR #76,
-  and a `Merged` chip on rows whose Repository record has been merged
-  into another. No backend changes.
-- **Clause Manager** — approved clauses, fallback language, and reusable
-  drafting guidance. PR #80 polished this surface: loading / error /
-  empty states, an Active / Archived status pill, an "Add a clause"
-  panel, server-side `clause_type` filter, client-side search across
-  name / type / jurisdiction / tags / text, expandable clause text,
-  copy-to-clipboard, metadata chips, and a two-step Archive confirm.
-  Backend semantics are unchanged — Archive is still soft-delete via
-  the existing endpoint. Legacy `/demo/clause-library` still resolves.
-- **Approvals** — landing page with cards for *Approval tasks*, *Approval
-  workflows*, *Approval templates*, and *Approval policies*. PR #79
-  polished this surface: the landing cards show live counts pulled
-  from the dashboard summary, `/demo/approvals/tasks` is now a
-  dedicated Approval Tasks view (filtered to `item_type=approval`,
-  with mount-aware links back to the related Request or Repository
-  record), and workflow rows show a status pill, "Step N of M"
-  progress, source indication (manual / from template / from policy),
-  and clean Request/Repository link buttons. Approval gate, workflow
-  state machine, and policy matching semantics are unchanged. The
-  legacy `/demo/approval-workflows`, `/demo/approval-templates`,
-  `/demo/approval-policies`, and `/demo/inbox` routes still resolve,
-  and the `/demo/approvals?workflow_id=<id>` deep links wired in
-  PR #60–#61 forward to `/demo/approvals/workflows`.
-- **Settings**.
+- **Dashboard** — `/demo/dashboard`. At-a-glance counts and recent
+  activity. A "Needs attention" banner surfaces overdue approval steps
+  / inbox items when present. Count tiles are grouped (Request
+  pipeline / Repository / Approvals / Inbox & templates) and each one
+  is a link to the matching surface. Recent-activity rows deep-link
+  to the specific Request / Repository record.
+- **Repository** — `/demo/repository` (legacy `/demo/contracts` still
+  resolves). All agreements, drafts, signed documents, and contract
+  records, backed by the same backend `Contract` APIs. The list
+  supports status (including *Out for signature* and *Executed*),
+  type, and sort filters, plus a *Show merged* toggle (`?include_merged=true`)
+  with a *Merged* chip on rows that have been merged into another.
+  Per-contract workspace at `/demo/repository/:id` shows a status
+  banner above the Document Lifecycle strip when the contract is
+  executed or out for signature, the document history, per-artifact
+  download / preview / compare, the *Send to DocuSeal* panel
+  (gated by the approval workflow), and the activity timeline +
+  CSV/JSON export.
+- **Requests** — `/demo/requests`. The natural place to start work.
+  The list surface offers *New request*, *Start from template*,
+  *Upload third-party agreement*, *Agreement templates*, and the
+  *Request queue*. Each Request has a detail workspace at
+  `/demo/requests/:id` with intake metadata, approval status,
+  matching Approval Policies, active Approval Workflows, conversion
+  actions, linked Repository context, activity timeline, and export
+  controls. A request becomes a Repository record by either generating
+  from an `AgreementTemplate` (PR #48) or uploading a third-party
+  file (PR #65). Both paths set `linked_contract_id` and resolve the
+  open `request_review` inbox item in the same transaction.
+  Agreement-template management lives under `/demo/requests/templates`
+  (legacy `/demo/agreement-templates` still resolves).
+- **Playbooks** — `/demo/playbooks`. Review standards, fallback
+  positions, and deviation rules for contract review.
+- **Clause Manager** — `/demo/clause-manager` (legacy `/demo/clause-library`
+  still resolves). Approved clauses, fallback language, and reusable
+  drafting guidance. Workspace shows an *Add a clause* panel,
+  server-side `clause_type` filter + client-side text search,
+  expandable clause text, copy-to-clipboard, an Active / Archived
+  pill, metadata chips (clause type, jurisdiction, contract type,
+  tags), and a two-step Archive confirm. Archive is still soft-delete
+  via the existing endpoint.
+- **Approvals** — `/demo/approvals` landing with cards for *Approval
+  tasks*, *Approval workflows*, *Approval templates*, and *Approval
+  policies*. Cards show live counts pulled from the dashboard summary.
+  `/demo/approvals/tasks` is a dedicated, approval-typed inbox with
+  Review / Mark complete / Dismiss row actions; `/demo/approvals/workflows`
+  renders workflow runs with a status pill, "Step N of M" progress,
+  source label (manual / from template / from policy), and
+  Request / Repository link buttons. The policies page lays out
+  matching criteria as chips ("Any" fallbacks) and gates archive
+  behind a two-step confirm. Approval gate, workflow state machine,
+  and policy matching semantics are unchanged from PR #50–#62.
+  Legacy `/demo/approval-workflows`, `/demo/approval-templates`,
+  `/demo/approval-policies`, and `/demo/inbox` routes still resolve;
+  the `/demo/approvals?workflow_id=<id>` and `?policy_id=<id>` deep
+  links wired in PR #60–#61 are preserved.
+- **Settings** — `/demo/settings`. Workspace configuration.
 
-Nothing about the backend Contract / Approval / Template models or their
-HTTP endpoints changed in this consolidation pass — only how they're
-labelled, grouped, and routed in the web UI.
+The sidebar surfaces an **overdue-approvals badge** next to the
+*Approvals* entry (PR #86), best-effort, so an overdue review is
+obvious from anywhere in the app.
+
+Two work-queue surfaces sit under their respective workspaces rather
+than the top-level nav:
+
+- `/demo/approvals/tasks` — approval-typed inbox items only, with
+  mount-aware links into the related Request / Repository / workflow
+  context (PR #79).
+- `/demo/inbox` — the generic work-queue across all `item_type`s
+  (request_review, signature_followup, metadata_cleanup, general),
+  polished in PR #84 with mount-aware deep links, type / status /
+  priority chips, an *Overdue* badge, and an item-type filter.
+
+Nothing about the backend `Contract` / `Approval` / `Template` models
+or their HTTP endpoints changed in the recent UI polish work; the
+legacy aliases above are preserved for stability of external deep
+links and bookmarks.
+
+## UI polish pass (PRs #78–#88)
+
+A focused, frontend-only pass that brought every top-level surface
+up to the same UX bar: loading skeletons, friendly error / empty
+states, status pills, metadata chips, two-step destructive confirms,
+mount-aware deep links, and forbidden-string DOM guards. No backend
+endpoints, approval state machine, gate semantics, artifact
+priority, or DocuSeal behavior changed.
+
+| PR | Surface | Headline |
+|---:|---|---|
+| #78 | Request detail | Real `/requests/:id` workspace (was demo-mounted only). Mount-aware row links from the Request list. |
+| #79 | Approvals | Live count cards on the landing page; dedicated Approval Tasks view; workflow rows show status pill, "Step N of M" progress, and source label. |
+| #80 | Clause Manager | Loading / error / empty states, Active / Archived pill, "Add a clause" panel, copy-to-clipboard, metadata chips, two-step Archive confirm. |
+| #81 | Repository list | Filter dropdown gains *Out for signature* and *Executed*; sort dropdown; *Show merged* toggle wired to `?include_merged=true`; *Merged* chip. |
+| #82 | Dashboard | Conditional "Needs attention" banner for overdue items; grouped clickable count tiles; per-row deep links to specific Request / Repository records; loading skeleton. |
+| #83 | Repository workspace | Lifecycle status banner above the Document Lifecycle strip — green *Executed* with the signed-PDF date, info-toned *Out for signature* otherwise. |
+| #84 | Inbox queue | Mount-aware row links, item-type / status / priority chips, *Overdue* badge, item-type filter, better empty-state copy. |
+| #85 | Approval Policies | Rewrote a previously minified one-liner: proper layout, status pill, criteria chips with "Any" fallbacks, two-step Archive confirm. |
+| #86 | Sidebar | Red overdue-count badge next to *Approvals*, visible on every page; best-effort fetch so the sidebar never blocks on it. |
+| #87 | Agreement Templates list | Loading skeleton, Active / Archived pill, type chip, mount-aware row link to `/requests/templates/:id`, *Updated* date hint. |
+| #88 | URL consistency | All internal `/demo/contracts/:id` link targets renamed to `/demo/repository/:id`. Legacy alias preserved. |
+
+Cross-cutting hardening on every PR in this pass:
+
+- Mount-aware links via `mountedPath()` / `demoPath()` helpers so each
+  top-level standalone route AND the `/demo/*` workspace render the
+  right targets.
+- Tests poison `storage_key`, `wrapped_dek`, `s3_key`, raw
+  `metadata_json`, `private_url`, `presigned`, signer PII, and
+  DocuSeal secrets, and assert none appear in the rendered DOM.
+- Service worker `/api/*` denylist verified in the built `dist/sw.js`
+  on every PR.
+- Mock / demo parity maintained — every new UI capability also works
+  end-to-end against `mockApi` so the hosted demo at
+  `https://whereas.pages.dev/` reflects it.
+- Loading / error / empty states standardized via `LoadingSkeleton`,
+  `ErrorState`, and `EmptyState`.
+- A two-step "open confirm → confirm action" pattern for destructive
+  row actions, established on Clause Manager (PR #80) and reused on
+  Approval Policies (PR #85).
 
 ## Upload-intake intelligence (PR #66)
 
