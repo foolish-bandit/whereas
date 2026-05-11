@@ -864,6 +864,188 @@ async def test_convert_upload_event_surfaces_on_request_activity_timeline(
     assert "wrapped_dek" not in body_text
 
 
+async def test_convert_upload_returns_extracted_metadata(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """PR #66 — the convert-upload response carries an
+    ``extracted_metadata`` block with deterministic suggestions
+    derived from the filename and parsed body text.
+    """
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files={
+            "file": (
+                "Mutual_NDA_Acme.pdf",
+                _PDF_BYTES,
+                _PDF_MIME,
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    extracted = body["extracted_metadata"]
+    assert extracted is not None
+    assert extracted["suggested_title"] == "Mutual NDA Acme"
+    assert extracted["likely_contract_type"] == "NDA"
+    # The fixture's _StubParsed.full_text doesn't carry effective-date
+    # text, so we don't expect a date here.
+    assert extracted["effective_date"] is None
+    # Counterparty isn't surfaced from the filename alone here because
+    # "Acme" comes before the file extension and the body text gives
+    # no "between X and Y" signal. The warning explains why.
+    assert "counterparty_unknown" not in extracted["warnings"] or (
+        extracted["possible_counterparty_name"] is not None
+    )
+
+
+async def test_convert_upload_returns_duplicate_warning_for_existing_hash(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Uploading a second file with the same hash returns a warning in
+    ``duplicate_candidates`` — the upload still succeeds (warning-only).
+    """
+    user_org = await _create_user_org(db_session)
+    # First upload — registers the hash.
+    first_request = await _create_request(
+        client, user_org.user, title="First request"
+    )
+    first = await client.post(
+        f"/api/requests/{first_request['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files("first.pdf"),
+    )
+    assert first.status_code == 201, first.text
+    first_contract_id = first.json()["contract"]["id"]
+
+    # Second upload on a different request, same bytes → same hash.
+    second_request = await _create_request(
+        client, user_org.user, title="Second request"
+    )
+    second = await client.post(
+        f"/api/requests/{second_request['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files("second.pdf"),
+    )
+    assert second.status_code == 201, second.text
+    candidates = second.json()["duplicate_candidates"]
+    assert len(candidates) >= 1
+    assert any(c["contract_id"] == first_contract_id for c in candidates)
+    # The new contract never appears on its own candidate list.
+    new_contract_id = second.json()["contract"]["id"]
+    assert all(c["contract_id"] != new_contract_id for c in candidates)
+    assert all(c["reason"] == "exact_file_hash" for c in candidates)
+    # Storage internals never reach the response.
+    text = second.text
+    assert "storage_key" not in text
+    assert "wrapped_dek" not in text
+
+
+async def test_convert_upload_no_duplicates_yields_empty_list(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["duplicate_candidates"] == []
+
+
+async def test_convert_upload_keeps_explicit_title_over_extracted(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        data={"title": "Operator Override"},
+        files=_pdf_files("MSA_Acme_2026.pdf"),
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    # The user's explicit title wins; the extractor's suggestion shows
+    # in ``extracted_metadata`` but does NOT replace ``contract.title``.
+    assert body["contract"]["title"] == "Operator Override"
+    assert body["extracted_metadata"]["suggested_title"] == "MSA Acme 2026"
+    # Same precedence rule for counterparty: request.counterparty_name
+    # is preserved when the form doesn't override it.
+    assert (
+        body["artifact"]["metadata_json"].get("counterparty_name")
+        != "MSA"  # extractor should never overwrite a request's value
+    )
+
+
+async def test_convert_upload_metadata_failure_does_not_fail_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A defective extractor raises — the upload must still succeed.
+
+    The safe wrapper around ``extract_basic_contract_metadata`` is
+    expected to catch the exception and return the empty-suggestion
+    sentinel; the route never sees the raise.
+    """
+    from app.api import contracts as contracts_api
+
+    def _boom(**_kwargs):
+        raise RuntimeError("simulated extractor failure")
+
+    monkeypatch.setattr(
+        contracts_api, "extract_basic_contract_metadata", _boom
+    )
+
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files(),
+    )
+    assert response.status_code == 201, response.text
+    em = response.json()["extracted_metadata"]
+    assert em["suggested_title"] is None
+    assert "extractor_error" in em["warnings"]
+
+
+async def test_convert_upload_duplicate_failure_does_not_fail_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A defective duplicate detector must not fail the upload."""
+    from app.api import contracts as contracts_api
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated duplicate-lookup failure")
+
+    # ``_safe_find_duplicates`` catches the exception and returns [].
+    monkeypatch.setattr(
+        contracts_api,
+        "find_possible_duplicate_contracts",
+        _boom,
+    )
+
+    user_org = await _create_user_org(db_session)
+    request_row = await _create_request(client, user_org.user)
+    response = await client.post(
+        f"/api/requests/{request_row['id']}/convert-upload",
+        headers=_headers(user_org.user),
+        files=_pdf_files(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["duplicate_candidates"] == []
+
+
 async def test_uploaded_contract_is_downloadable_via_contracts_endpoint(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:

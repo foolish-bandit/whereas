@@ -6,6 +6,11 @@
  * UI can display whatever values the backend actually returns;
  * recommended values are listed inline.
  */
+import type {
+  DuplicateContractCandidate,
+  ExtractedContractMetadata,
+} from "./contractIntake";
+
 export type ContractRequestStatus =
   | "open"
   | "in_progress"
@@ -206,4 +211,9 @@ export interface ConvertRequestUploadResponse {
     conversion_warnings: unknown[] | null;
     created_at: string;
   } | null;
+  // PR #66 — same upload-intake suggestions + warning-level duplicate
+  // candidates the Repository upload route surfaces. Either may be
+  // empty; neither blocks the conversion.
+  extracted_metadata?: ExtractedContractMetadata | null;
+  duplicate_candidates?: DuplicateContractCandidate[];
 }

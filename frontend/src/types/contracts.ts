@@ -1,3 +1,8 @@
+import type {
+  DuplicateContractCandidate,
+  ExtractedContractMetadata,
+} from "./contractIntake";
+
 export type ContractStatus =
   | "uploaded"
   | "extracting"
@@ -62,6 +67,10 @@ export interface UploadContractResponse extends ContractListItem {
   extracted_fields: ExtractedField[];
   clauses: Clause[];
   message?: string | null;
+  // PR #66 — upload-intake suggestions + warning-level duplicate
+  // candidates. Either may be empty; neither blocks the upload.
+  extracted_metadata?: ExtractedContractMetadata | null;
+  duplicate_candidates?: DuplicateContractCandidate[];
 }
 
 /**

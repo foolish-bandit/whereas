@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import ErrorState from "../components/ErrorState";
 import UploadDropzone from "../components/UploadDropzone";
+import UploadIntakeFeedback from "../components/UploadIntakeFeedback";
 import {
   ApiError,
   MissingDevUserError,
@@ -105,6 +106,12 @@ export default function UploadPage() {
             </p>
           </div>
         )}
+
+        <UploadIntakeFeedback
+          extracted={state.result.extracted_metadata}
+          duplicates={state.result.duplicate_candidates}
+          dataTestId="upload-page-intake-feedback"
+        />
       </div>
     );
   }

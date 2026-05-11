@@ -31,11 +31,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.contracts import (
     DbSession,
+    _choose_title,
     _current_dev_user,
-    _derive_title,
+    _duplicate_response,
     _load_org_key_or_http,
     _load_organization,
+    _metadata_response,
     _parse_or_http,
+    _safe_extract_metadata,
+    _safe_find_duplicates,
     _safe_input_filename,
     _validate_upload,
 )
@@ -522,12 +526,17 @@ async def convert_request_by_upload(
     file_hash = hashlib.sha256(file_bytes).hexdigest()
     parsed = _parse_or_http(file_bytes=file_bytes, filename=filename)
 
-    # ``title`` on the form is the user's override; otherwise we derive
-    # from the original filename. Falling back to the request's title
-    # would surprise users when their request title is the *workflow*
-    # title ("NDA with Acme") and they're uploading a counterparty paper
-    # that has a different real-world filename.
-    contract_title = _derive_title(title, filename)
+    # PR #66 — deterministic, best-effort metadata extraction. We honor
+    # the user's explicit ``title`` first, then the extractor's
+    # ``suggested_title``, then the filename-derived fallback. Failure
+    # is non-fatal; an empty result still produces a usable response.
+    extracted_metadata = _safe_extract_metadata(
+        filename=filename,
+        mime_type=mime_type,
+        markdown_text=None,
+        plain_text=parsed.full_text,
+    )
+    contract_title = _choose_title(title, extracted_metadata, filename)
 
     org = await _load_organization(session, user.organization_id)
     org_master_key = _load_org_key_or_http(org)
@@ -581,12 +590,30 @@ async def convert_request_by_upload(
     notes_clean = (notes or "").strip()
     if notes_clean:
         artifact_metadata["notes"] = notes_clean[:1000]
-    counterparty_clean = (counterparty_name or "").strip()
+    # Counterparty precedence: explicit form > request.counterparty_name
+    # > extractor suggestion. We persist whichever wins to the artifact
+    # so users can see what the upload thought it was about, but we
+    # never overwrite the request row itself.
+    counterparty_clean = _choose_string(
+        (counterparty_name or "").strip(),
+        (request.counterparty_name or "").strip(),
+        extracted_metadata.possible_counterparty_name,
+        cap=255,
+    )
     if counterparty_clean:
-        artifact_metadata["counterparty_name"] = counterparty_clean[:255]
-    contract_type_clean = (contract_type or "").strip()
+        artifact_metadata["counterparty_name"] = counterparty_clean
+    contract_type_clean = _choose_string(
+        (contract_type or "").strip(),
+        (request.contract_type or "").strip(),
+        extracted_metadata.likely_contract_type,
+        cap=64,
+    )
     if contract_type_clean:
-        artifact_metadata["contract_type"] = contract_type_clean[:64]
+        artifact_metadata["contract_type"] = contract_type_clean
+    if extracted_metadata.effective_date is not None:
+        artifact_metadata["effective_date"] = (
+            extracted_metadata.effective_date.isoformat()
+        )
 
     original_artifact = ContractArtifact(
         organization_id=user.organization_id,
@@ -622,6 +649,21 @@ async def convert_request_by_upload(
             extra={"contract_id": str(contract.id)},
         )
         snapshot = None
+
+    # PR #66 — warning-level duplicate candidates. Computed AFTER the
+    # contract row is added so we can ``exclude_contract_id`` and not
+    # match the upload-in-progress against itself. Failure is
+    # non-fatal: the conversion still succeeds with an empty list.
+    duplicate_candidates = await _safe_find_duplicates(
+        session,
+        organization_id=user.organization_id,
+        file_hash_sha256=file_hash,
+        suggested_title=extracted_metadata.suggested_title,
+        counterparty_name=counterparty_clean
+        or extracted_metadata.possible_counterparty_name,
+        filename=filename,
+        exclude_contract_id=contract.id,
+    )
 
     # Link the new contract back to the request and close out the
     # workflow. Same-transaction guarantee: if anything below fails the
@@ -665,6 +707,10 @@ async def convert_request_by_upload(
         contract=ContractListItemResponse.model_validate(contract),
         artifact=ContractArtifactResponse.model_validate(original_artifact),
         markdown_snapshot=snapshot_response,
+        extracted_metadata=_metadata_response(extracted_metadata),
+        duplicate_candidates=[
+            _duplicate_response(c) for c in duplicate_candidates
+        ],
     )
 
 
@@ -1040,3 +1086,19 @@ def _parse_date(value: str, field_name: str):
             status_code=422,
             detail=f"Invalid date for {field_name}; expected YYYY-MM-DD.",
         ) from e
+
+
+def _choose_string(*candidates: str | None, cap: int) -> str | None:
+    """First non-empty candidate, trimmed to ``cap`` chars.
+
+    Used by the convert-upload path to express the
+    "form > request > extractor" precedence in a single line without
+    five layered conditionals. ``None`` and empty strings are skipped.
+    """
+    for value in candidates:
+        if value is None:
+            continue
+        stripped = value.strip() if isinstance(value, str) else value
+        if stripped:
+            return stripped[:cap]
+    return None

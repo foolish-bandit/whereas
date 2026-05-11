@@ -963,4 +963,116 @@ describe("RequestsPage", () => {
     expect(card).toBeInTheDocument();
     expect(card.textContent ?? "").toMatch(/third-party agreement/i);
   });
+
+  // -------------------------------------------------------------------------
+  // PR #66 — upload-intake feedback (extracted metadata + duplicates)
+  // -------------------------------------------------------------------------
+
+  const UPLOAD_RESPONSE_WITH_INTAKE = {
+    ...UPLOAD_RESPONSE,
+    extracted_metadata: {
+      suggested_title: "Mutual NDA Acme",
+      likely_contract_type: "NDA",
+      possible_counterparty_name: "Acme",
+      effective_date: "2026-05-01",
+      warnings: [],
+    },
+    duplicate_candidates: [
+      {
+        contract_id: "contract-existing-1",
+        title: "Acme NDA — original draft",
+        reason: "exact_file_hash" as const,
+        confidence: "exact" as const,
+        created_at: "2026-04-01T12:00:00Z",
+        status: "ready",
+      },
+    ],
+  };
+
+  it("surfaces extracted metadata + duplicate warning after a successful upload", async () => {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (
+        url.includes("/api/requests/req-upload/convert-upload") &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(UPLOAD_RESPONSE_WITH_INTAKE, 201);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([REQ_OPEN_NO_LINK]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Upload-eligible request");
+
+    fireEvent.click(screen.getByTestId("request-upload-convert-toggle"));
+    const fileInput = screen.getByTestId(
+      "request-upload-convert-file",
+    ) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [fakePdfFile()] },
+    });
+    fireEvent.click(screen.getByTestId("request-upload-convert-submit"));
+
+    // The feedback panel lands once the upload completes.
+    const feedback = await screen.findByTestId("request-upload-feedback");
+    expect(feedback).toBeInTheDocument();
+    expect(
+      within(feedback).getByTestId("upload-duplicate-warning"),
+    ).toBeInTheDocument();
+    expect(
+      within(feedback).getByTestId("upload-extracted-metadata"),
+    ).toBeInTheDocument();
+    expect(
+      within(feedback).getByTestId("upload-meta-contract-type").textContent,
+    ).toMatch(/NDA/);
+    // No storage internals appear anywhere in the DOM.
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
+  });
+
+  it("stays quiet (no feedback panel) when there are no duplicates and no metadata", async () => {
+    const quietResponse = {
+      ...UPLOAD_RESPONSE,
+      extracted_metadata: {
+        suggested_title: null,
+        likely_contract_type: null,
+        possible_counterparty_name: null,
+        effective_date: null,
+        warnings: ["contract_type_unknown"],
+      },
+      duplicate_candidates: [],
+    };
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (
+        url.includes("/api/requests/req-upload/convert-upload") &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(quietResponse, 201);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([REQ_OPEN_NO_LINK]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Upload-eligible request");
+    fireEvent.click(screen.getByTestId("request-upload-convert-toggle"));
+    const fileInput = screen.getByTestId(
+      "request-upload-convert-file",
+    ) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [fakePdfFile()] },
+    });
+    fireEvent.click(screen.getByTestId("request-upload-convert-submit"));
+
+    // Wait until the row flips so we know the upload returned.
+    await waitFor(() => {
+      const row = screen.getByTestId("requests-row");
+      expect(within(row).getByTestId("request-status").textContent).toBe(
+        "completed",
+      );
+    });
+    expect(screen.queryByTestId("request-upload-feedback")).toBeNull();
+  });
 });

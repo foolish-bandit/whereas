@@ -5,7 +5,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import (  # noqa: F401  (Field re-export for downstream importers)
+    BaseModel,
+    ConfigDict,
+    Field,
+)
+
+from app.schemas.contract_intake import (
+    DuplicateContractCandidateResponse,
+    ExtractedContractMetadataResponse,
+)
 
 
 class ExtractedFieldResponse(BaseModel):
@@ -65,6 +74,14 @@ class ContractUploadResponse(ContractListItemResponse):
     extracted_fields: list[ExtractedFieldResponse]
     clauses: list[ClauseResponse] = []
     message: str | None = None
+    # PR #66 — upload-intake intelligence. Both fields default to "none
+    # detected" so older clients that don't render them won't see
+    # missing keys; storage internals are excluded by construction at
+    # the projection schemas.
+    extracted_metadata: ExtractedContractMetadataResponse | None = None
+    duplicate_candidates: list[DuplicateContractCandidateResponse] = Field(
+        default_factory=list
+    )
 
 
 class ContractDetailResponse(ContractListItemResponse):
