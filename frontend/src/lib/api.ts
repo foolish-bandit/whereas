@@ -1458,6 +1458,54 @@ export async function getContractActivity(
   return scrubSecrets(data);
 }
 
+/**
+ * Allowed export format values, mirroring the backend's
+ * ``activity_export.SUPPORTED_FORMATS``. Restricting the type here
+ * (rather than ``string``) keeps misspellings from reaching the
+ * network — the backend would reject them with a 422 anyway, but
+ * compile-time is cheaper.
+ */
+export type ActivityExportFormat = "csv" | "json";
+
+/**
+ * PR #75 — download a Repository's activity timeline as a CSV or
+ * JSON file. The server returns a sanitized projection of the
+ * existing audit-backed timeline (no raw audit details, no storage
+ * internals, no document bytes); this helper only conveys the bytes
+ * to the caller for the browser-side download flow.
+ */
+export async function exportContractActivity(
+  contractId: string,
+  format: ActivityExportFormat,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.exportContractActivity(contractId, format, options);
+  }
+  return downloadBlob(
+    `/api/contracts/${encodeURIComponent(contractId)}/activity/export?format=${encodeURIComponent(format)}`,
+    options,
+  );
+}
+
+/**
+ * PR #75 — download a Request's activity timeline as CSV or JSON.
+ * Symmetric with ``exportContractActivity``; see notes there.
+ */
+export async function exportRequestActivity(
+  requestId: string,
+  format: ActivityExportFormat,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.exportRequestActivity(requestId, format, options);
+  }
+  return downloadBlob(
+    `/api/requests/${encodeURIComponent(requestId)}/activity/export?format=${encodeURIComponent(format)}`,
+    options,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Inbox items (PR #47 — CLM work queue foundation)
 // ---------------------------------------------------------------------------

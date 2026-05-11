@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
 import ClausesPanel from "../components/ClausesPanel";
@@ -509,6 +510,7 @@ export default function ContractWorkspacePage() {
           signature state.
         </p>
         <ActivityTimeline kind="contract" contractId={state.contract.id} />
+        <ActivityExport kind="contract" contractId={state.contract.id} />
       </section>
 
       <DocumentHistorySection

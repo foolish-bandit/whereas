@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
+import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection, {
@@ -526,6 +527,7 @@ export default function RequestsPage() {
                   <div className="mt-3" data-testid="request-activity-section">
                     <p className="text-xs font-medium text-ink">Activity</p>
                     <ActivityTimeline kind="request" requestId={row.id} />
+                    <ActivityExport kind="request" requestId={row.id} />
                   </div>
                 </>
               )}

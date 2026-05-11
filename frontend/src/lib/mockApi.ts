@@ -2794,6 +2794,127 @@ export async function getContractActivity(
   return { items: items.slice(0, limit) };
 }
 
+/**
+ * PR #75 — demo-mode CSV/JSON activity export.
+ *
+ * Mirrors the real client's surface but never calls the network.
+ * Builds a sanitized blob from the same in-memory timeline used by
+ * the live demo UI, so the only fields surfaced are the timeline
+ * projection's allowlisted keys. No storage internals, no raw
+ * audit details, no DocuSeal payloads, no document bytes.
+ */
+export async function exportContractActivity(
+  contractId: string,
+  format: "csv" | "json",
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const { items } = await getContractActivity(contractId, {
+    ...options,
+    limit: 1000,
+  });
+  return _buildExportBlob({
+    subject_type: "contract",
+    subject_id: contractId,
+    items,
+    format,
+  });
+}
+
+export async function exportRequestActivity(
+  requestId: string,
+  format: "csv" | "json",
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const { items } = await getRequestActivity(requestId, {
+    ...options,
+    limit: 1000,
+  });
+  return _buildExportBlob({
+    subject_type: "request",
+    subject_id: requestId,
+    items,
+    format,
+  });
+}
+
+function _buildExportBlob(args: {
+  subject_type: "contract" | "request";
+  subject_id: string;
+  items: import("../types/activity").ActivityTimelineItem[];
+  format: "csv" | "json";
+}): DownloadResult {
+  const safeId = args.subject_id.replace(/[^A-Za-z0-9._-]+/g, "_");
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..*$/, "Z");
+  const filename = `whereas-${args.subject_type}-${safeId}-activity-${stamp}.${args.format}`;
+
+  if (args.format === "csv") {
+    const header = [
+      "occurred_at",
+      "event_type",
+      "event_id",
+      "actor_user_id",
+      "title",
+      "description",
+      "contract_id",
+      "request_id",
+      "workflow_run_id",
+      "approval_step_id",
+      "step_order",
+      "source",
+    ];
+    const rows = args.items.map((it) => [
+      it.occurred_at,
+      it.event_type,
+      it.id,
+      it.actor_user_id ?? "",
+      it.title,
+      it.description ?? "",
+      it.contract_id ?? "",
+      it.request_id ?? "",
+      it.workflow_run_id ?? "",
+      it.approval_step_id ?? "",
+      it.step_order == null ? "" : String(it.step_order),
+      it.source ?? "",
+    ]);
+    const body = [header, ...rows].map(_csvLine).join("\n");
+    return {
+      blob: new Blob([body], { type: "text/csv;charset=utf-8" }),
+      filename,
+      mimeType: "text/csv; charset=utf-8",
+    };
+  }
+
+  const envelope = {
+    export_type: "activity_timeline",
+    generated_at: new Date().toISOString(),
+    subject_type: args.subject_type,
+    subject_id: args.subject_id,
+    events: args.items,
+  };
+  return {
+    blob: new Blob([JSON.stringify(envelope, null, 2)], {
+      type: "application/json",
+    }),
+    filename,
+    mimeType: "application/json",
+  };
+}
+
+function _csvLine(cells: string[]): string {
+  return cells
+    .map((cell) => {
+      const needsQuote = /[",\n\r]/.test(cell);
+      const escaped = cell.replace(/"/g, '""');
+      return needsQuote ? `"${escaped}"` : escaped;
+    })
+    .join(",");
+}
+
 export async function listInboxItems(
   filters: ListInboxItemFilters = {},
   options: ApiOptions = {},
