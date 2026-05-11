@@ -25,16 +25,16 @@ import {
 } from "../lib/api";
 import {
   artifactDisplayLabel,
-  artifactOriginCopy,
-  artifactSourceChip,
+  formatFileSize,
+  getArtifactHistoryItems,
   pickCurrentDocumentLabel,
   pickPrimaryOriginCopy,
+  type ArtifactHistoryItem,
   type LifecycleSlot,
 } from "../lib/artifacts";
 import { clauseHasValidSpan } from "../lib/clauses";
 import { fieldKey } from "../lib/fields";
 import {
-  formatBytes,
   formatDate,
   formatDateTime,
   mimeExtension,
@@ -398,7 +398,7 @@ export default function ContractWorkspacePage() {
         <ActivityTimeline kind="contract" contractId={state.contract.id} />
       </section>
 
-      <FilesSection state={artifactsState} />
+      <DocumentHistorySection state={artifactsState} />
     </div>
   );
 }
@@ -791,24 +791,38 @@ function DetailRow({
   );
 }
 
-function FilesSection({ state }: { state: ArtifactsState }) {
+/**
+ * Document history (PR #69) — replaces the older flat "Files" listing.
+ * Renders every safe ContractArtifact in chronological order (newest
+ * first), marks the priority-winning artifact as the current document
+ * to mirror the backend's download priority, and falls back to a
+ * legacy-row notice when the contract has no artifacts at all (e.g.
+ * uploaded before artifact tracking landed).
+ *
+ * Per-artifact downloads are deliberately not surfaced here yet — the
+ * backend's download endpoint is contract-scoped, and per-artifact
+ * download would require a dedicated, safety-reviewed route. The
+ * header's Download original action still resolves the current
+ * document; this section is visibility only.
+ */
+function DocumentHistorySection({ state }: { state: ArtifactsState }) {
   return (
     <section
       className="mt-6 rounded border border-rule p-4"
       data-testid="contract-files-section"
     >
-      <h2 className="text-sm font-medium text-ink">Files</h2>
+      <h2 className="text-sm font-medium text-ink">Document history</h2>
       <p className="mt-1 text-xs text-ink-subtle">
-        Files stored against this Repository record. The Download
-        original action in the header always fetches the current
-        official document.
+        Every file recorded against this Repository record, newest first.
+        The Download original action in the header always fetches the
+        current official document.
       </p>
       {state.kind === "loading" && (
         <p
           className="mt-3 text-xs text-ink-subtle"
           data-testid="contract-files-loading"
         >
-          Loading files…
+          Loading file history…
         </p>
       )}
       {state.kind === "error" && (
@@ -816,65 +830,123 @@ function FilesSection({ state }: { state: ArtifactsState }) {
           className="mt-3 text-xs text-ink-subtle"
           data-testid="contract-files-error"
         >
-          File metadata is temporarily unavailable.
+          File history is temporarily unavailable.
         </p>
       )}
       {state.kind === "loaded" &&
         (state.artifacts.length === 0 ? (
-          <p
-            className="mt-3 text-xs text-ink-subtle"
-            data-testid="contract-files-empty"
-          >
-            No additional file metadata recorded.
-          </p>
+          <LegacyFallbackRow />
         ) : (
-          <ul className="mt-3 divide-y divide-rule text-xs">
-            {state.artifacts.map((a) => (
-              <li
-                key={a.id}
-                className="grid gap-1 py-2 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_auto] sm:items-baseline"
-                data-testid="contract-files-row"
-              >
-                <div className="min-w-0">
-                  <p className="font-medium text-ink">
-                    {artifactDisplayLabel(a.artifact_type, a.source)}
-                  </p>
-                  {a.filename && (
-                    <p className="truncate text-ink-subtle" title={a.filename}>
-                      {a.filename}
-                    </p>
-                  )}
-                </div>
-                <div className="min-w-0 text-ink-muted">
-                  {a.mime_type && <span>{mimeLabel(a.mime_type)}</span>}
-                  {a.mime_type && a.size_bytes != null && (
-                    <span className="mx-1">·</span>
-                  )}
-                  {a.size_bytes != null && (
-                    <span>{formatBytes(a.size_bytes)}</span>
-                  )}
-                  <span className="ml-1 block text-ink-subtle sm:inline">
-                    {a.created_at && (
-                      <>Added {formatDate(a.created_at)}</>
-                    )}
-                  </span>
-                  {(() => {
-                    const chip = artifactSourceChip(a);
-                    return chip ? (
-                      <span className="ml-2 inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-subtle">
-                        {chip}
-                      </span>
-                    ) : null;
-                  })()}
-                </div>
-                <div className="text-ink-subtle sm:text-right">
-                  {artifactOriginCopy(a)}
-                </div>
-              </li>
+          <ol
+            className="mt-3 divide-y divide-rule text-xs"
+            data-testid="document-history-list"
+          >
+            {getArtifactHistoryItems(state.artifacts).map((item) => (
+              <DocumentHistoryRow key={item.artifact.id} item={item} />
             ))}
-          </ul>
+          </ol>
         ))}
     </section>
+  );
+}
+
+function DocumentHistoryRow({ item }: { item: ArtifactHistoryItem }) {
+  const { artifact } = item;
+  return (
+    <li
+      className="grid gap-1 py-2.5 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_auto] sm:items-baseline"
+      data-testid="contract-files-row"
+      data-artifact-id={artifact.id}
+      data-current={item.isCurrent ? "true" : "false"}
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <p className="font-medium text-ink">{item.displayLabel}</p>
+          {item.isCurrent && (
+            <span
+              className="inline-block rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium text-canvas"
+              data-testid="document-history-current-badge"
+            >
+              Current document
+            </span>
+          )}
+          {artifact.is_official && (
+            <span
+              className="inline-block rounded border border-rule px-1.5 py-0.5 text-[10px] text-ink-muted"
+              data-testid="document-history-official-badge"
+            >
+              Official
+            </span>
+          )}
+        </div>
+        {artifact.filename && (
+          <p className="truncate text-ink-subtle" title={artifact.filename}>
+            {artifact.filename}
+          </p>
+        )}
+      </div>
+      <div className="min-w-0 text-ink-muted">
+        {artifact.mime_type && <span>{mimeLabel(artifact.mime_type)}</span>}
+        {artifact.mime_type && artifact.size_bytes != null && (
+          <span className="mx-1">·</span>
+        )}
+        {artifact.size_bytes != null && (
+          <span>{formatFileSize(artifact.size_bytes)}</span>
+        )}
+        <span className="ml-1 block text-ink-subtle sm:inline">
+          {artifact.created_at && <>Added {formatDate(artifact.created_at)}</>}
+        </span>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {item.sourceChip && (
+            <span className="inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-subtle">
+              {item.sourceChip}
+            </span>
+          )}
+          {item.metadataChips.map((chip) => (
+            <span
+              key={chip.key}
+              className="inline-block rounded bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-subtle"
+              data-testid={`document-history-meta-${chip.key}`}
+            >
+              {chip.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="text-ink-subtle sm:text-right">{item.originCopy}</div>
+    </li>
+  );
+}
+
+function LegacyFallbackRow() {
+  // No ContractArtifact rows at all — the contract pre-dates artifact
+  // tracking. We still show a row so the section never looks empty
+  // (and so the user knows the Download action still works against
+  // the legacy ``Contract.s3_key`` blob).
+  return (
+    <ol
+      className="mt-3 divide-y divide-rule text-xs"
+      data-testid="document-history-list"
+    >
+      <li
+        className="py-2.5"
+        data-testid="document-history-legacy-row"
+      >
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <p className="font-medium text-ink">Legacy source file</p>
+          <span
+            className="inline-block rounded bg-ink px-1.5 py-0.5 text-[10px] font-medium text-canvas"
+            data-testid="document-history-current-badge"
+          >
+            Current document
+          </span>
+        </div>
+        <p className="mt-1 text-ink-subtle">
+          Stored before artifact tracking. The Download original action
+          still resolves to this file.
+        </p>
+      </li>
+    </ol>
   );
 }
 

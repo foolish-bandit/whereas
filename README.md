@@ -234,9 +234,14 @@ organized around the agreement's document lifecycle:
   counterparty, effective date, source) with an *Edit details*
   action that reuses the PR #67 upload-review form.
 - **Activity** — the existing chronological event timeline.
-- **Files** — a safe metadata listing of every ``ContractArtifact``
-  with user-facing labels, filename, MIME, size, source chip, and
-  origin sentence.
+- **Document history** — every ``ContractArtifact`` recorded against
+  the Repository row, newest first. Each row shows the user-facing
+  label, filename, MIME, size, the added date, a source chip, and
+  the origin sentence. The row representing the priority-winning
+  artifact (signed PDF > generated DOCX > original upload) is marked
+  *Current document*; official artifacts are marked *Official*. When
+  a contract pre-dates artifact tracking, a single legacy fallback
+  row stands in for the listing.
 
 User-facing labels never expose raw artifact_type names:
 
@@ -254,6 +259,47 @@ priority (``signed_pdf > generated_docx > original_upload > legacy
 fallback``); it is computed entirely on the client from the existing
 ``GET /api/contracts/{id}/artifacts`` response. No backend, schema,
 or download priority changed.
+
+## Artifact version history (PR #69)
+
+The **Document history** section on the Repository detail page
+surfaces every safe ``ContractArtifact`` row for a contract — source
+uploads, generated Word documents, signed PDFs, redlines, and
+attachments — in a chronological list (newest first). The row
+representing the priority-winning artifact is marked **Current
+document**, mirroring the backend download priority exactly; only one
+row carries the marker at any time. When the contract has no
+artifacts at all, a single **Legacy source file** row stands in for
+the listing and explains that the file was stored before artifact
+tracking landed.
+
+Each row renders only safe fields:
+
+- user-facing artifact label (never the raw ``artifact_type``);
+- filename, MIME label, size, added date;
+- a source chip (``From DocuSeal`` / ``From template`` / ``From
+  request`` / ``Uploaded``); and
+- an allowlisted set of metadata chips: template name, originating
+  request, signed-at timestamp, and a short "DocuSeal submission"
+  marker. The raw submission id, template id, internal variable
+  keys, user-provided notes, ``storage_key``, and ``wrapped_dek``
+  are never rendered.
+
+No backend changes were required for this PR: the existing
+``GET /api/contracts/{id}/artifacts`` endpoint already returns the
+safe field set (``storage_key`` and ``wrapped_dek`` are stripped at
+the schema layer and re-scrubbed in the api client). The frontend
+allowlists which ``metadata_json`` keys are rendered.
+
+Per-artifact downloads are intentionally **not** wired up in this
+PR — the existing ``Download original`` action in the header still
+resolves the current document via the contract-scoped download
+endpoint, which is the authoritative path. Per-artifact download is
+tracked as a follow-up; the section is visibility only.
+
+Follow-ups tracked: per-artifact download endpoint, redline
+comparison view, generated PDF preview, artifact diff / version
+compare, and PowerSync sync rules.
 
 ### Clause segmentation (v1)
 
