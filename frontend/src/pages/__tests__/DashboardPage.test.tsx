@@ -205,28 +205,31 @@ describe("DashboardPage", () => {
     ).toContain("1");
   });
 
-  it("renders upcoming requests and links to the requests page", async () => {
+  it("renders upcoming request rows linked to the matching Request detail (PR #82)", async () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
 
     const row = await screen.findByTestId("dashboard-request-row");
     expect(within(row).getByText("NDA with Acme")).toBeInTheDocument();
     const link = within(row).getByRole("link", { name: "NDA with Acme" });
-    expect(link).toHaveAttribute("href", "/demo/requests");
+    // PR #82: links go to the specific Request detail page, not the list.
+    expect(link).toHaveAttribute("href", "/demo/requests/req-1");
   });
 
-  it("renders upcoming inbox items and links to the inbox page", async () => {
+  it("renders upcoming inbox rows linked to the related Request when request_id is set (PR #82)", async () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
 
     const row = await screen.findByTestId("dashboard-inbox-row");
     expect(within(row).getByText("Review NDA draft")).toBeInTheDocument();
+    // PR #82: when the inbox item has a request_id, link directly to that
+    // Request detail page instead of the generic /inbox queue.
     expect(
       within(row).getByRole("link", { name: "Review NDA draft" }),
-    ).toHaveAttribute("href", "/demo/inbox");
+    ).toHaveAttribute("href", "/demo/requests/req-1");
   });
 
-  it("renders recent contracts with badges and links to the workspace", async () => {
+  it("renders recent contracts linked to the Repository workspace (PR #82)", async () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
 
@@ -234,12 +237,19 @@ describe("DashboardPage", () => {
     const link = within(recent).getByRole("link", {
       name: "Acme MSA draft",
     });
-    expect(link).toHaveAttribute("href", "/demo/contracts/contract-recent");
+    // PR #82: link target uses the new /repository alias.
+    expect(link).toHaveAttribute(
+      "href",
+      "/demo/repository/contract-recent",
+    );
     // The "generated" badge should appear because has_generated_docx is true.
     expect(within(recent).getByText(/generated/)).toBeInTheDocument();
 
     const signed = screen.getByTestId("section-recent-signed-contracts");
     expect(within(signed).getByText(/signed PDF/)).toBeInTheDocument();
+    expect(
+      within(signed).getByRole("link", { name: "DPA with HostingCo" }),
+    ).toHaveAttribute("href", "/demo/repository/contract-signed");
   });
 
   it("renders empty states when sub-lists are empty without crashing", async () => {
@@ -381,7 +391,7 @@ describe("DashboardPage", () => {
     // The first row also exposes a request_id deep-link.
     expect(
       within(rows[0]).getByTestId("approval-analytics-request-link"),
-    ).toHaveAttribute("href", "/demo/requests?request_id=req-blocked");
+    ).toHaveAttribute("href", "/demo/requests/req-blocked");
     // The second row has no request_id and renders no request link, and
     // surfaces "no due date" + "Unassigned" guard rails.
     expect(rows[1]).toHaveTextContent("Unassigned");
@@ -433,6 +443,106 @@ describe("DashboardPage", () => {
         /No pending approval steps/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #82 — action banner + clickable tiles + cleaner deep links
+  // -------------------------------------------------------------------------
+
+  it("shows the overdue action banner when overdue counts are nonzero", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    const banner = await screen.findByTestId("dashboard-action-banner");
+    expect(banner).toHaveTextContent(/overdue approval/i);
+    expect(banner).toHaveTextContent(/overdue inbox/i);
+    expect(screen.getByTestId("dashboard-action-cta")).toHaveAttribute(
+      "href",
+      "/demo/approvals/tasks",
+    );
+  });
+
+  it("hides the action banner when nothing is overdue", async () => {
+    const allClear = {
+      ...SAMPLE_SUMMARY,
+      counts: {
+        ...SAMPLE_SUMMARY.counts,
+        overdue_inbox_items: 0,
+        overdue_approval_steps: 0,
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(allClear));
+    renderPage();
+    await screen.findByTestId("dashboard-counts");
+    expect(screen.queryByTestId("dashboard-action-banner")).toBeNull();
+  });
+
+  it("routes the action CTA to /inbox when only inbox items are overdue", async () => {
+    const inboxOnly = {
+      ...SAMPLE_SUMMARY,
+      counts: {
+        ...SAMPLE_SUMMARY.counts,
+        overdue_inbox_items: 2,
+        overdue_approval_steps: 0,
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(inboxOnly));
+    renderPage();
+    const cta = await screen.findByTestId("dashboard-action-cta");
+    expect(cta).toHaveAttribute("href", "/demo/inbox");
+    expect(cta).toHaveTextContent(/open inbox/i);
+  });
+
+  it("renders each count tile as a clickable link to the relevant surface", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    await screen.findByTestId("dashboard-counts");
+    expect(screen.getByTestId("count-open_requests")).toHaveAttribute(
+      "href",
+      "/demo/requests",
+    );
+    expect(screen.getByTestId("count-pending_approval_steps")).toHaveAttribute(
+      "href",
+      "/demo/approvals/tasks",
+    );
+    expect(screen.getByTestId("count-overdue_approval_steps")).toHaveAttribute(
+      "href",
+      "/demo/approvals/tasks",
+    );
+    expect(screen.getByTestId("count-active_approval_workflows")).toHaveAttribute(
+      "href",
+      "/demo/approvals/workflows",
+    );
+    expect(
+      screen.getByTestId("count-active_approval_workflow_templates"),
+    ).toHaveAttribute("href", "/demo/approvals/templates");
+    expect(screen.getByTestId("count-contracts_executed")).toHaveAttribute(
+      "href",
+      "/demo/repository",
+    );
+    expect(screen.getByTestId("count-templates_active")).toHaveAttribute(
+      "href",
+      "/demo/requests/templates",
+    );
+  });
+
+  it("renders the loading skeleton (replacing the old text-only state)", async () => {
+    let resolveFetch: (value: Response) => void = () => {};
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    renderPage();
+    const loading = screen.getByTestId("dashboard-loading");
+    expect(loading).toBeInTheDocument();
+    expect(
+      within(loading).getByRole("status", { name: /loading/i }),
+    ).toBeInTheDocument();
+    resolveFetch(jsonResponse(SAMPLE_SUMMARY));
+    await waitFor(() => {
+      expect(screen.queryByTestId("dashboard-loading")).toBeNull();
+    });
   });
 
   it("does not render approver_email or signer PII on the analytics surface", async () => {

@@ -147,6 +147,14 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Dashboard** — the entry point at `/demo/dashboard`. PR #82 polished
+  this surface: a conditional "Needs attention" banner when overdue
+  approval steps or inbox items exist (with a CTA to the right
+  triage surface), grouped + clickable count tiles (Request pipeline /
+  Repository / Approvals / Inbox & templates), per-row deep links to
+  the specific Request detail and Repository workspace pages, a
+  loading skeleton, and friendlier "Pending by assignee" labels (no
+  more raw `<code>` user IDs). No backend changes.
 - **Repository** — the agreement list at `/demo/repository` (legacy
   `/demo/contracts` still resolves). PR #81 added the missing
   `Out for signature` and `Executed` options to the status filter,
