@@ -810,6 +810,45 @@ export const MOCK_INBOX_ITEMS: InboxItem[] = [
     created_by: null,
     metadata_json: null,
   },
+  // PR #79 — Seeded approval inbox items so the Approval Tasks view has
+  // realistic content in demo mode. Mirror the demo workflow runs in
+  // `_buildDemoApprovalRuns()` (see mockApi.ts).
+  {
+    id: "00000000-0000-4000-8000-0000000000b5",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Legal review — NDA with Acme Corp",
+    description: "Step 1 of NDA legal review workflow.",
+    item_type: "approval",
+    status: "open",
+    priority: "high",
+    assigned_to: "demo-user-alice",
+    due_date: "2026-05-09",
+    request_id: MOCK_REQUEST_OPEN_ID,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-05-08T12:00:00Z",
+    updated_at: "2026-05-08T12:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: "00000000-0000-4000-8000-0000000000b6",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Finance sign-off — MSA with WidgetWorks",
+    description: null,
+    item_type: "approval",
+    status: "open",
+    priority: "normal",
+    assigned_to: "demo-user-bob",
+    due_date: "2026-05-18",
+    request_id: null,
+    contract_id: "00000000-0000-4000-8000-000000000001",
+    template_id: null,
+    created_at: "2026-05-09T08:00:00Z",
+    updated_at: "2026-05-09T08:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
 ];
 
 export const MOCK_APPROVAL_POLICIES = [

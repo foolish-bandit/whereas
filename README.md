@@ -150,11 +150,19 @@ Top-level navigation:
 - **Clause Manager** — approved clauses, fallback language, and reusable
   drafting guidance. Legacy `/demo/clause-library` still resolves.
 - **Approvals** — landing page with cards for *Approval tasks*, *Approval
-  workflows*, *Approval templates*, and *Approval policies*. The legacy
-  `/demo/approval-workflows`, `/demo/approval-templates`,
-  `/demo/approval-policies`, and `/demo/inbox` routes still resolve, and
-  the `/demo/approvals?workflow_id=<id>` deep links wired in PR #60–#61
-  forward to `/demo/approvals/workflows`.
+  workflows*, *Approval templates*, and *Approval policies*. PR #79
+  polished this surface: the landing cards show live counts pulled
+  from the dashboard summary, `/demo/approvals/tasks` is now a
+  dedicated Approval Tasks view (filtered to `item_type=approval`,
+  with mount-aware links back to the related Request or Repository
+  record), and workflow rows show a status pill, "Step N of M"
+  progress, source indication (manual / from template / from policy),
+  and clean Request/Repository link buttons. Approval gate, workflow
+  state machine, and policy matching semantics are unchanged. The
+  legacy `/demo/approval-workflows`, `/demo/approval-templates`,
+  `/demo/approval-policies`, and `/demo/inbox` routes still resolve,
+  and the `/demo/approvals?workflow_id=<id>` deep links wired in
+  PR #60–#61 forward to `/demo/approvals/workflows`.
 - **Settings**.
 
 Nothing about the backend Contract / Approval / Template models or their

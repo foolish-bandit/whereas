@@ -417,10 +417,14 @@ describe("mockApi", () => {
       expect(run.steps[0].inbox_item_id).not.toBeNull();
       expect(run.steps[1].inbox_item_id).toBeNull();
 
-      // Inbox surface should carry exactly one approval item.
+      // Instantiating this template should create exactly one approval
+      // inbox item — the one for the first step on req-1. Filter to
+      // the just-created request so seeded demo approvals don't
+      // affect the assertion.
       const inbox = await listInboxItems({ item_type: "approval" });
-      expect(inbox.length).toBe(1);
-      expect(inbox[0].title).toContain("Legal review");
+      const ours = inbox.filter((row) => row.request_id === "req-1");
+      expect(ours.length).toBe(1);
+      expect(ours[0].title).toContain("Legal review");
 
       // Source workflow template metadata is preserved on the run.
       expect(run.metadata_json).toMatchObject({

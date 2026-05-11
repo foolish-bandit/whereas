@@ -315,4 +315,90 @@ describe("ApprovalWorkflowsPage", () => {
     expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
     expect(document.body.textContent ?? "").not.toContain("s3_key");
   });
+
+  // -------------------------------------------------------------------------
+  // PR #79 — row card polish
+  // -------------------------------------------------------------------------
+
+  it("renders a status pill, a related-request link, and a progress line", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_RUN_LIST_ITEM]));
+    renderPage();
+    await screen.findByText("Legal approval");
+    expect(screen.getByTestId("approval-status-pill")).toHaveTextContent(
+      /active/i,
+    );
+    const requestLink = screen.getByTestId("approval-row-request-link");
+    expect(requestLink).toHaveAttribute("href", "/requests/req-1");
+    // Collapsed row falls back to "Step N" until detail loads.
+    expect(screen.getByTestId("approval-row-progress").textContent).toMatch(
+      /Step 1/,
+    );
+  });
+
+  it("shows a 'From template' source label when template_id is set", async () => {
+    const fromTemplate = { ...SAMPLE_RUN_LIST_ITEM, template_id: "tpl-1" };
+    fetchMock.mockResolvedValue(jsonResponse([fromTemplate]));
+    renderPage();
+    await screen.findByText("Legal approval");
+    expect(screen.getByTestId("approval-row-source")).toHaveTextContent(
+      /from template/i,
+    );
+  });
+
+  it("renders a related-repository link when only contract_id is set", async () => {
+    const contractOnly = {
+      ...SAMPLE_RUN_LIST_ITEM,
+      request_id: null,
+      contract_id: "contract-7",
+    };
+    fetchMock.mockResolvedValue(jsonResponse([contractOnly]));
+    renderPage();
+    await screen.findByText("Legal approval");
+    const contractLink = screen.getByTestId("approval-row-contract-link");
+    expect(contractLink).toHaveAttribute("href", "/repository/contract-7");
+    expect(screen.queryByTestId("approval-row-request-link")).toBeNull();
+  });
+
+  it("preserves the deep-link highlight behavior after the row polish", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/approval-workflows/wf-1") && init?.method !== "POST") {
+        return jsonResponse(SAMPLE_RUN_DETAIL);
+      }
+      if (url.includes("/api/approval-workflows")) {
+        return jsonResponse([SAMPLE_RUN_LIST_ITEM]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage("/approvals?workflow_id=wf-1");
+    await screen.findByText("Legal approval");
+    const row = screen.getByTestId("approvals-row");
+    expect(row).toHaveAttribute("data-deep-link-target", "true");
+  });
+
+  it("does not surface raw metadata_json text on the row card", async () => {
+    const poisoned = {
+      ...SAMPLE_RUN_DETAIL,
+      metadata_json: {
+        storage_key: "should-not-appear",
+        wrapped_dek: "should-not-appear",
+      } as Record<string, unknown>,
+    };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/approval-workflows/wf-1") && init?.method !== "POST") {
+        return jsonResponse(poisoned);
+      }
+      if (url.includes("/api/approval-workflows")) {
+        return jsonResponse([SAMPLE_RUN_LIST_ITEM]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Legal approval");
+    fireEvent.click(screen.getByTestId("approvals-toggle-detail"));
+    await screen.findByTestId("approvals-step-list");
+    expect(document.body.textContent ?? "").not.toContain("storage_key");
+    expect(document.body.textContent ?? "").not.toContain("wrapped_dek");
+    expect(document.body.textContent ?? "").not.toContain("s3_key");
+    expect(document.body.textContent ?? "").not.toContain("metadata_json");
+  });
 });

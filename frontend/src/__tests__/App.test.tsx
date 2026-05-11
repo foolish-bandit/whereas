@@ -305,10 +305,10 @@ describe("App routing — UI consolidation pass", () => {
     );
   });
 
-  it("renders the new /demo/approvals/tasks route (Inbox)", async () => {
+  it("renders the new /demo/approvals/tasks route (Approval Tasks)", async () => {
     renderAt("/demo/approvals/tasks");
     await waitFor(() =>
-      expect(screen.getByTestId("inbox-page")).toBeInTheDocument(),
+      expect(screen.getByTestId("approval-tasks-page")).toBeInTheDocument(),
     );
   });
 
