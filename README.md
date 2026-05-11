@@ -147,6 +147,15 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Repository workspace** — the per-contract surface at
+  `/demo/repository/:id` (legacy `/demo/contracts/:id`). PR #83 added
+  a lifecycle status banner above the Document lifecycle strip:
+  green "Executed" callout with the signed-PDF date when
+  `status=executed`, info-toned "Out for signature" callout when
+  `status=sent_for_signature`, nothing otherwise. The banner is
+  informational — the header's "Download current document" button
+  already prefers `signed_pdf` for executed contracts. No backend
+  changes; no signer PII or DocuSeal secrets in the banner.
 - **Dashboard** — the entry point at `/demo/dashboard`. PR #82 polished
   this surface: a conditional "Needs attention" banner when overdue
   approval steps or inbox items exist (with a CTA to the right
