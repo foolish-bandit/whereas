@@ -147,6 +147,15 @@ Top-level navigation:
   policy matching, DocuSeal send, or artifact priority semantics.
 - **Playbooks** — review standards, fallback positions, and deviation
   rules for contract review.
+- **Inbox** — the generic work-queue at `/demo/inbox`. PR #84 polished
+  this surface to match the Approval Tasks bar: mount-aware row
+  links go to the related Request detail / Repository workspace /
+  Agreement template when those ids are present, item type and
+  status render as small chips (no more inline `request_review · …`
+  text), an overdue badge appears when an open item is past its
+  due date, and a server-side item-type filter joins the existing
+  status filter. Better empty-state copy when filters yield no rows.
+  No backend changes; approval items still belong on `/demo/approvals/tasks`.
 - **Repository workspace** — the per-contract surface at
   `/demo/repository/:id` (legacy `/demo/contracts/:id`). PR #83 added
   a lifecycle status banner above the Document lifecycle strip:
