@@ -1285,6 +1285,7 @@ export function __resetMockState(): void {
     delete sessionFindingsById[k];
   }
   sessionClauseTemplates.length = 0;
+  archivedDemoClauseIds.clear();
   sessionPlaybookList.length = 0;
   for (const k of Object.keys(sessionPlaybookDetailById)) {
     delete sessionPlaybookDetailById[k];
@@ -1302,13 +1303,28 @@ const DEMO_CLAUSE_TEMPLATES: ClauseTemplate[] = [
   { id: "ct-1", organization_id: "demo-org", name: "Mutual NDA confidentiality clause", clause_type: "confidentiality", text: "Each Party shall keep Confidential Information strictly confidential...", description: "Baseline NDA confidentiality", jurisdiction: "California", contract_type: "mutual_nda", version: "1.0", source: "Firm standard", tags: ["nda","core"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
   { id: "ct-2", organization_id: "demo-org", name: "Governing law clause", clause_type: "governing_law", text: "This Agreement is governed by California law...", description: null, jurisdiction: "California", contract_type: "msa", version: "1.0", source: null, tags: ["governing-law"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
   { id: "ct-3", organization_id: "demo-org", name: "Assignment clause", clause_type: "assignment", text: "Neither Party may assign this Agreement without prior written consent...", description: null, jurisdiction: null, contract_type: "msa", version: null, source: null, tags: ["assignment"], is_active: true, created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z" },
+  { id: "ct-4", organization_id: "demo-org", name: "Legacy indemnity clause (archived)", clause_type: "indemnification", text: "Each Party shall indemnify and hold harmless the other Party...", description: "Superseded by 2026 mutual-indemnity standard.", jurisdiction: null, contract_type: "msa", version: "0.9", source: "Legacy template", tags: ["indemnity","legacy"], is_active: false, created_at: "2025-09-12T00:00:00Z", updated_at: "2026-02-04T00:00:00Z" },
 ];
 
 const sessionClauseTemplates: ClauseTemplate[] = [];
 
+// Demo rows are read-only by reference, but Archive should still work
+// in demo mode. Track soft-archive overrides for demo IDs here so the
+// list reflects the user's action without mutating the baseline data.
+const archivedDemoClauseIds: Set<string> = new Set();
+
+function withClauseArchiveOverride(row: ClauseTemplate): ClauseTemplate {
+  if (archivedDemoClauseIds.has(row.id) && row.is_active) {
+    return { ...row, is_active: false };
+  }
+  return row;
+}
+
 export async function listClauseTemplates(filters: { clause_type?: string; jurisdiction?: string; contract_type?: string; tag?: string; include_inactive?: boolean } = {}, options: ApiOptions = {}): Promise<ClauseTemplate[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  let rows = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES];
+  let rows = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES].map(
+    withClauseArchiveOverride,
+  );
   if (!filters.include_inactive) rows = rows.filter((r) => r.is_active);
   if (filters.clause_type) rows = rows.filter((r) => r.clause_type === filters.clause_type);
   if (filters.jurisdiction) rows = rows.filter((r) => r.jurisdiction === filters.jurisdiction);
@@ -1329,7 +1345,7 @@ export async function getClauseTemplate(id: string, options: ApiOptions = {}): P
   await delay(MOCK_LATENCY_MS, options.signal);
   const row = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES].find((r) => r.id === id);
   if (!row) throw new ApiError(404, "Clause template not found.");
-  return row;
+  return withClauseArchiveOverride(row);
 }
 
 export async function updateClauseTemplate(id: string, payload: ClauseTemplateUpdateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
@@ -1348,7 +1364,11 @@ export async function deleteClauseTemplate(id: string, options: ApiOptions = {})
   if (!row) throw new ApiError(404, "Clause template not found.");
   if (sessionClauseTemplates.find((r) => r.id === id)) {
     await updateClauseTemplate(id, { is_active: false }, options);
+    return;
   }
+  // Demo (read-only) row: record a soft-archive override so the
+  // list reflects the action without mutating the baseline fixture.
+  archivedDemoClauseIds.add(id);
 }
 
 // ---------------------------------------------------------------------------
