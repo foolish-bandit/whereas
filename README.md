@@ -269,10 +269,23 @@ Automated playbook review (matching grid rules against contract
 clauses) and Clause Manager integration are deliberately out of scope
 for this PR. The modal copy says so in real/API mode.
 
-Nothing about the backend `Contract` / `Approval` / `Template` models
-or their HTTP endpoints changed in the recent UI polish work; the
-legacy aliases above are preserved for stability of external deep
-links and bookmarks.
+### Clause Manager by contract type (PR #119)
+
+The Clause Manager is now organized **by contract type**. A chip bar
+at the top of `/clause-manager` (and `/demo/clause-manager`) groups
+clauses by `contract_type`, with per-type active and archived counts
+plus an *All contract types* option. Selecting a chip narrows the
+clause list to that type and pre-fills the Add-clause form so curators
+don't have to retype it.
+
+User-facing chip labels use friendly names (NDA, MSA, Vendor
+agreement, Employment agreement, DPA, …) while the stored
+`contract_type` slug (e.g. `mutual_nda`, `vendor_agreement`) remains
+the source of truth for search, audit, and the existing backend
+filter. Free-text search, clause-type filter, *Show archived* toggle,
+two-step Archive confirm, and Copy text actions are preserved. A new
+**Reset filters** action clears search + clause type + contract type
+in one click. Clause/playbook integration remains future work.
 
 ## UI polish pass (PRs #78–#88)
 
