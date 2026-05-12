@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
@@ -19,6 +19,31 @@ import type {
   DashboardRequestSummary,
   DashboardSummary,
 } from "../types/dashboard";
+
+/**
+ * PR #124 — friendly labels for contract-type slugs used in the
+ * Agreement-mix rollup. The backend returns `contract_type` as a free
+ * string on `DashboardRequestSummary`; tests use friendly labels
+ * (NDA / MSA) and live data tends to use slugs (mutual_nda /
+ * vendor_agreement). Normalize so both render as the same bucket.
+ */
+const CONTRACT_TYPE_LABELS: Record<string, string> = {
+  mutual_nda: "NDA",
+  unilateral_nda: "NDA",
+  nda: "NDA",
+  msa: "MSA",
+  vendor_agreement: "Vendor agreement",
+  customer_contract: "Customer contract",
+  employment_agreement: "Employment agreement",
+  dpa: "DPA",
+  lease: "Lease",
+};
+
+function contractTypeLabel(raw: string | null | undefined): string {
+  if (!raw) return "Unspecified";
+  const lower = raw.toLowerCase();
+  return CONTRACT_TYPE_LABELS[lower] ?? raw;
+}
 
 type LoadState =
   | { kind: "loading" }
@@ -149,8 +174,10 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-lg font-semibold text-ink">Dashboard</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          A read-only snapshot of CLM activity in this workspace. Click a
-          tile or row to jump straight into the matching surface.
+          Contract-ops command center: what needs attention, what is
+          flowing through the pipeline, and what changed recently.
+          Click a tile, action card, or row to jump straight into the
+          matching surface.
         </p>
       </div>
 
@@ -176,7 +203,9 @@ export default function DashboardPage() {
 function DashboardContent({ summary }: { summary: DashboardSummary }) {
   return (
     <>
-      <ActionBanner counts={summary.counts} />
+      <AttentionNeeded counts={summary.counts} />
+
+      <QuickActions />
 
       <section data-testid="dashboard-counts" className="space-y-5">
         <CountGroup
@@ -200,6 +229,13 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
           counts={summary.counts}
         />
       </section>
+
+      <AgreementMix
+        requests={[
+          ...summary.upcoming.requests_due_soon,
+          ...summary.recent_activity.recent_requests,
+        ]}
+      />
 
       <section
         className="grid gap-4 lg:grid-cols-2"
@@ -230,6 +266,208 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
 
       <ApprovalAnalyticsSection analytics={summary.approval_analytics} />
     </>
+  );
+}
+
+/* -------------------------------------------------------------------- */
+/* PR #124 — contract-ops command-center polish.                        */
+/*                                                                      */
+/*   • AttentionNeeded wraps the existing overdue ActionBanner with     */
+/*     an always-on "what needs attention" rollup (urgent requests,     */
+/*     overdue inbox, overdue approvals). When nothing is hot, we      */
+/*     render an honest "all clear" state instead of leaving the       */
+/*     viewer wondering whether the dashboard is broken.                */
+/*   • QuickActions surfaces the six top-of-mind navigation targets    */
+/*     so users don't have to discover them in the sidebar.             */
+/*   • AgreementMix tallies the contract-type field on request         */
+/*     summaries we already fetch. Honest empty state when neither     */
+/*     upcoming nor recent requests carry a contract_type.             */
+/* -------------------------------------------------------------------- */
+
+function AttentionNeeded({ counts }: { counts: DashboardCounts }) {
+  const urgent = counts.urgent_or_high_priority_requests;
+  const overdueApprovals = counts.overdue_approval_steps;
+  const overdueInbox = counts.overdue_inbox_items;
+  const totalHot = urgent + overdueApprovals + overdueInbox;
+  return (
+    <section
+      data-testid="dashboard-attention"
+      className="space-y-2"
+      aria-labelledby="dashboard-attention-heading"
+    >
+      <h2
+        id="dashboard-attention-heading"
+        className="text-sm font-medium text-ink"
+      >
+        Attention needed
+      </h2>
+      <ActionBanner counts={counts} />
+      {totalHot === 0 && (
+        <p
+          className="rounded border border-rule bg-canvas-subtle p-3 text-sm text-ink-muted"
+          data-testid="dashboard-attention-clear"
+        >
+          Nothing is overdue and no urgent requests are open. Pipeline
+          counts and recent activity below.
+        </p>
+      )}
+    </section>
+  );
+}
+
+interface QuickAction {
+  key: string;
+  label: string;
+  hint: string;
+  to: string;
+}
+
+const QUICK_ACTIONS: QuickAction[] = [
+  {
+    key: "open-inbox",
+    label: "Open Inbox",
+    hint: "Triaging intake items, classifications, and reviews",
+    to: demoPath("/inbox"),
+  },
+  {
+    key: "start-request",
+    label: "Start a Request",
+    hint: "Kick off a new contract request",
+    to: demoPath("/requests"),
+  },
+  {
+    key: "view-approvals",
+    label: "View Approval Tasks",
+    hint: "Approve, reject, or hand off in-flight workflows",
+    to: demoPath("/approvals/tasks"),
+  },
+  {
+    key: "open-repository",
+    label: "Open Repository",
+    hint: "Search the executed contract record",
+    to: demoPath("/repository"),
+  },
+  {
+    key: "open-clause-manager",
+    label: "Open Clause Manager",
+    hint: "Approved clauses, fallback language, drafting guidance",
+    to: demoPath("/clause-manager"),
+  },
+  {
+    key: "open-playbooks",
+    label: "Open Playbooks",
+    hint: "Review standards, fallback positions, deviation rules",
+    to: demoPath("/playbooks"),
+  },
+];
+
+function QuickActions() {
+  return (
+    <section
+      data-testid="dashboard-quick-actions"
+      aria-labelledby="dashboard-quick-actions-heading"
+      className="space-y-2"
+    >
+      <h2
+        id="dashboard-quick-actions-heading"
+        className="text-sm font-medium text-ink"
+      >
+        Quick actions
+      </h2>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {QUICK_ACTIONS.map((qa) => (
+          <Link
+            key={qa.key}
+            to={qa.to}
+            data-testid={`quick-action-${qa.key}`}
+            className="rounded border border-rule bg-canvas p-3 transition-colors hover:border-rule-strong hover:bg-canvas-subtle"
+          >
+            <p className="text-sm font-medium text-ink">{qa.label}</p>
+            <p className="mt-1 text-xs text-ink-subtle">{qa.hint}</p>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface AgreementMixBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+function AgreementMix({ requests }: { requests: DashboardRequestSummary[] }) {
+  const buckets = useMemo<AgreementMixBucket[]>(() => {
+    const counts = new Map<string, number>();
+    // Dedupe by request id so a row appearing in both upcoming and
+    // recent doesn't double-count toward the mix.
+    const seen = new Set<string>();
+    for (const r of requests) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      if (!r.contract_type) continue;
+      const key = r.contract_type.toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([key, count]) => ({
+        key,
+        label: contractTypeLabel(key),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [requests]);
+
+  return (
+    <section
+      data-testid="dashboard-agreement-mix"
+      aria-labelledby="dashboard-agreement-mix-heading"
+      className="space-y-2"
+    >
+      <h2
+        id="dashboard-agreement-mix-heading"
+        className="text-sm font-medium text-ink"
+      >
+        Agreement mix
+      </h2>
+      <p className="text-xs text-ink-subtle">
+        Contract types across upcoming and recent requests in this
+        workspace.
+      </p>
+      {buckets.length === 0 ? (
+        <p
+          className="rounded border border-rule bg-canvas-subtle p-3 text-sm text-ink-muted"
+          data-testid="dashboard-agreement-mix-empty"
+        >
+          No contract-type tags on the currently visible requests.
+        </p>
+      ) : (
+        <ul
+          className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+          data-testid="dashboard-agreement-mix-list"
+        >
+          {buckets.map((b) => (
+            <li
+              key={b.key}
+              className="rounded border border-rule p-3"
+              data-testid="dashboard-agreement-mix-row"
+              data-contract-type-key={b.key}
+            >
+              <p className="text-xs uppercase tracking-wide text-ink-subtle">
+                {b.label}
+              </p>
+              <p className="mt-2 text-2xl font-semibold text-ink tabular-nums">
+                {b.count}
+              </p>
+              <p className="mt-1 text-xs text-ink-subtle">
+                {b.count === 1 ? "request" : "requests"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

@@ -545,6 +545,186 @@ describe("DashboardPage", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // PR #124 — contract-ops command-center polish
+  // -------------------------------------------------------------------------
+
+  it("renders the Attention needed section with the overdue banner when overdue counts are nonzero", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    const attention = await screen.findByTestId("dashboard-attention");
+    expect(attention).toHaveTextContent(/attention needed/i);
+    expect(
+      within(attention).getByTestId("dashboard-action-banner"),
+    ).toBeInTheDocument();
+    // "All clear" is not shown when something is hot.
+    expect(
+      within(attention).queryByTestId("dashboard-attention-clear"),
+    ).toBeNull();
+  });
+
+  it("renders an 'all clear' attention state when nothing is overdue or urgent", async () => {
+    const allClear = {
+      ...SAMPLE_SUMMARY,
+      counts: {
+        ...SAMPLE_SUMMARY.counts,
+        urgent_or_high_priority_requests: 0,
+        overdue_inbox_items: 0,
+        overdue_approval_steps: 0,
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(allClear));
+    renderPage();
+    const attention = await screen.findByTestId("dashboard-attention");
+    expect(
+      within(attention).getByTestId("dashboard-attention-clear"),
+    ).toBeInTheDocument();
+    expect(
+      within(attention).queryByTestId("dashboard-action-banner"),
+    ).toBeNull();
+  });
+
+  it("renders Quick Actions cards pointing at the expected demo routes", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    const qa = await screen.findByTestId("dashboard-quick-actions");
+    expect(qa).toHaveTextContent(/quick actions/i);
+    expect(within(qa).getByTestId("quick-action-open-inbox")).toHaveAttribute(
+      "href",
+      "/demo/inbox",
+    );
+    expect(
+      within(qa).getByTestId("quick-action-start-request"),
+    ).toHaveAttribute("href", "/demo/requests");
+    expect(
+      within(qa).getByTestId("quick-action-view-approvals"),
+    ).toHaveAttribute("href", "/demo/approvals/tasks");
+    expect(
+      within(qa).getByTestId("quick-action-open-repository"),
+    ).toHaveAttribute("href", "/demo/repository");
+    expect(
+      within(qa).getByTestId("quick-action-open-clause-manager"),
+    ).toHaveAttribute("href", "/demo/clause-manager");
+    expect(
+      within(qa).getByTestId("quick-action-open-playbooks"),
+    ).toHaveAttribute("href", "/demo/playbooks");
+  });
+
+  it("renders the Agreement mix tally from request contract_type fields", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    const mix = await screen.findByTestId("dashboard-agreement-mix");
+    const rows = within(mix).getAllByTestId("dashboard-agreement-mix-row");
+    // SAMPLE_SUMMARY contains one upcoming request with contract_type
+    // "NDA" and one recent request with contract_type "MSA". Both
+    // bucket under their friendly labels with count = 1 each.
+    const buckets = rows.map((r) => ({
+      key: r.getAttribute("data-contract-type-key"),
+      text: r.textContent ?? "",
+    }));
+    const ndaBucket = buckets.find((b) => b.key === "nda");
+    const msaBucket = buckets.find((b) => b.key === "msa");
+    expect(ndaBucket).toBeDefined();
+    expect(ndaBucket!.text).toMatch(/NDA/);
+    expect(ndaBucket!.text).toMatch(/1/);
+    expect(msaBucket).toBeDefined();
+    expect(msaBucket!.text).toMatch(/MSA/);
+    expect(msaBucket!.text).toMatch(/1/);
+  });
+
+  it("renders an honest empty state on Agreement mix when no contract_type info exists", async () => {
+    const noTypes = {
+      ...SAMPLE_SUMMARY,
+      upcoming: {
+        ...SAMPLE_SUMMARY.upcoming,
+        requests_due_soon: SAMPLE_SUMMARY.upcoming.requests_due_soon.map(
+          (r) => ({ ...r, contract_type: null }),
+        ),
+      },
+      recent_activity: {
+        ...SAMPLE_SUMMARY.recent_activity,
+        recent_requests: SAMPLE_SUMMARY.recent_activity.recent_requests.map(
+          (r) => ({ ...r, contract_type: null }),
+        ),
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(noTypes));
+    renderPage();
+    await screen.findByTestId("dashboard-agreement-mix");
+    expect(
+      screen.getByTestId("dashboard-agreement-mix-empty"),
+    ).toBeInTheDocument();
+  });
+
+  it("dedupes Agreement mix counts when the same request appears in both upcoming and recent", async () => {
+    const sharedRequest = SAMPLE_SUMMARY.upcoming.requests_due_soon[0];
+    const dup = {
+      ...SAMPLE_SUMMARY,
+      recent_activity: {
+        ...SAMPLE_SUMMARY.recent_activity,
+        recent_requests: [
+          sharedRequest,
+          ...SAMPLE_SUMMARY.recent_activity.recent_requests,
+        ],
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(dup));
+    renderPage();
+    const mix = await screen.findByTestId("dashboard-agreement-mix");
+    const ndaRow = within(mix)
+      .getAllByTestId("dashboard-agreement-mix-row")
+      .find((r) => r.getAttribute("data-contract-type-key") === "nda");
+    expect(ndaRow).toBeDefined();
+    expect(ndaRow!.textContent).toMatch(/1/); // not 2
+  });
+
+  it("normalizes slug-style contract_type values (mutual_nda → NDA) in Agreement mix", async () => {
+    const slugRequest = {
+      ...SAMPLE_SUMMARY.recent_activity.recent_requests[0],
+      id: "req-slug",
+      contract_type: "mutual_nda",
+    };
+    const mixed = {
+      ...SAMPLE_SUMMARY,
+      recent_activity: {
+        ...SAMPLE_SUMMARY.recent_activity,
+        recent_requests: [slugRequest],
+      },
+      upcoming: {
+        ...SAMPLE_SUMMARY.upcoming,
+        requests_due_soon: [],
+      },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(mixed));
+    renderPage();
+    const mix = await screen.findByTestId("dashboard-agreement-mix");
+    const ndaRow = within(mix).getByTestId("dashboard-agreement-mix-row");
+    expect(ndaRow.getAttribute("data-contract-type-key")).toBe("mutual_nda");
+    expect(ndaRow.textContent).toMatch(/NDA/);
+  });
+
+  it("does not leak forbidden tokens via the new dashboard sections", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    await screen.findByTestId("dashboard-quick-actions");
+    await screen.findByTestId("dashboard-agreement-mix");
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "wrapped_master_key",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned_url",
+      "presigned_uri",
+      "docuseal_webhook_secret",
+      "docuseal_api_token",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
+
   it("does not render approver_email or signer PII on the analytics surface", async () => {
     // Even if a regressed backend started returning approver_email or
     // similar PII keys on the wire, the typed surface drops them and
