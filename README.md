@@ -248,6 +248,27 @@ questions, no automatic resolution of multiple intake items in one
 shot, and no backend intake-routing engine. Those remain follow-up
 work.
 
+### Playbooks grid foundation (PR #118)
+
+The top-level **Playbooks** page is now a structured workspace. The
+primary view is a **review-rules grid**: one row per issue, with the
+firm's *Standard position*, *Fallback position*, *Canned response*,
+and a short *Example clause* alongside contract type, severity, and
+status. The grid supports a free-text search across issue/position
+text plus contract type and severity filters with a reset action.
+
+An **Add review rule** modal collects those fields with required-field
+validation for *Issue* and *Standard position*. The grid is currently
+a workspace foundation: adds live in the browser session only. The
+authoritative source for review rules used by automated analysis is
+still the YAML playbook files, which are surfaced in a secondary
+**YAML playbook files** section on the same page (with the existing
+list, search, and YAML authoring panel preserved).
+
+Automated playbook review (matching grid rules against contract
+clauses) and Clause Manager integration are deliberately out of scope
+for this PR. The modal copy says so in real/API mode.
+
 Nothing about the backend `Contract` / `Approval` / `Template` models
 or their HTTP endpoints changed in the recent UI polish work; the
 legacy aliases above are preserved for stability of external deep
