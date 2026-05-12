@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import type { RowSelectionState } from "@tanstack/react-table";
+
 import ContractTable from "../components/ContractTable";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import RepositoryActionBar from "../components/RepositoryActionBar";
+import type { RepositoryFolder } from "../lib/repositoryFolders";
 import { ApiError, MissingDevUserError, getContracts } from "../lib/api";
 import { mimeLabel } from "../lib/format";
 import {
@@ -36,7 +40,82 @@ const SORT_PARAM = "sort";
 const DIR_PARAM = "dir";
 const MERGED_PARAM = "merged";
 const COLUMNS_LS_KEY = "whereas:repository:columns";
+const OVERRIDES_LS_KEY = "whereas:repository:overrides";
+const SHOW_ARCHIVED_LS_KEY = "whereas:repository:showArchived";
 const SEARCH_DEBOUNCE_MS = 250;
+
+interface RepositoryOverride {
+  tags?: string[];
+  archived?: boolean;
+  folder?: RepositoryFolder | null;
+}
+
+function loadOverrides(): Record<string, RepositoryOverride> {
+  try {
+    const raw = window.localStorage.getItem(OVERRIDES_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistOverrides(o: Record<string, RepositoryOverride>) {
+  try {
+    window.localStorage.setItem(OVERRIDES_LS_KEY, JSON.stringify(o));
+  } catch {
+    /* swallow quota errors */
+  }
+}
+
+function applyOverride(
+  base: ContractListItem,
+  override?: RepositoryOverride,
+): ContractListItem {
+  if (!override) return base;
+  return {
+    ...base,
+    tags: override.tags ?? base.tags,
+    archived: override.archived ?? base.archived,
+    folder: override.folder ?? base.folder,
+  };
+}
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadCsv(rows: ContractListItem[], visibleColumnIds: Set<string>) {
+  type Col = { id: string; label: string; pick: (c: ContractListItem) => unknown };
+  const allCols: Col[] = [
+    { id: "title", label: "Title", pick: (c: ContractListItem) => c.title },
+    { id: "counterparty", label: "Counterparty", pick: (c: ContractListItem) => c.counterparty },
+    { id: "type", label: "Type", pick: (c: ContractListItem) => c.mime_type },
+    { id: "effective_date", label: "Effective date", pick: (c: ContractListItem) => c.effective_date },
+    { id: "renewal", label: "Renewal", pick: (c: ContractListItem) => c.renewal_date },
+    { id: "owner", label: "Owner", pick: (c: ContractListItem) => c.owner_display_name },
+    { id: "status", label: "Status", pick: (c: ContractListItem) => c.status },
+    { id: "updated", label: "Updated", pick: (c: ContractListItem) => c.updated_at },
+  ];
+  const cols = allCols.filter((c) => visibleColumnIds.has(c.id));
+  const header = cols.map((c) => csvEscape(c.label)).join(",");
+  const body = rows
+    .map((row) => cols.map((c) => csvEscape(c.pick(row))).join(","))
+    .join("\n");
+  const blob = new Blob([`${header}\n${body}\n`], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `repository-export-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 const STATUS_VALUES = new Set(STATUS_FILTERS.map((s) => s.value));
 const SORT_KEYS = new Set<SortKey>([
@@ -248,6 +327,39 @@ export default function ContractsPage() {
     () => loadVisibleColumnsFromStorage(),
   );
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [overrides, setOverrides] = useState<Record<string, RepositoryOverride>>(
+    () => loadOverrides(),
+  );
+  const [showArchived, setShowArchived] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(SHOW_ARCHIVED_LS_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  function persistShowArchived(next: boolean) {
+    try {
+      window.localStorage.setItem(SHOW_ARCHIVED_LS_KEY, next ? "true" : "false");
+    } catch {
+      /* swallow */
+    }
+  }
+
+  function updateOverride(id: string, patch: RepositoryOverride) {
+    setOverrides((prev) => {
+      const merged: Record<string, RepositoryOverride> = { ...prev };
+      const existing = merged[id] ?? {};
+      merged[id] = {
+        tags: patch.tags ?? existing.tags,
+        archived: patch.archived ?? existing.archived,
+        folder: patch.folder ?? existing.folder,
+      };
+      persistOverrides(merged);
+      return merged;
+    });
+  }
 
   // Debounce search to URL + fetch.
   const debounceRef = useRef<number | null>(null);
@@ -380,13 +492,17 @@ export default function ContractsPage() {
 
   const filtered = useMemo(() => {
     if (state.kind !== "loaded") return [];
-    const rows = state.contracts.filter((c) => {
+    const withOverrides = state.contracts.map((c) =>
+      applyOverride(c, overrides[c.id]),
+    );
+    const rows = withOverrides.filter((c) => {
       if (statusFilter !== "all" && c.status !== statusFilter) return false;
       if (typeFilter !== "all" && c.mime_type !== typeFilter) return false;
+      if (!showArchived && c.archived) return false;
       return true;
     });
     return sortContracts(rows, sort, dir);
-  }, [state, statusFilter, typeFilter, sort, dir]);
+  }, [state, statusFilter, typeFilter, sort, dir, overrides, showArchived]);
 
   const hasActiveFilter =
     committedSearch.trim().length > 0 ||
@@ -703,28 +819,105 @@ export default function ContractsPage() {
           />
         ))}
 
-      {state.kind === "loaded" && state.contracts.length > 0 && (
-        <>
-          <ContractTable
-            contracts={filtered}
-            visibleColumns={visibleColumns}
-            sort={sort}
-            dir={dir}
-            onSortChange={onSortChange}
-          />
-          <p className="mt-3 text-xs text-ink-subtle">
-            {filtered.length} of {state.contracts.length} agreements shown
-            {committedSearch.trim() ? ` for "${committedSearch.trim()}"` : ""}
-            .
-          </p>
-          {filtered.length === 0 && (
-            <p className="mt-2 text-sm text-ink-muted">
-              Nothing in the loaded Repository slice matches the current
-              status / type filters.
+      {state.kind === "loaded" && state.contracts.length > 0 && (() => {
+        const loadedContracts = state.contracts;
+        const selectedIds = Object.keys(rowSelection).filter(
+          (k) => rowSelection[k],
+        );
+        const selectedRows = filtered.filter((r) => selectedIds.includes(r.id));
+        const knownTags = Array.from(
+          new Set(filtered.flatMap((r) => r.tags ?? [])),
+        ).sort();
+
+        function clearSelection() {
+          setRowSelection({});
+        }
+
+        function applyTagToSelection(tag: string) {
+          for (const id of selectedIds) {
+            const baseTags =
+              overrides[id]?.tags ??
+              loadedContracts.find((c) => c.id === id)?.tags ??
+              [];
+            const next = Array.from(new Set([...baseTags, tag]));
+            updateOverride(id, { tags: next });
+          }
+        }
+
+        function archiveSelection() {
+          for (const id of selectedIds) {
+            updateOverride(id, { archived: true, folder: "Archive" });
+          }
+          clearSelection();
+        }
+
+        function moveSelection(folder: RepositoryFolder) {
+          for (const id of selectedIds) {
+            updateOverride(id, {
+              folder,
+              archived: folder === "Archive",
+            });
+          }
+          clearSelection();
+        }
+
+        function exportSelectionCsv() {
+          const visibleIds = new Set<string>(visibleColumns);
+          downloadCsv(selectedRows, visibleIds);
+        }
+
+        return (
+          <>
+            {selectedIds.length > 0 && (
+              <RepositoryActionBar
+                selectedRows={selectedRows}
+                knownTags={knownTags}
+                onApplyTag={applyTagToSelection}
+                onArchive={archiveSelection}
+                onMoveToFolder={moveSelection}
+                onExportCsv={exportSelectionCsv}
+                onCancel={clearSelection}
+              />
+            )}
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-ink-subtle">
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => {
+                    setShowArchived(e.target.checked);
+                    persistShowArchived(e.target.checked);
+                  }}
+                  data-testid="repository-show-archived"
+                />
+                Show archived
+              </label>
+            </div>
+            <ContractTable
+              contracts={filtered}
+              visibleColumns={visibleColumns}
+              sort={sort}
+              dir={dir}
+              onSortChange={onSortChange}
+              rowSelection={rowSelection}
+              onRowSelectionChange={setRowSelection}
+            />
+            <p className="mt-3 text-xs text-ink-subtle">
+              {filtered.length} of {state.contracts.length} agreements shown
+              {committedSearch.trim()
+                ? ` for "${committedSearch.trim()}"`
+                : ""}
+              .
             </p>
-          )}
-        </>
-      )}
+            {filtered.length === 0 && (
+              <p className="mt-2 text-sm text-ink-muted">
+                Nothing in the loaded Repository slice matches the current
+                status / type filters.
+              </p>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
