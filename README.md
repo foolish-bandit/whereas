@@ -23,13 +23,13 @@ What Whereas is **not** (yet): a drafting tool, a Word/Outlook plugin, a negotia
 
 ## Working representation: DOCX/PDF + Markdown snapshots
 
-Whereas is moving toward a **PWA-first, Markdown-as-working-copy** architecture:
+Whereas uses a **PWA-first, Markdown-as-working-copy** architecture:
 
 - The **DOCX or PDF you upload remains the original legal artifact.** Signed PDFs from DocuSeal are the source of truth for execution.
 - On upload, Whereas also stores a lightweight **Markdown working snapshot** (`ContractMarkdownSnapshot`) for fast preview, search, clause analysis, and future local-first sync. Snapshots are append-only; the latest is fetched via `GET /api/contracts/{id}/markdown`.
 - The frontend ships as an installable PWA. Browser file access (the File System Access API) is used **only** for explicit import, export, "save generated DOCX," and "open original in Word/Google Docs" workflows. **Normal contract previews never trigger filesystem permission prompts** — they read from app/backend storage.
 - Markdown conversion uses Microsoft MarkItDown when installed and falls back to the existing extracted plain text otherwise. Conversion failure is non-fatal: the upload still succeeds and the original remains downloadable.
-- **The contract workspace defaults to the Markdown preview** when one is available. It's optimized for skimming, search, and the future local-first sync layer. Use **"View original"** in the document header to switch to the plain-text view used for clause / metadata / finding span citations, or **"Download original"** to retrieve the underlying DOCX/PDF as the official artifact.
+- **The contract workspace defaults to the Text preview** when one is available (rendered from the Markdown working snapshot). It's optimized for skimming, search, and the future local-first sync layer. Use **"View original"** in the document header to switch to the plain-text view used for clause / metadata / finding span citations, or **"Download original"** to retrieve the underlying DOCX/PDF as the official artifact.
 - Original legal artifacts are tracked explicitly in a `ContractArtifact` model alongside the Markdown working snapshot. The original upload is recorded with `artifact_type='original_upload'` and `is_official=true`; future PRs add generated DOCX, signed PDFs from DocuSeal, redlines, and exhibits as additional artifact rows. The metadata list is exposed via `GET /api/contracts/{id}/artifacts`. Markdown snapshots remain the lightweight working representation; artifacts remain the official legal record.
 - **Backfilling existing contracts:** contracts created before artifact tracking landed only have the legacy `Contract.s3_key` / `mime_type` / `file_hash_sha256` columns. Download falls back to those columns when no `original_upload` artifact exists, but operators should run the backfill once after deploying so the artifact row is the source of truth:
 
@@ -478,6 +478,55 @@ persistence + auth and are intentional future work.
 Frontend-only. No backend changes. No Repository API, search,
 artifact-priority, DocuSeal, approval, request, or duplicate-merge
 semantics changed.
+
+## MVP readiness audit (PR #107)
+
+Narrow hardening / audit pass — no new product features, no backend
+semantic changes. The intent is to catch inconsistencies and tighten
+defense-in-depth before MVP / demo usage:
+
+- **Centralized forbidden-DOM-token list.** `frontend/src/test/forbiddenTokens.ts`
+  exports `FORBIDDEN_DOM_TOKENS` — the canonical list of substrings
+  (`storage_key`, `wrapped_dek`, `s3_key`, `presigned_*`, `private_url`,
+  raw artifact slot tokens like `original_upload` / `generated_docx` /
+  `signed_pdf` / `redline_docx`, `metadata_json`, DocuSeal secret-shaped
+  fields) that must never reach the user. Existing per-page tests can
+  reuse this; the new cross-route audit test scans every top-level
+  route against it.
+- **Cross-route audit test.** `frontend/src/__tests__/MvpReadiness.test.tsx`
+  mounts the full `App` on a `MemoryRouter` for every top-level route
+  (`/demo/dashboard`, `/demo/repository`, `/demo/contracts` legacy
+  alias, `/demo/requests`, `/demo/requests/templates`,
+  `/demo/approvals` landing, `/demo/approvals/{workflows,templates,
+  policies,tasks}`, `/demo/clause-manager`, legacy
+  `/demo/clause-library`, `/demo/settings`, standalone `/requests` and
+  `/requests/templates`) and each major detail route, asserting the
+  expected `data-testid` renders, that none of the
+  `FORBIDDEN_DOM_TOKENS` appears in `document.body.textContent`, and
+  that legacy `Markdown preview` phrasing never reaches the DOM (the
+  canonical UI label is *Text preview*).
+- **Defensive scrub strengthened.** `lib/api.ts`'s `SECRET_KEYS` set
+  picked up `private_url`, `docuseal_webhook_secret`, and
+  `docuseal_api_token` so a backend regression that started returning
+  those keys would be stripped before they ever reached a component.
+- **Terminology cleanup.** A stale code comment in
+  `ContractWorkspacePage.tsx` still referenced *"Markdown preview"*;
+  it's now *"Text preview"* (matching the actual user-facing label).
+  README copy that said Whereas was "moving toward" the
+  PWA-first / Markdown-as-working-copy architecture and that the
+  workspace defaulted to the "Markdown preview" was tightened to
+  reflect the shipped state and the *Text preview* label.
+- **Service worker exclusion confirmed.** `vite.config.ts` keeps
+  `navigateFallbackDenylist: [/^\/api\//]` and `runtimeCaching: []`;
+  the built `dist/sw.js` is verified to retain the
+  `denylist:[/^\/api\//]` token after every build.
+- **No backend semantic changes.** No approval / DocuSeal / artifact /
+  request / template behavior changed. No backend model or API renames.
+  No new product features.
+- **Test surface added a `settings-page` test id** and a
+  `contract-workspace-loading` test id (loading-state wrapper only)
+  so the cross-route smoke can deterministically detect that
+  `/demo/settings` and `/demo/repository/:id` resolved.
 
 ## Agreement Template source file rollback (PR #106)
 
