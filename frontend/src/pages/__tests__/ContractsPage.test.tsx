@@ -247,6 +247,25 @@ describe("ContractsPage (Repository list)", () => {
     );
   });
 
+  it("placeholder + no-matches copy mention Text preview content (PR #100)", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("q=zzz")) return jsonResponse([]);
+      return jsonResponse([row()]);
+    });
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=zzz"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const input = await screen.findByTestId("repository-search");
+    expect(input).toHaveAttribute(
+      "placeholder",
+      expect.stringMatching(/text preview/i),
+    );
+    await screen.findByText(/no matches/i);
+    expect(document.body.textContent ?? "").toMatch(/text preview content/i);
+  });
+
   it("seeds the search box from the ?q= URL param and includes q in the first fetch", async () => {
     fetchMock.mockResolvedValue(jsonResponse([]));
     render(

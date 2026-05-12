@@ -402,6 +402,40 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Repository Text-preview search (PR #100)
+
+The Repository search box (`/demo/repository?q=…`) now matches the
+record title **or** any attached Text preview content
+(`ContractMarkdownSnapshot.markdown_text`).
+
+- **Backend**: `GET /api/contracts?q=…` now matches `Contract.title`
+  OR an org-scoped `ContractMarkdownSnapshot` body. The Text-preview
+  match is a correlated `EXISTS` against
+  `contract_markdown_snapshots`, filtered by the caller's
+  `organization_id`, so cross-org snapshot rows can never widen
+  results. Multiple matching snapshots for the same contract collapse
+  to a single row. `%` / `_` characters in the user query are escaped
+  literally (same as PR #95). The list response shape is **unchanged**
+  — only the existing `ContractListItemResponse` fields are returned,
+  so a matched record never leaks the body of its Text preview,
+  storage internals, document bytes, `metadata_json`, private URLs,
+  or any DocuSeal artifacts.
+- **Frontend**: placeholder copy and no-matches description now
+  mention *"title or Text preview"*. URL `?q=` deep-link seeding,
+  debounce, status / sort / *Show merged* filters, and the legacy
+  `/contracts` alias all behave exactly as before.
+- **Mock parity**: the demo mock `getContracts({ q })` also matches
+  against `MOCK_MARKDOWN_BY_CONTRACT_ID[id].markdown_text` so the
+  demo behaves consistently. No raw body is returned by the mock
+  list either.
+- **Future work**: result ranking, server-rendered snippet highlights,
+  and Postgres-native FTS indexes are intentionally out of scope.
+  External search services, embeddings, OCR / Docling, and LLMs are
+  not used by this search path.
+
+No artifact-priority, DocuSeal, approval-workflow/gate/policy, or
+duplicate-merge semantics changed.
+
 ## Repository search foundation (PR #95)
 
 The Repository list at `/demo/repository` now supports an org-scoped
