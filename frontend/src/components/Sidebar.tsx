@@ -5,18 +5,75 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { getDashboardSummary } from "../lib/api";
 import { demoPath } from "../lib/routes";
 
-// Top-level navigation. Sub-surfaces (Inbox, Agreement Templates,
-// Approval Workflows / Templates / Policies, Upload) are reachable
-// from their respective workspace landings rather than the sidebar
-// so the nav reads as a CLM workspace and not a list of tables.
-const NAV = [
-  { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
-  { to: demoPath("/repository"), label: "Repository", Icon: RepositoryIcon },
-  { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
-  { to: demoPath("/playbooks"), label: "Playbooks", Icon: PlaybooksIcon },
-  { to: demoPath("/clause-manager"), label: "Clause Manager", Icon: ClauseIcon },
-  { to: demoPath("/approvals"), label: "Approvals", Icon: ApprovalsIcon },
-  { to: demoPath("/settings"), label: "Settings", Icon: SettingsIcon },
+// Top-level navigation grouped into four sections so the rail still
+// reads cleanly as History, Analytics, Integrations, and Audit log
+// land. Sub-surfaces (Inbox, Approval Workflows, Upload) are reachable
+// from their respective workspace landings rather than the sidebar.
+interface NavItem {
+  to: string;
+  label: string;
+  Icon: (props: IconProps) => JSX.Element;
+  badge?: "approvals" | "soon";
+}
+interface NavSection {
+  id: string;
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    id: "work",
+    label: "Work",
+    items: [
+      { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
+      { to: demoPath("/inbox"), label: "Inbox", Icon: InboxIcon },
+      {
+        to: demoPath("/approvals"),
+        label: "Approvals",
+        Icon: ApprovalsIcon,
+        badge: "approvals",
+      },
+    ],
+  },
+  {
+    id: "library",
+    label: "Library",
+    items: [
+      { to: demoPath("/repository"), label: "Repository", Icon: RepositoryIcon },
+      { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
+      {
+        to: demoPath("/requests/templates"),
+        label: "Templates",
+        Icon: TemplatesIcon,
+      },
+    ],
+  },
+  {
+    id: "knowledge",
+    label: "Knowledge",
+    items: [
+      { to: demoPath("/playbooks"), label: "Playbooks", Icon: PlaybooksIcon },
+      {
+        to: demoPath("/clause-manager"),
+        label: "Clause Manager",
+        Icon: ClauseIcon,
+      },
+    ],
+  },
+  {
+    id: "admin",
+    label: "Admin",
+    items: [
+      { to: demoPath("/settings"), label: "Settings", Icon: SettingsIcon },
+      {
+        to: demoPath("/integrations"),
+        label: "Integrations",
+        Icon: IntegrationsIcon,
+        badge: "soon",
+      },
+    ],
+  },
 ];
 type IconProps = { className?: string };
 function BaseIcon({ className, children }: { className?: string; children: ReactNode }) {
@@ -29,6 +86,9 @@ function PlaybooksIcon({ className }: IconProps) { return <BaseIcon className={c
 function ClauseIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3v14M4 6l6 4-6 4M16 6l-6 4 6 4" /></BaseIcon>; }
 function ApprovalsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3l6 2v5c0 3.5-2.2 5.8-6 7-3.8-1.2-6-3.5-6-7V5z" /><path d="M7.5 10.5l1.7 1.7 3.3-3.3" /></BaseIcon>; }
 function SettingsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="10" cy="10" r="2.5" /><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.2 5.2l1.4 1.4M13.4 13.4l1.4 1.4M14.8 5.2l-1.4 1.4M6.6 13.4l-1.4 1.4" /></BaseIcon>; }
+function InboxIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 11v5h14v-5l-3-6H6z" /><path d="M3 11h4l1 2h4l1-2h4" /></BaseIcon>; }
+function TemplatesIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M5 3h7l3 3v11H5z" /><path d="M12 3v3h3" /><path d="M7 9h6M7 12h6M7 15h4" /></BaseIcon>; }
+function IntegrationsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="5" cy="10" r="2" /><circle cx="15" cy="6" r="2" /><circle cx="15" cy="14" r="2" /><path d="M7 10l6-4M7 10l6 4" /></BaseIcon>; }
 
 interface SidebarProps {
   /**
@@ -232,47 +292,73 @@ function NavList({
   const { pathname } = useLocation();
   const approvalsBadge = overdue?.approvalSteps ?? 0;
   return (
-    <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3 text-sm">
-      {NAV.map((item) => {
-        const Icon = item.Icon;
-        const extras = NAV_EXTRA_MATCHES[item.to] ?? [];
-        const matchesExtra = extras.some(
-          (p) => pathname === p || pathname.startsWith(`${p}/`),
-        );
-        const isApprovals = item.to === demoPath("/approvals");
-        const showBadge = isApprovals && approvalsBadge > 0;
-        return (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              [
-                "flex items-center justify-between rounded px-3 py-2 transition-colors",
-                isActive || matchesExtra
-                  ? "bg-canvas-muted font-medium text-ink"
-                  : "text-ink-muted hover:bg-canvas-muted hover:text-ink",
-              ].join(" ")
-            }
+    <nav
+      className="flex flex-1 flex-col overflow-y-auto p-3 text-sm"
+      data-testid="sidebar-nav"
+    >
+      {NAV_SECTIONS.map((section, sectionIdx) => (
+        <div key={section.id} data-testid={`sidebar-section-${section.id}`}>
+          <p
+            className={[
+              "px-3 mb-1 text-[10px] uppercase tracking-[0.2em] text-ink-subtle",
+              sectionIdx === 0 ? "mt-0" : "mt-4",
+            ].join(" ")}
           >
-            <span className="inline-flex items-center gap-2">
-              <Icon className="h-4 w-4" aria-hidden />
-              <span>{item.label}</span>
-            </span>
-            {showBadge && (
-              <span
-                className="rounded bg-danger px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-canvas"
-                data-testid="sidebar-overdue-badge"
-                aria-label={`${approvalsBadge} overdue approval ${
-                  approvalsBadge === 1 ? "step" : "steps"
-                }`}
-              >
-                {approvalsBadge}
-              </span>
-            )}
-          </NavLink>
-        );
-      })}
+            {section.label}
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {section.items.map((item) => {
+              const Icon = item.Icon;
+              const extras = NAV_EXTRA_MATCHES[item.to] ?? [];
+              const matchesExtra = extras.some(
+                (p) => pathname === p || pathname.startsWith(`${p}/`),
+              );
+              const showApprovalsBadge =
+                item.badge === "approvals" && approvalsBadge > 0;
+              const showSoonBadge = item.badge === "soon";
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    [
+                      "flex items-center justify-between rounded px-3 py-2 transition-colors",
+                      isActive || matchesExtra
+                        ? "bg-canvas-muted font-medium text-ink"
+                        : "text-ink-muted hover:bg-canvas-muted hover:text-ink",
+                    ].join(" ")
+                  }
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Icon className="h-4 w-4" aria-hidden />
+                    <span>{item.label}</span>
+                  </span>
+                  {showApprovalsBadge && (
+                    <span
+                      className="rounded bg-danger px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-canvas"
+                      data-testid="sidebar-overdue-badge"
+                      aria-label={`${approvalsBadge} overdue approval ${
+                        approvalsBadge === 1 ? "step" : "steps"
+                      }`}
+                    >
+                      {approvalsBadge}
+                    </span>
+                  )}
+                  {showSoonBadge && (
+                    <span
+                      className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-subtle"
+                      data-testid={`sidebar-soon-badge-${item.label.toLowerCase()}`}
+                    >
+                      Soon
+                    </span>
+                  )}
+                </NavLink>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
