@@ -1008,6 +1008,43 @@ describe("ContractWorkspacePage Document history (PR #69)", () => {
     }
   });
 
+  it("renders every extracted field as a <mark> citation in the original viewer", async () => {
+    const FIELD = {
+      field_name: "governing_law",
+      value_json: "New York",
+      span_start: 5,
+      span_end: 15,
+      span_text: "plain text",
+      confidence: 0.9,
+      model_name: "demo-extractor",
+      prompt_version: "v0.demo",
+      extracted_at: "2026-05-01T00:00:00Z",
+    };
+    const DETAIL_WITH_FIELD = {
+      ...CONTRACT_DETAIL,
+      extracted_fields: [FIELD],
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) return jsonResponse(SNAPSHOT);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) return jsonResponse([ARTIFACT]);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) return jsonResponse(METADATA_VIEW);
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) return jsonResponse(DETAIL_WITH_FIELD);
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+    renderPage();
+    // Switch to the original-text viewer where citations render.
+    fireEvent.click(
+      within(
+        await screen.findByRole("group", { name: /document view/i }),
+      ).getAllByRole("button")[1],
+    );
+    const marks = await screen.findAllByText("plain text");
+    const mark = marks.find((el) => el.tagName === "MARK");
+    expect(mark).toBeDefined();
+    expect(mark?.getAttribute("data-citation-key")).toContain("governing_law");
+    expect(mark?.getAttribute("data-active")).toBe("false");
+  });
+
   it("overflow menu surfaces Send to DocuSeal and switches to the Signers tab", async () => {
     setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
     renderPage();

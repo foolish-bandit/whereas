@@ -100,6 +100,23 @@ describe("MetadataRow", () => {
     expect(onSave).toHaveBeenCalledWith(expect.any(String), "California");
   });
 
+  it("exposes a tooltip with the citation excerpt next to the jump button", () => {
+    const long =
+      "The parties agree that this Agreement shall be governed by and construed in accordance with the laws of the State of New York and any disputes will be resolved in courts of competent jurisdiction in New York County, NY.";
+    render(
+      <MetadataRow
+        field={field({ span_text: long })}
+        isSelected={false}
+        onJumpToSource={vi.fn()}
+      />,
+    );
+    const tooltip = screen.getByTestId(/metadata-row-tooltip-/);
+    expect(tooltip.getAttribute("role")).toBe("tooltip");
+    // Trimmed to 200 chars + ellipsis.
+    expect(tooltip.textContent ?? "").toMatch(/…/);
+    expect((tooltip.textContent ?? "").length).toBeLessThan(long.length + 10);
+  });
+
   it("renders 'Citation unavailable' when the field has no valid span", () => {
     render(
       <MetadataRow
