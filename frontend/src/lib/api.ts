@@ -1282,6 +1282,38 @@ export async function getAgreementTemplateArtifacts(
  * cross-template requests surface as a clean 404 here. Returns the
  * raw bytes as a Blob via the shared download helper.
  */
+/**
+ * PR #106 — restore a prior ``AgreementTemplateArtifact`` as the
+ * template's current source file. Org + template + artifact scoped
+ * server-side; cross-org / wrong-template / missing artifact
+ * surface as a clean 404 here. Only source uploads
+ * (``artifact_type='original_upload'``) can be restored.
+ */
+export async function restoreAgreementTemplateArtifact(
+  templateId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact> {
+  if (isDemoMode()) {
+    return mockApi.restoreAgreementTemplateArtifact(
+      templateId,
+      artifactId,
+      options,
+    );
+  }
+  const data = await call<AgreementTemplateArtifact>(
+    `/api/agreement-templates/${encodeURIComponent(templateId)}/artifacts/${encodeURIComponent(
+      artifactId,
+    )}/restore`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
 export async function downloadAgreementTemplateArtifact(
   templateId: string,
   artifactId: string,

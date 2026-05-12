@@ -1325,6 +1325,250 @@ describe("AgreementTemplateDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // PR #106 — Restore prior source as current
+  // -------------------------------------------------------------------------
+
+  it("non-current rows show Restore as current; current row hides it (PR #106)", async () => {
+    const OLDER = {
+      ...NDA_ARTIFACT,
+      id: "art-old",
+      filename: "nda-v1.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const NEWER = {
+      ...NDA_ARTIFACT,
+      id: "art-new",
+      filename: "nda-v2.docx",
+      is_official: true,
+      created_at: "2026-04-15T00:00:00Z",
+    };
+    setupDetailFetch(fetchMock, { artifacts: [OLDER, NEWER] });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const rows = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    );
+    // Newest first; current is row 0; restore button only on row 1.
+    expect(rows[0]).toHaveAttribute("data-current", "true");
+    expect(rows[1]).toHaveAttribute("data-current", "false");
+    expect(
+      within(rows[0]).queryByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    ).toBeNull();
+    expect(
+      within(rows[1]).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Restore is a two-step confirm and Keep current cancels", async () => {
+    const OLDER = {
+      ...NDA_ARTIFACT,
+      id: "art-old",
+      filename: "nda-v1.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const NEWER = {
+      ...NDA_ARTIFACT,
+      id: "art-new",
+      filename: "nda-v2.docx",
+      is_official: true,
+      created_at: "2026-04-15T00:00:00Z",
+    };
+    setupDetailFetch(fetchMock, { artifacts: [OLDER, NEWER] });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const olderRow = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    )[1];
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    );
+    const confirm = within(olderRow).getByTestId(
+      "agreement-template-source-history-restore-confirm",
+    );
+    // Explainer mentions the three guarantees from the brief.
+    expect(confirm).toHaveTextContent(/does not delete/i);
+    expect(confirm).toHaveTextContent(/future generated/i);
+    expect(confirm).toHaveTextContent(/variables/i);
+    // Cancel returns to idle.
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore-cancel",
+      ),
+    );
+    expect(
+      within(olderRow).queryByTestId(
+        "agreement-template-source-history-restore-confirm",
+      ),
+    ).toBeNull();
+    expect(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Confirm Restore POSTs and refreshes the page", async () => {
+    const OLDER = {
+      ...NDA_ARTIFACT,
+      id: "art-old",
+      filename: "nda-v1.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const NEWER = {
+      ...NDA_ARTIFACT,
+      id: "art-new",
+      filename: "nda-v2.docx",
+      is_official: true,
+      created_at: "2026-04-15T00:00:00Z",
+    };
+    let restored = false;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/agreement-templates/${NDA_ID}/artifacts/art-old/restore`,
+        ) &&
+        init?.method === "POST"
+      ) {
+        restored = true;
+        return jsonResponse({ ...OLDER, is_official: true });
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+        return jsonResponse(NDA_MARKDOWN);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+        return jsonResponse(
+          restored
+            ? [{ ...OLDER, is_official: true }, { ...NEWER, is_official: false }]
+            : [OLDER, NEWER],
+        );
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+        return jsonResponse(NDA_VARIABLES);
+      }
+      if (
+        url.endsWith(
+          `/api/agreement-templates/${NDA_ID}/variable-suggestions`,
+        )
+      ) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+        return jsonResponse(NDA);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const olderRow = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    )[1];
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    );
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore-confirm-yes",
+      ),
+    );
+    await waitFor(() => expect(restored).toBe(true));
+    // After the page reload, sort is still newest-first (NEWER stays
+    // at the top by created_at), but the *Current* marker has moved
+    // off the newest row and the older row (nda-v1.docx) is now the
+    // official source.
+    await waitFor(() => {
+      const refreshed = within(
+        screen.getByTestId("agreement-template-source-history"),
+      ).getAllByTestId("agreement-template-source-history-row");
+      expect(refreshed[0]).toHaveTextContent("nda-v2.docx");
+      expect(refreshed[0]).toHaveAttribute("data-current", "false");
+      expect(refreshed[1]).toHaveTextContent("nda-v1.docx");
+      expect(refreshed[1]).toHaveAttribute("data-current", "true");
+    });
+  });
+
+  it("Restore renders a per-row error state on failure (PR #106)", async () => {
+    const OLDER = {
+      ...NDA_ARTIFACT,
+      id: "art-old",
+      filename: "nda-v1.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const NEWER = {
+      ...NDA_ARTIFACT,
+      id: "art-new",
+      filename: "nda-v2.docx",
+      is_official: true,
+      created_at: "2026-04-15T00:00:00Z",
+    };
+    const realFetch = fetchMock.getMockImplementation();
+    setupDetailFetch(fetchMock, { artifacts: [OLDER, NEWER] });
+    const detailImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/agreement-templates/${NDA_ID}/artifacts/art-old/restore`,
+        ) &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          { detail: "Template artifact not found." },
+          404,
+        );
+      }
+      return detailImpl!(url, init);
+    });
+    // ``realFetch`` is referenced to keep the test self-contained — if
+    // a future change rewires the default mock, we still fall back.
+    void realFetch;
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const olderRow = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    )[1];
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    );
+    fireEvent.click(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore-confirm-yes",
+      ),
+    );
+    expect(
+      await within(olderRow).findByTestId(
+        "agreement-template-source-history-restore-error",
+      ),
+    ).toBeInTheDocument();
+    // Restore button comes back so the user can retry.
+    expect(
+      within(olderRow).getByTestId(
+        "agreement-template-source-history-restore",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not leak forbidden artifact-type tokens or storage internals in the DOM", async () => {
     setupDetailFetch(fetchMock, {
       artifacts: [
