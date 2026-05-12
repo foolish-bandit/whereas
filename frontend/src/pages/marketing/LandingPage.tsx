@@ -1,16 +1,18 @@
 /**
  * Marketing landing page.
  *
- * The page is intentionally one long scrollable view: hero, dual-audience
- * split (lawyers / engineers), feature blocks, span-citation explainer,
- * self-host pitch, demo CTA, footer. The demo lives at /demo/* and is
- * always one click away.
+ * Mirrors the actual app surface: each section names a workspace the
+ * visitor can click straight into (Repository / Requests / Templates /
+ * Approvals / Document History) and the inline preview cards reuse
+ * the same StatusBadge component and chip styling the app renders.
  *
- * Copy carefully avoids implying that Whereas provides legal advice — it
- * surfaces information about contracts, with span citations back to
- * source. That phrasing is repeated by design (see CLAUDE.md).
+ * Copy carefully avoids implying that Whereas provides legal advice —
+ * it surfaces information about contracts, with span citations back
+ * to source. That phrasing is repeated by design (see CLAUDE.md).
  */
 import { Link } from "react-router-dom";
+
+import StatusBadge from "../../components/StatusBadge";
 
 import MarketingFooter from "./MarketingFooter";
 import MarketingHeader from "./MarketingHeader";
@@ -23,10 +25,13 @@ export default function LandingPage() {
       <MarketingHeader />
       <main className="flex-1">
         <Hero />
+        <WorkflowStrip />
+        <SurfacePreviews />
         <AudienceSplit />
         <FeatureGrid />
         <SpanCitationsSection />
         <SelfHostSection />
+        <HonestStatusSection />
         <CTASection />
       </main>
       <MarketingFooter />
@@ -47,9 +52,10 @@ function Hero() {
         </h1>
         <p className="mt-5 max-w-2xl text-base text-ink-muted sm:text-lg">
           Whereas is a post-execution contract workspace for small and
-          mid-sized legal teams. Storage and search, span-cited metadata
-          extraction, clause segmentation, and YAML-defined playbook reviews
-          — all running on a single machine, behind your firewall.
+          mid-sized legal teams. Request intake, template-driven
+          generation, approval workflows, embedded e-signature via
+          DocuSeal, span-cited extraction, and full document history —
+          all running on a single machine, behind your firewall.
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link
@@ -76,6 +82,354 @@ function Hero() {
   );
 }
 
+/**
+ * Visualizes the end-to-end CLM loop the app actually wires up:
+ * request → template → repository → approval → DocuSeal → executed.
+ * Each step is a workspace in the demo; the label clicks straight in.
+ */
+const WORKFLOW_STEPS: Array<{
+  step: string;
+  surface: string;
+  to: string;
+  body: string;
+}> = [
+  {
+    step: "01",
+    surface: "Requests",
+    to: "/demo/requests",
+    body:
+      "Capture incoming contract requests with type, counterparty, " +
+      "and due date. Track open / in progress / completed in one " +
+      "queue.",
+  },
+  {
+    step: "02",
+    surface: "Templates",
+    to: "/demo/requests/templates",
+    body:
+      "Upload your firm's NDA / MSA / SOW templates once. Variable " +
+      "detection scans for `{{placeholders}}`; generation produces a " +
+      "draft contract on demand.",
+  },
+  {
+    step: "03",
+    surface: "Repository",
+    to: "/demo/repository",
+    body:
+      "Every uploaded and generated contract lands here with extracted " +
+      "metadata, clauses, and the Text-preview body. Search by title " +
+      "or content; filter by lifecycle state.",
+  },
+  {
+    step: "04",
+    surface: "Approvals",
+    to: "/demo/approvals",
+    body:
+      "Author per-contract-type approval workflows. Block " +
+      "sent-for-signature until every required step is approved. " +
+      "Cancel runs cleanly with a two-step confirm.",
+  },
+  {
+    step: "05",
+    surface: "DocuSeal",
+    to: "/demo/repository",
+    body:
+      "Send the generated DOCX to DocuSeal for signature. On the " +
+      "completion webhook, Whereas materializes a `signed_pdf` " +
+      "artifact and flips the contract status to executed.",
+  },
+  {
+    step: "06",
+    surface: "History",
+    to: "/demo/repository",
+    body:
+      "Every artifact stays in Document History — original upload, " +
+      "generated DOCX, signed PDF, saved redlines. Download, preview, " +
+      "compare versions, restore a prior source.",
+  },
+];
+
+function WorkflowStrip() {
+  return (
+    <section className="border-y border-rule bg-canvas-subtle">
+      <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-16 lg:px-10">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink-subtle">
+          The end-to-end CLM loop
+        </p>
+        <h2 className="mt-3 max-w-2xl font-serif text-2xl text-ink sm:text-3xl">
+          From request to executed signature — without leaving your stack.
+        </h2>
+        <p className="mt-3 max-w-2xl text-sm text-ink-muted">
+          Each step below is a workspace in the live demo. Click a
+          surface name to jump straight in.
+        </p>
+        <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {WORKFLOW_STEPS.map((s) => (
+            <li
+              key={s.step}
+              className="flex flex-col rounded-lg border border-rule bg-canvas p-5"
+            >
+              <div className="flex items-baseline gap-3">
+                <span className="font-mono text-xs text-ink-subtle">
+                  {s.step}
+                </span>
+                <Link
+                  to={s.to}
+                  className="text-sm font-medium text-ink hover:text-accent"
+                >
+                  {s.surface}
+                  <span aria-hidden> →</span>
+                </Link>
+              </div>
+              <p className="mt-2 text-sm text-ink-muted">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Three inline mockups using the actual app's StatusBadge component
+ * and chip styling so visitors recognize what they're about to see
+ * in the demo. None of this is interactive; the StatusBadge import
+ * is the same primitive Repository / Document History render today.
+ */
+function SurfacePreviews() {
+  return (
+    <section className="bg-canvas">
+      <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-16 lg:px-10">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink-subtle">
+          What the surfaces look like
+        </p>
+        <h2 className="mt-3 max-w-2xl font-serif text-2xl text-ink sm:text-3xl">
+          Same UI live and self-hosted.
+        </h2>
+        <p className="mt-3 max-w-2xl text-sm text-ink-muted">
+          The demo and a real Whereas deployment render from the same
+          codebase. The previews below use the actual app components.
+        </p>
+        <div className="mt-8 grid gap-6 lg:grid-cols-3">
+          <RepositoryPreviewCard />
+          <ApprovalPreviewCard />
+          <ArtifactHistoryPreviewCard />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RepositoryPreviewCard() {
+  return (
+    <article className="flex flex-col rounded-lg border border-rule bg-canvas-subtle p-5">
+      <header>
+        <p className="text-[10px] font-medium uppercase tracking-wider text-ink-subtle">
+          Repository
+        </p>
+        <h3 className="mt-1 text-sm font-medium text-ink">
+          Search + filter + match hints
+        </h3>
+      </header>
+      <div className="mt-4 space-y-2">
+        <RepositoryRowPreview
+          title="Mutual NDA — Acme &amp; Globex"
+          status="executed"
+          match="title_and_text_preview"
+        />
+        <RepositoryRowPreview
+          title="Cloud SaaS Subscription — Lyra Cloud"
+          status="sent_for_signature"
+          match="title"
+        />
+        <RepositoryRowPreview
+          title="Vendor SOW — Hooli"
+          status="failed"
+          match={null}
+        />
+      </div>
+      <p className="mt-4 text-xs text-ink-subtle">
+        Quick views (<em>Drafts</em>, <em>Out for signature</em>,{" "}
+        <em>Executed</em>) + advanced filters + merged-duplicate
+        toggle.
+      </p>
+    </article>
+  );
+}
+
+function RepositoryRowPreview({
+  title,
+  status,
+  match,
+}: {
+  title: string;
+  status: string;
+  match: "title" | "text_preview" | "title_and_text_preview" | null;
+}) {
+  const matchLabel = match
+    ? match === "title"
+      ? "Matched title"
+      : match === "text_preview"
+        ? "Matched Text preview"
+        : "Matched title + Text preview"
+    : null;
+  return (
+    <div className="flex flex-col gap-2 rounded border border-rule bg-canvas px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-ink">{title}</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {matchLabel && (
+          <span className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info">
+            {matchLabel}
+          </span>
+        )}
+        <StatusBadge status={status} />
+      </div>
+    </div>
+  );
+}
+
+function ApprovalPreviewCard() {
+  return (
+    <article className="flex flex-col rounded-lg border border-rule bg-canvas-subtle p-5">
+      <header>
+        <p className="text-[10px] font-medium uppercase tracking-wider text-ink-subtle">
+          Approvals
+        </p>
+        <h3 className="mt-1 text-sm font-medium text-ink">
+          Workflow timeline
+        </h3>
+      </header>
+      <ol className="mt-4 space-y-3">
+        <ApprovalStepPreview
+          order={1}
+          title="Legal review"
+          status="approved"
+        />
+        <ApprovalStepPreview
+          order={2}
+          title="Finance approval"
+          status="current"
+        />
+        <ApprovalStepPreview
+          order={3}
+          title="VP sign-off"
+          status="pending"
+        />
+      </ol>
+      <p className="mt-4 text-xs text-ink-subtle">
+        Approve / reject inline. Two-step cancel. DocuSeal send blocked
+        until every required step is approved.
+      </p>
+    </article>
+  );
+}
+
+function ApprovalStepPreview({
+  order,
+  title,
+  status,
+}: {
+  order: number;
+  title: string;
+  status: "approved" | "current" | "pending";
+}) {
+  const dotClasses =
+    status === "approved"
+      ? "bg-success"
+      : status === "current"
+        ? "border border-info bg-info/20"
+        : "border border-rule bg-canvas";
+  const labelClasses =
+    status === "approved"
+      ? "text-success"
+      : status === "current"
+        ? "text-info"
+        : "text-ink-subtle";
+  const label =
+    status === "approved"
+      ? "Approved"
+      : status === "current"
+        ? "Pending you"
+        : "Pending";
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        aria-hidden
+        className={`mt-1 h-3 w-3 shrink-0 rounded-full ${dotClasses}`}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-ink-subtle">Step {order}</p>
+        <p className="text-sm text-ink">{title}</p>
+        <p className={`text-[10px] font-medium uppercase tracking-wide ${labelClasses}`}>
+          {label}
+        </p>
+      </div>
+    </li>
+  );
+}
+
+function ArtifactHistoryPreviewCard() {
+  return (
+    <article className="flex flex-col rounded-lg border border-rule bg-canvas-subtle p-5">
+      <header>
+        <p className="text-[10px] font-medium uppercase tracking-wider text-ink-subtle">
+          Document History
+        </p>
+        <h3 className="mt-1 text-sm font-medium text-ink">
+          Every artifact, in one place
+        </h3>
+      </header>
+      <ol className="mt-4 space-y-2">
+        <ArtifactRowPreview
+          label="Signed PDF"
+          source="docuseal · signed_at 2026-03-18"
+          tag="Current"
+        />
+        <ArtifactRowPreview
+          label="Generated Word document"
+          source="template_generation · Mutual NDA"
+        />
+        <ArtifactRowPreview
+          label="Source file"
+          source="user_upload"
+        />
+        <ArtifactRowPreview
+          label="Redline"
+          source="compare_export · +3 / −2"
+        />
+      </ol>
+      <p className="mt-4 text-xs text-ink-subtle">
+        Download, inline preview, version-to-version compare,
+        paragraph-aware redline export.
+      </p>
+    </article>
+  );
+}
+
+function ArtifactRowPreview({
+  label,
+  source,
+  tag,
+}: {
+  label: string;
+  source: string;
+  tag?: string;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-2 rounded border border-rule bg-canvas px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-ink">{label}</p>
+        <p className="truncate text-[11px] text-ink-subtle">{source}</p>
+      </div>
+      {tag && (
+        <span className="rounded border border-success/40 bg-success/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-success">
+          {tag}
+        </span>
+      )}
+    </li>
+  );
+}
+
 function AudienceSplit() {
   return (
     <section className="border-y border-rule bg-canvas-subtle">
@@ -89,8 +443,8 @@ function AudienceSplit() {
             title="Find what the contract actually says — with the citation."
             bullets={[
               "Every extracted field, clause, and finding links back to the exact span in the source document.",
-              "Run your firm's playbook against an executed contract and see which clauses pass, fail, or are missing.",
-              "Search and filter the whole repository without exporting it to anyone else's cloud.",
+              "Approval workflows gate signature; nothing ships to DocuSeal until your firm's required reviews are green.",
+              "Search the whole repository by title or by Text-preview body, with quick views for Drafts / Out for signature / Executed.",
             ]}
             footnote="Reviewers always see the source span and a confidence score before relying on a value."
           />
@@ -152,20 +506,20 @@ const FEATURES: Array<{ title: string; body: string }> = [
     body: "Heuristic + model-driven segmentation breaks each contract into typed clauses you can filter, search, and link to.",
   },
   {
-    title: "Playbook deviation review",
-    body: "Author your firm's review positions in YAML. Run a playbook against any contract for deterministic pass/fail outcomes saved as findings.",
+    title: "Agreement templates with generation",
+    body: "Upload a template, detect `{{variables}}`, review filled values before generation, version the source file with rollback. Every generated draft becomes a regular Repository record.",
   },
   {
-    title: "Local-first storage",
-    body: "S3-compatible object storage (MinIO out of the box) and Postgres. Original DOCX/PDF stays on your infrastructure as the official artifact.",
+    title: "Approval workflows + gates",
+    body: "Author per-contract-type approval policies. Workflows route through legal / finance / exec steps; signature is blocked until every required step is approved.",
   },
   {
-    title: "Permission-scoped Q&A",
-    body: "RAG questions answered against documents the user can already see, with citations. No cross-tenant leakage.",
+    title: "Document History + paragraph-aware redline",
+    body: "Per-version download, inline preview, base-vs-compare diff exported as DOCX, saved as a redline artifact (never the current document).",
   },
   {
-    title: "Embedded e-signature",
-    body: "DocuSeal runs alongside Whereas in the same Docker Compose. Integrate, don't reimplement.",
+    title: "Embedded e-signature via DocuSeal",
+    body: "DocuSeal runs alongside Whereas in the same Docker Compose. On the completion webhook, Whereas materializes a signed-PDF artifact and flips the contract status to executed.",
   },
 ];
 
@@ -299,6 +653,73 @@ $ docker compose up
   );
 }
 
+/**
+ * Honest pre-v0.1 status disclosure. Mirrors docs/project-status.md
+ * so the marketing copy stays in sync with what's actually shipped.
+ */
+function HonestStatusSection() {
+  return (
+    <section className="border-t border-rule bg-canvas-subtle">
+      <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-16 lg:px-10">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink-subtle">
+          Where we are
+        </p>
+        <h2 className="mt-3 max-w-2xl font-serif text-2xl text-ink sm:text-3xl">
+          Pre-v0.1, and honest about it.
+        </h2>
+        <p className="mt-3 max-w-2xl text-sm text-ink-muted">
+          Whereas does not pretend to be a finished SaaS. Here's what
+          ships today and what is explicitly not built yet.
+        </p>
+        <div className="mt-8 grid gap-6 lg:grid-cols-2">
+          <div className="rounded-lg border border-success-ring bg-success-soft/40 p-6">
+            <h3 className="text-sm font-medium uppercase tracking-wider text-success">
+              Working today
+            </h3>
+            <ul className="mt-3 space-y-2 text-sm text-ink-muted">
+              <li>· Repository upload, extraction, search, filters, quick views</li>
+              <li>· Agreement Templates: upload, variables, generation, history, rollback</li>
+              <li>· Requests workspace with template-to-contract conversion</li>
+              <li>· Approval policies, workflow templates, runs, tasks, gates</li>
+              <li>· DocuSeal send + completion webhook → signed-PDF artifact</li>
+              <li>· Document History: download, preview, compare, paragraph-aware redline</li>
+              <li>· Audit log with allowlisted detail fields, org-scoped</li>
+              <li>· PWA shell, no <code className="font-mono text-xs">/api/*</code> caching</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-rule bg-canvas p-6">
+            <h3 className="text-sm font-medium uppercase tracking-wider text-ink-subtle">
+              Not built yet
+            </h3>
+            <ul className="mt-3 space-y-2 text-sm text-ink-muted">
+              <li>· Real authentication / SSO (dev-user header is the current bridge)</li>
+              <li>· User-level RBAC (org-scoping is the only boundary today)</li>
+              <li>· Playbook deviation engine (schema landed, evaluator pending)</li>
+              <li>· RAG Q&amp;A over the corpus</li>
+              <li>· Email / calendar / notification integrations</li>
+              <li>· Real-time collaboration / PowerSync sync</li>
+              <li>· Production deployment guide (TLS, reverse-proxy, secret rotation)</li>
+              <li>· Marketplace of playbooks / templates / clause libraries</li>
+            </ul>
+          </div>
+        </div>
+        <p className="mt-6 max-w-2xl text-xs text-ink-subtle">
+          A current snapshot lives at{" "}
+          <a
+            href="https://github.com/foolish-bandit/whereas/blob/main/docs/project-status.md"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-ink underline-offset-2 hover:underline"
+          >
+            docs/project-status.md
+          </a>
+          .
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function CTASection() {
   return (
     <section className="border-t border-rule bg-ink text-canvas">
@@ -326,6 +747,32 @@ function CTASection() {
             Read the source
           </a>
         </div>
+        <ul className="mt-10 grid gap-3 text-sm text-canvas/80 sm:grid-cols-3">
+          <li>
+            <Link
+              to="/demo/repository"
+              className="underline-offset-2 hover:underline"
+            >
+              → Open Repository
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/demo/requests/templates"
+              className="underline-offset-2 hover:underline"
+            >
+              → Open Agreement Templates
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/demo/approvals"
+              className="underline-offset-2 hover:underline"
+            >
+              → Open Approvals
+            </Link>
+          </li>
+        </ul>
       </div>
     </section>
   );
