@@ -86,6 +86,10 @@ Whereas will be available at `http://localhost:8080`. DocuSeal at `http://localh
 For an end-to-end local setup (infra + backend + frontend + first-run
 workspace), see [docs/local-developer-quickstart.md](docs/local-developer-quickstart.md).
 
+For a current snapshot of what's shipped, what's in flight, and what's
+left before v0.1, see
+[docs/project-status.md](docs/project-status.md).
+
 For frontend-only development (without the full Docker stack), see
 [frontend/README.md](frontend/README.md). The frontend dev server runs on
 `http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
