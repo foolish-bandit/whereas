@@ -300,8 +300,7 @@ export default function ApprovalWorkflowsPage() {
           onChange={(e) => setName(e.target.value)}
         />
         <p className="text-xs text-ink-subtle">
-          Attach to a request or a contract by ID. (UX for picking from
-          dropdowns is a follow-up.)
+          Attach to a request or a contract by ID.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <input

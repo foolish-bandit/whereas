@@ -1411,8 +1411,7 @@ function SourceHistorySection({
       <p className="mt-1 text-xs text-ink-subtle">
         Every source file uploaded for this template, newest first.
         The current source file is the version operators distribute;
-        older versions are kept for audit. Side-by-side compare is
-        future work.
+        older versions are kept for audit.
       </p>
       {sources.length === 0 ? (
         <p

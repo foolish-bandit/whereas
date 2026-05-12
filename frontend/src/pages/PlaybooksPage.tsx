@@ -210,9 +210,8 @@ export default function PlaybooksPage() {
           <h1 className="font-serif text-xl text-ink sm:text-2xl">Playbooks</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
             Review standards, fallback positions, and deviation rules.
-            Whereas surfaces information about agreements; it does not provide
-            legal advice. Automated playbook review and Clause Manager
-            integration are future work.
+            Whereas surfaces information about agreements; it does not
+            provide legal advice.
           </p>
         </div>
         <button
@@ -403,8 +402,8 @@ export default function PlaybooksPage() {
             }
             description={
               includeInactive
-                ? "Playbooks are YAML files that capture your firm's review positions. Authoring tools land in a follow-up release."
-                : "Toggle 'Show deactivated' to include archived playbooks, or create a new one once authoring tools land."
+                ? "Playbooks are YAML files that capture your firm's review positions. Load one from the backend to populate this list."
+                : "Toggle 'Show deactivated' to include archived playbooks."
             }
           />
         )}

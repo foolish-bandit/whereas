@@ -261,10 +261,9 @@ export default function ReviewRuleEditorModal(props: Props) {
             className="mt-4 rounded border border-info-ring bg-info-soft px-3 py-2 text-xs text-info"
             data-testid="review-rule-real-note"
           >
-            The Playbooks grid is a workspace foundation today. Adds stay in
-            this browser session and are not persisted to the server — the
-            authoritative source is still the YAML playbook files below.
-            Clause Manager integration is future work.
+            Adds stay in this browser session and are not persisted to
+            the server. The authoritative source is the YAML playbook
+            file below.
           </p>
         )}
 
