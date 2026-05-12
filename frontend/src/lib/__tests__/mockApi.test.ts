@@ -58,8 +58,9 @@ describe("mockApi", () => {
 
   it("returns the static sample list", async () => {
     const list = await getContracts();
-    expect(list).toHaveLength(MOCK_LIST.length);
-    expect(list.map((c) => c.id)).toEqual(MOCK_LIST.map((c) => c.id));
+    const visible = MOCK_LIST.filter((c) => !c.merged_into_contract_id);
+    expect(list).toHaveLength(visible.length);
+    expect(list.map((c) => c.id)).toEqual(visible.map((c) => c.id));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
