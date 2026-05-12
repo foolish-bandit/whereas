@@ -14,6 +14,7 @@ import {
   getAgreementTemplate,
   getAgreementTemplateArtifacts,
   getAgreementTemplateMarkdown,
+  listAgreementTemplateVariableSuggestions,
   listAgreementTemplateVariables,
   uploadAgreementTemplateArtifact,
 } from "../lib/api";
@@ -27,6 +28,7 @@ import type {
   AgreementTemplateArtifact,
   AgreementTemplateMarkdownSnapshot,
   AgreementTemplateVariable,
+  TemplateVariableSuggestion,
 } from "../types/agreementTemplates";
 
 interface PageState {
@@ -34,6 +36,7 @@ interface PageState {
   artifacts: AgreementTemplateArtifact[];
   markdown: AgreementTemplateMarkdownSnapshot | null;
   variables: AgreementTemplateVariable[];
+  suggestions: TemplateVariableSuggestion[];
 }
 
 const EMPTY: PageState = {
@@ -41,6 +44,7 @@ const EMPTY: PageState = {
   artifacts: [],
   markdown: null,
   variables: [],
+  suggestions: [],
 };
 
 /**
@@ -80,6 +84,19 @@ export default function AgreementTemplateDetailPage() {
   const [varRequired, setVarRequired] = useState(false);
   const [varError, setVarError] = useState<string | null>(null);
 
+  // PR #96 — suggestions ("Detected placeholders"). Per-suggestion
+  // "required" toggle so the user can pick the default required flag
+  // before pressing Add. ``suggestionPending`` is the key of the
+  // suggestion currently being added; ``suggestionError`` surfaces
+  // the most-recent failure on the section.
+  const [suggestionRequired, setSuggestionRequired] = useState<
+    Record<string, boolean>
+  >({});
+  const [suggestionPending, setSuggestionPending] = useState<string | null>(
+    null,
+  );
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+
   // Generation form state.
   const [genTitle, setGenTitle] = useState("");
   const [genValues, setGenValues] = useState<Record<string, string>>({});
@@ -99,13 +116,18 @@ export default function AgreementTemplateDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [template, artifacts, markdown, variables] = await Promise.all([
-        getAgreementTemplate(id),
-        getAgreementTemplateArtifacts(id),
-        getAgreementTemplateMarkdown(id),
-        listAgreementTemplateVariables(id),
-      ]);
-      setState({ template, artifacts, markdown, variables });
+      const [template, artifacts, markdown, variables, suggestions] =
+        await Promise.all([
+          getAgreementTemplate(id),
+          getAgreementTemplateArtifacts(id),
+          getAgreementTemplateMarkdown(id),
+          listAgreementTemplateVariables(id),
+          // PR #96 — suggestions are best-effort: a backend that
+          // hasn't shipped this endpoint yet (or a template with no
+          // Text preview) just leaves the section empty.
+          listAgreementTemplateVariableSuggestions(id).catch(() => []),
+        ]);
+      setState({ template, artifacts, markdown, variables, suggestions });
     } catch (err) {
       if (err instanceof MissingDevUserError || err instanceof ApiError) {
         setError(err.message);
@@ -148,7 +170,15 @@ export default function AgreementTemplateDetailPage() {
         required: varRequired,
         sort_order: state.variables.length,
       });
-      setState((prev) => ({ ...prev, variables: [...prev.variables, created] }));
+      setState((prev) => ({
+        ...prev,
+        variables: [...prev.variables, created],
+        // The just-added variable should no longer surface as a
+        // suggestion — drop it from the in-memory list immediately.
+        suggestions: prev.suggestions.filter(
+          (s) => s.key.toLowerCase() !== created.key.toLowerCase(),
+        ),
+      }));
       setVarKey("");
       setVarLabel("");
       setVarRequired(false);
@@ -156,6 +186,36 @@ export default function AgreementTemplateDetailPage() {
       setVarError(
         err instanceof Error ? err.message : "Could not add variable.",
       );
+    }
+  }
+
+  async function onAddSuggestion(
+    suggestion: TemplateVariableSuggestion,
+    required: boolean,
+  ) {
+    setSuggestionPending(suggestion.key);
+    setSuggestionError(null);
+    try {
+      const created = await createAgreementTemplateVariable(id, {
+        key: suggestion.key,
+        label: suggestion.label,
+        variable_type: "text",
+        required,
+        sort_order: state.variables.length,
+      });
+      setState((prev) => ({
+        ...prev,
+        variables: [...prev.variables, created],
+        suggestions: prev.suggestions.filter(
+          (s) => s.key.toLowerCase() !== suggestion.key.toLowerCase(),
+        ),
+      }));
+    } catch (err) {
+      setSuggestionError(
+        err instanceof Error ? err.message : "Could not add suggestion.",
+      );
+    } finally {
+      setSuggestionPending(null);
     }
   }
 
@@ -419,6 +479,92 @@ export default function AgreementTemplateDetailPage() {
           Required variables must be supplied to generate; optional
           variables fall back to their default value (or stay blank).
         </p>
+
+        <div
+          className="mt-3 rounded border border-rule bg-canvas-subtle p-3"
+          data-testid="agreement-template-suggestions"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-xs font-medium text-ink">
+              Detected placeholders
+            </h3>
+            <p className="text-[11px] text-ink-subtle">
+              Found by scanning the Text preview for{" "}
+              <code className="font-mono text-[11px]">{"{{ name }}"}</code>{" "}
+              patterns. Adding a suggestion does not change the template
+              source.
+            </p>
+          </div>
+          {suggestionError && (
+            <p
+              className="mt-2 text-xs text-danger"
+              data-testid="agreement-template-suggestions-error"
+            >
+              {suggestionError}
+            </p>
+          )}
+          {state.suggestions.length === 0 ? (
+            <p
+              className="mt-2 text-xs text-ink-subtle"
+              data-testid="agreement-template-suggestions-empty"
+            >
+              No placeholders detected.
+            </p>
+          ) : (
+            <ul
+              className="mt-2 space-y-1"
+              data-testid="agreement-template-suggestions-list"
+            >
+              {state.suggestions.map((s) => {
+                const required = suggestionRequired[s.key] ?? false;
+                const pending = suggestionPending === s.key;
+                return (
+                  <li
+                    key={s.key}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-canvas px-3 py-2 text-sm"
+                    data-testid="agreement-template-suggestion-row"
+                    data-suggestion-key={s.key}
+                  >
+                    <div className="min-w-0 break-words">
+                      <span className="font-medium text-ink">{s.label}</span>
+                      <span className="ml-2 font-mono text-[11px] text-ink-subtle">
+                        {s.key}
+                      </span>
+                      <span className="ml-2 text-[11px] text-ink-subtle">
+                        {s.occurrences}×
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-3 text-xs">
+                      <label className="flex items-center gap-1 text-ink-muted">
+                        <input
+                          type="checkbox"
+                          checked={required}
+                          onChange={(e) =>
+                            setSuggestionRequired((prev) => ({
+                              ...prev,
+                              [s.key]: e.target.checked,
+                            }))
+                          }
+                          data-testid={`agreement-template-suggestion-required-${s.key}`}
+                        />
+                        Required
+                      </label>
+                      <button
+                        type="button"
+                        className="rounded border border-ink bg-ink px-2 py-1 text-xs text-canvas disabled:opacity-50"
+                        onClick={() => onAddSuggestion(s, required)}
+                        disabled={pending}
+                        data-testid={`agreement-template-suggestion-add-${s.key}`}
+                      >
+                        {pending ? "Adding…" : "Add as variable"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <input

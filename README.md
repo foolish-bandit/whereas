@@ -242,6 +242,40 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Agreement Template variable detection (PR #96)
+
+Uploading a template DOCX is now lower-friction: instead of typing
+each variable into the builder by hand, the detail page surfaces
+the placeholders it found in the Text preview and lets the user add
+them as `AgreementTemplateVariable` rows in one click.
+
+- **Backend** — new service
+  `app.services.template_variable_detection.detect_variable_suggestions(text)`
+  is a deterministic regex extractor. It matches `{{ identifier }}`
+  shape only (`[A-Za-z_][A-Za-z0-9_]*` between Jinja-style braces),
+  trims whitespace, lowercases keys, dedupes with an `occurrences`
+  count, and rejects expressions / filters / dotted attribute
+  access / function calls / subscripts. No LLM, no remote service.
+- **Endpoint**: `GET /api/agreement-templates/{id}/variable-suggestions`.
+  Org-scoped (cross-org → 404). Reads the latest *ready*
+  `AgreementTemplateMarkdownSnapshot` for the template; if there's
+  no snapshot, returns an empty list (a "no preview yet" state on
+  the same page, not an error). Keys already present as variables
+  are filtered server-side so the list only carries *new*
+  suggestions. Response is just `{key, label, occurrences}` per
+  row — no extracted-text snippets, no storage metadata.
+- **Frontend**: a *Detected placeholders* sub-section on the
+  template detail page lists each suggestion with its key, label,
+  occurrence count, a *Required* toggle, and an *Add as variable*
+  button. Adding a suggestion creates the variable via the existing
+  `POST .../variables` endpoint and removes that key from the
+  suggestions list immediately. Existing variables are never
+  overwritten — the backend filter + the client-side state update
+  both make sure of that.
+- **Empty state**: *"No placeholders detected."* when the
+  extractor returns nothing. The section degrades gracefully if
+  the suggestions endpoint fails (treated as empty).
+
 ## Repository search foundation (PR #95)
 
 The Repository list at `/demo/repository` now supports an org-scoped

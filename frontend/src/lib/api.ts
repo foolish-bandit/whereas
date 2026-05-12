@@ -40,6 +40,7 @@ import type {
   AgreementTemplateVariable,
   AgreementTemplateVariableCreateRequest,
   AgreementTemplateVariableUpdateRequest,
+  TemplateVariableSuggestion,
 } from "../types/agreementTemplates";
 import type {
   ContractApprovalGate,
@@ -1299,6 +1300,27 @@ export async function listAgreementTemplateVariables(
   if (isDemoMode()) return mockApi.listAgreementTemplateVariables(id, options);
   const data = await call<AgreementTemplateVariable[]>(
     `/api/agreement-templates/${encodeURIComponent(id)}/variables`,
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
+ * Deterministic ``{{placeholder}}`` detection on the template's Text
+ * preview (PR #96). Keys that already exist as
+ * ``AgreementTemplateVariable`` rows are filtered out server-side, so
+ * the returned list is *new* suggestions only.
+ */
+export async function listAgreementTemplateVariableSuggestions(
+  id: string,
+  options: ApiOptions = {},
+): Promise<TemplateVariableSuggestion[]> {
+  if (isDemoMode()) {
+    return mockApi.listAgreementTemplateVariableSuggestions(id, options);
+  }
+  const data = await call<TemplateVariableSuggestion[]>(
+    `/api/agreement-templates/${encodeURIComponent(id)}/variable-suggestions`,
     { method: "GET" },
     options,
   );
