@@ -149,11 +149,13 @@ function setupDetailFetch(
     markdown?: object | null;
     suggestions?: unknown[];
     suggestionsStatus?: number;
+    artifacts?: unknown[];
   } = {},
 ) {
   const markdown = "markdown" in opts ? opts.markdown : NDA_MARKDOWN;
   const suggestions = opts.suggestions ?? [];
   const suggestionsStatus = opts.suggestionsStatus ?? 200;
+  const artifacts = opts.artifacts ?? [NDA_ARTIFACT];
   fetchMock.mockImplementation(async (url: string) => {
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
       return markdown
@@ -161,7 +163,7 @@ function setupDetailFetch(
         : jsonResponse({ detail: "not found" }, 404);
     }
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
-      return jsonResponse([NDA_ARTIFACT]);
+      return jsonResponse(artifacts);
     }
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
       return jsonResponse(NDA_VARIABLES);
@@ -1114,5 +1116,171 @@ describe("AgreementTemplateDetailPage", () => {
     expect(
       screen.getByTestId("agreement-template-generate-submit"),
     ).toBeDisabled();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #102 — Source file history section
+  // -------------------------------------------------------------------------
+
+  it("renders the Source file history section with the current marker", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    expect(section).toHaveTextContent(/source file history/i);
+    const rows = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("data-current", "true");
+    expect(
+      within(rows[0]).getByTestId(
+        "agreement-template-source-history-current-chip",
+      ),
+    ).toHaveTextContent(/current/i);
+    expect(rows[0]).toHaveTextContent(/nda\.docx/);
+  });
+
+  it("renders multiple source uploads newest-first with the right current marker", async () => {
+    const OLDER = {
+      ...NDA_ARTIFACT,
+      id: "art-old",
+      filename: "nda-v1.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const NEWER = {
+      ...NDA_ARTIFACT,
+      id: "art-new",
+      filename: "nda-v2.docx",
+      is_official: true,
+      created_at: "2026-04-15T00:00:00Z",
+    };
+    // Backend returns newest-first; test sends them in mixed order to
+    // confirm the page sorts them itself.
+    setupDetailFetch(fetchMock, { artifacts: [OLDER, NEWER] });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const rows = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    );
+    expect(rows).toHaveLength(2);
+    // Newest first.
+    expect(rows[0]).toHaveTextContent("nda-v2.docx");
+    expect(rows[1]).toHaveTextContent("nda-v1.docx");
+    // Current marker only on the most-recent official row.
+    expect(rows[0]).toHaveAttribute("data-current", "true");
+    expect(rows[1]).toHaveAttribute("data-current", "false");
+    expect(
+      within(rows[0]).getByTestId(
+        "agreement-template-source-history-current-chip",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(rows[1]).queryByTestId(
+        "agreement-template-source-history-current-chip",
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to the most recent row when no artifact is is_official", async () => {
+    const A = {
+      ...NDA_ARTIFACT,
+      id: "art-a",
+      filename: "a.docx",
+      is_official: false,
+      created_at: "2026-02-01T00:00:00Z",
+    };
+    const B = {
+      ...NDA_ARTIFACT,
+      id: "art-b",
+      filename: "b.docx",
+      is_official: false,
+      created_at: "2026-04-01T00:00:00Z",
+    };
+    setupDetailFetch(fetchMock, { artifacts: [A, B] });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const rows = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    );
+    expect(rows[0]).toHaveTextContent("b.docx");
+    expect(rows[0]).toHaveAttribute("data-current", "true");
+    expect(rows[1]).toHaveAttribute("data-current", "false");
+  });
+
+  it("renders the source-history empty state when no source uploads exist", async () => {
+    setupDetailFetch(fetchMock, { artifacts: [] });
+    renderDetail();
+    expect(
+      await screen.findByTestId(
+        "agreement-template-source-history-empty",
+      ),
+    ).toHaveTextContent(/no source file uploads yet/i);
+    expect(
+      screen.queryByTestId("agreement-template-source-history-list"),
+    ).toBeNull();
+  });
+
+  it("excludes non-source artifact types from the history section", async () => {
+    const GENERATED = {
+      ...NDA_ARTIFACT,
+      id: "art-gen",
+      filename: "nda-generated.docx",
+      artifact_type: "generated_docx",
+      is_official: false,
+    };
+    setupDetailFetch(fetchMock, { artifacts: [NDA_ARTIFACT, GENERATED] });
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const rows = within(section).getAllByTestId(
+      "agreement-template-source-history-row",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("nda.docx");
+  });
+
+  it("does not leak forbidden artifact-type tokens or storage internals in the DOM", async () => {
+    setupDetailFetch(fetchMock, {
+      artifacts: [
+        {
+          ...NDA_ARTIFACT,
+          metadata_json: {
+            storage_key: "should-not-appear",
+            wrapped_dek: "should-not-appear",
+            s3_key: "should-not-appear",
+            private_url: "https://x",
+            presigned: "https://y",
+            docuseal_secret: "should-not-appear",
+          },
+        },
+      ],
+    });
+    renderDetail();
+    await screen.findByTestId("agreement-template-source-history");
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+      "docuseal_secret",
+      "should-not-appear",
+      // Raw artifact-type taxonomy must never reach the DOM —
+      // labels go through artifactDisplayLabel() instead.
+      "original_upload",
+      "generated_docx",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
   });
 });
