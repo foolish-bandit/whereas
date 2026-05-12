@@ -763,6 +763,433 @@ async def test_list_q_escapes_sql_wildcards(
     assert ids == [a]
 
 
+# --------------------------------------------------------------------------
+# PR #100 — Repository search extended to Text preview content
+# --------------------------------------------------------------------------
+
+
+async def _add_snapshot(
+    db_session: AsyncSession,
+    *,
+    contract_id: str,
+    organization_id: uuid.UUID,
+    markdown_text: str,
+    source_kind: str = "original_upload",
+) -> ContractMarkdownSnapshot:
+    """Attach a ContractMarkdownSnapshot (Text preview) to a contract.
+
+    Mirrors what the upload pipeline writes when a document parses
+    successfully; tests construct snapshots directly so they can vary
+    the body without invoking the parser.
+    """
+    snapshot = ContractMarkdownSnapshot(
+        id=uuid.uuid4(),
+        contract_id=uuid.UUID(contract_id),
+        organization_id=organization_id,
+        markdown_text=markdown_text,
+        source_kind=source_kind,
+        converter_name="markitdown",
+        conversion_status="ready",
+    )
+    db_session.add(snapshot)
+    await db_session.commit()
+    return snapshot
+
+
+async def test_list_q_matches_text_preview_content(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``?q=foo`` returns rows whose attached Text preview contains
+    ``foo``, even when the title does not (PR #100)."""
+    user_org = await _create_user_org(db_session, email="q-text-1@example.com")
+    a = await _upload_with_title(
+        client, user_org,
+        title="Vendor agreement",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    b = await _upload_with_title(
+        client, user_org,
+        title="Customer order form",
+        filename="b.pdf", content=b"%PDF-1.4\nB",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="Indemnification clause: Vendor agrees to defend Buyer …",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=b,
+        organization_id=user_org.org.id,
+        markdown_text="Order acknowledgement and pricing schedule.",
+    )
+
+    # "Indemnification" only appears in the snapshot body of `a`.
+    response = await client.get(
+        "/api/contracts?q=indemnification",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200, response.text
+    ids = [row["id"] for row in response.json()]
+    assert ids == [a]
+
+
+async def test_list_q_text_preview_match_is_case_insensitive(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(db_session, email="q-text-2@example.com")
+    a = await _upload_with_title(
+        client, user_org,
+        title="Misc",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="Confidentiality and Non-Disclosure provisions apply.",
+    )
+    response = await client.get(
+        "/api/contracts?q=CONFIDENTIALITY",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == [a]
+
+
+async def test_list_q_text_preview_does_not_cross_organizations(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A snapshot in another org with a matching body must not bleed
+    into this org's results."""
+    first = await _create_user_org(db_session, email="q-text-x@example.com")
+    second = await _create_user_org(db_session, email="q-text-y@example.com")
+    a = await _upload_with_title(
+        client, first,
+        title="FirstTitle",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    b = await _upload_with_title(
+        client, second,
+        title="SecondTitle",
+        filename="b.pdf", content=b"%PDF-1.4\nB",
+    )
+    # Only the SECOND org's snapshot contains the needle.
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=first.org.id,
+        markdown_text="No needle here.",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=b,
+        organization_id=second.org.id,
+        markdown_text="CrossOrgNeedle should never be returned to org one.",
+    )
+    response = await client.get(
+        "/api/contracts?q=CrossOrgNeedle",
+        headers=_headers(first.user),
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_list_q_text_preview_does_not_match_via_wrong_org_snapshot(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Even if a snapshot row points at a contract belonging to org A,
+    a snapshot row whose ``organization_id`` is org B must not satisfy
+    the search EXISTS clause for org B (defence-in-depth)."""
+    first = await _create_user_org(
+        db_session, email="q-text-mis-a@example.com"
+    )
+    second = await _create_user_org(
+        db_session, email="q-text-mis-b@example.com"
+    )
+    a = await _upload_with_title(
+        client, first,
+        title="OrgAContract",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    # Intentionally tag the snapshot with the SECOND org's id to
+    # simulate a regressed row; the contract still belongs to org A.
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=second.org.id,
+        markdown_text="LeakyNeedle must never satisfy search for either org.",
+    )
+    # Org A's caller searches its own contracts for the needle.
+    response = await client.get(
+        "/api/contracts?q=LeakyNeedle",
+        headers=_headers(first.user),
+    )
+    assert response.status_code == 200
+    # Snapshot is org-tagged to B, so org A's search must not return
+    # the contract; even though the contract is org A's, the EXISTS
+    # is filtered by ``ContractMarkdownSnapshot.organization_id`` =
+    # caller's org. Title doesn't match either.
+    assert response.json() == []
+
+
+async def test_list_q_text_preview_respects_include_merged_default(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    user_org = await _create_user_org(
+        db_session, email="q-text-merge@example.com"
+    )
+    canonical = await _upload_with_title(
+        client, user_org,
+        title="Canonical",
+        filename="c.pdf", content=b"%PDF-1.4\nC",
+    )
+    duplicate = await _upload_with_title(
+        client, user_org,
+        title="Duplicate",
+        filename="d.pdf", content=b"%PDF-1.4\nD",
+    )
+    # Both contracts get a snapshot containing the needle in the body.
+    await _add_snapshot(
+        db_session,
+        contract_id=canonical,
+        organization_id=user_org.org.id,
+        markdown_text="MergeNeedleInBody alpha",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=duplicate,
+        organization_id=user_org.org.id,
+        markdown_text="MergeNeedleInBody beta",
+    )
+    dup_row = await db_session.get(Contract, uuid.UUID(duplicate))
+    assert dup_row is not None
+    dup_row.merged_into_contract_id = uuid.UUID(canonical)
+    dup_row.merged_at = _dt.now(tz=UTC)
+    await db_session.commit()
+
+    # Default: merged hidden, even on a snapshot match.
+    response = await client.get(
+        "/api/contracts?q=MergeNeedleInBody",
+        headers=_headers(user_org.user),
+    )
+    assert [row["id"] for row in response.json()] == [canonical]
+    # include_merged=true: both surface.
+    response = await client.get(
+        "/api/contracts?q=MergeNeedleInBody&include_merged=true",
+        headers=_headers(user_org.user),
+    )
+    assert sorted(row["id"] for row in response.json()) == sorted(
+        [canonical, duplicate]
+    )
+
+
+async def test_list_q_text_preview_escapes_sql_wildcards(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A user query containing ``%`` or ``_`` is matched literally in
+    the snapshot body too, not as a SQL LIKE wildcard."""
+    user_org = await _create_user_org(db_session, email="q-text-esc@example.com")
+    a = await _upload_with_title(
+        client, user_org,
+        title="A",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    b = await _upload_with_title(
+        client, user_org,
+        title="B",
+        filename="b.pdf", content=b"%PDF-1.4\nB",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="Buyer accepts a 50% discount on renewal.",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=b,
+        organization_id=user_org.org.id,
+        markdown_text="Buyer accepts a discount on renewal.",
+    )
+    # ``50% discount`` URL-encoded; must match A only, not B.
+    response = await client.get(
+        "/api/contracts?q=50%25%20discount",
+        headers=_headers(user_org.user),
+    )
+    assert [row["id"] for row in response.json()] == [a]
+
+    # ``_`` should also be matched literally — only the row whose
+    # body literally contains an underscore wins.
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="Schedule appendix_one applies to this agreement.",
+    )
+    response = await client.get(
+        "/api/contracts?q=appendix_one",
+        headers=_headers(user_org.user),
+    )
+    assert [row["id"] for row in response.json()] == [a]
+
+
+async def test_list_q_text_preview_deduplicates_multiple_snapshots(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A contract with several snapshots that each match the needle
+    appears only once in the list response."""
+    user_org = await _create_user_org(
+        db_session, email="q-text-dedupe@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="DedupeTarget",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    for body in (
+        "DedupeNeedle in original upload snapshot.",
+        "DedupeNeedle in a manual edit snapshot.",
+        "DedupeNeedle in a regenerated snapshot.",
+    ):
+        await _add_snapshot(
+            db_session,
+            contract_id=a,
+            organization_id=user_org.org.id,
+            markdown_text=body,
+        )
+    response = await client.get(
+        "/api/contracts?q=DedupeNeedle",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    ids = [row["id"] for row in response.json()]
+    assert ids == [a]
+
+
+async def test_list_q_text_preview_deduplicates_when_title_and_body_match(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-text-both@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="BothMatch agreement",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="BothMatch also appears in the body of this snapshot.",
+    )
+    response = await client.get(
+        "/api/contracts?q=BothMatch",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == [a]
+
+
+async def test_list_q_text_preview_does_not_leak_snapshot_body(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A matching list response must not include the raw snapshot
+    text, storage internals, ``metadata_json``, ``private_url``, or
+    ``presigned`` artifacts."""
+    user_org = await _create_user_org(
+        db_session, email="q-text-leak@example.com"
+    )
+    secret_body = (
+        "PII: Jane Doe, jane.doe@example.com, SSN 123-45-6789. "
+        "Also some storage_key=should-not-appear metadata."
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="LeakCheck",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text=secret_body,
+    )
+    response = await client.get(
+        "/api/contracts?q=LeakCheck",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    body_text = response.text
+    assert "Jane Doe" not in body_text
+    assert "jane.doe@example.com" not in body_text
+    assert "123-45-6789" not in body_text
+    assert "should-not-appear" not in body_text
+    for forbidden in (
+        "private_url",
+        "presigned",
+        "metadata_json",
+        "wrapped_dek",
+        "s3_key",
+        "markdown_text",
+    ):
+        assert forbidden not in body_text
+    _assert_no_secrets(response.json())
+
+
+async def test_list_q_whitespace_only_remains_no_filter_with_snapshots(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Whitespace-only ``q`` is treated as no filter, even when
+    snapshots exist that would otherwise match nothing."""
+    user_org = await _create_user_org(
+        db_session, email="q-text-ws@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="WsA",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    b = await _upload_with_title(
+        client, user_org,
+        title="WsB",
+        filename="b.pdf", content=b"%PDF-1.4\nB",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="alpha",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=b,
+        organization_id=user_org.org.id,
+        markdown_text="beta",
+    )
+    response = await client.get(
+        "/api/contracts?q=%20%20",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    assert sorted(row["id"] for row in response.json()) == sorted([a, b])
+
+
 async def test_detail_endpoint_scopes_to_user_org(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

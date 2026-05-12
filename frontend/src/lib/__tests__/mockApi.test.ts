@@ -130,6 +130,17 @@ describe("mockApi", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("getContracts q matches Text preview content (PR #100)", async () => {
+    // "Globex" only appears in the NDA's Text preview body, never in
+    // the title of any seeded record.
+    const list = await getContracts({ q: "Globex" });
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((row) => row.id === MOCK_NDA_ID)).toBe(true);
+    // Title-only match still works (PR #95 behavior preserved).
+    const titleList = await getContracts({ q: "NDA" });
+    expect(titleList.some((row) => row.id === MOCK_NDA_ID)).toBe(true);
+  });
+
   it("upload makes the new contract visible in the list and detail endpoints", async () => {
     const file = new File(["x"], "session-upload.pdf", {
       type: "application/pdf",

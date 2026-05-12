@@ -180,15 +180,17 @@ export default function ContractsPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <label className="relative flex-1 min-w-[200px]">
-          <span className="sr-only">Search Repository records by title</span>
+          <span className="sr-only">
+            Search Repository records by title or Text preview content
+          </span>
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search Repository by title…"
+            placeholder="Search Repository by title or Text preview…"
             className="w-full rounded border border-rule bg-canvas px-3 py-1.5 text-sm placeholder:text-ink-subtle focus:border-accent-ring focus:outline-none"
             data-testid="repository-search"
-            aria-label="Search Repository records by title"
+            aria-label="Search Repository records by title or Text preview content"
           />
           {search && (
             <button
@@ -278,7 +280,7 @@ export default function ContractsPage() {
         (hasActiveFilter ? (
           <EmptyState
             title="No matches"
-            description="No Repository records match the current search or filters."
+            description="No Repository records match the current search or filters. Search looks at the record title and any Text preview content."
             action={
               <button
                 type="button"

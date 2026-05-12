@@ -14,7 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -362,12 +362,16 @@ async def list_contracts(
         max_length=200,
         description=(
             "Optional case-insensitive substring match against the "
-            "Repository record title (PR #95). Org-scoped; the merged "
-            "filter still applies (records merged into another record "
-            "stay hidden unless ``include_merged=true``). Title is the "
-            "only field searched in this foundation PR — extracted "
-            "text-content search is future work and intentionally not "
-            "wired here."
+            "Repository record title or any org-scoped Text preview "
+            "(``ContractMarkdownSnapshot``) attached to the record. "
+            "Org-scoped; the merged filter still applies (records "
+            "merged into another record stay hidden unless "
+            "``include_merged=true``). PR #95 introduced the title "
+            "match; PR #100 extended it to safely match Text preview "
+            "content as well — raw snapshot text is never returned "
+            "in this list response. Storage internals, document "
+            "bytes, and ``metadata_json`` are not part of the "
+            "search predicate."
         ),
     ),
 ) -> list[ContractListItemResponse]:
@@ -381,12 +385,19 @@ async def list_contracts(
     ``?include_merged=true`` to see them — useful for audit /
     "where did this go" queries.
 
-    PR #95 — when ``q`` is provided, results are narrowed to records
-    whose ``title`` contains ``q`` as a case-insensitive substring.
-    The query is org-scoped through the same WHERE clause that
-    enforces tenant isolation on every read in this module; there is
-    no JSON path query, no ``full_text`` scan, and no storage
-    metadata in the search predicate.
+    PR #95 / PR #100 — when ``q`` is provided, results are narrowed
+    to records whose ``title`` *or* attached Text preview
+    (``ContractMarkdownSnapshot.markdown_text``) contains ``q`` as a
+    case-insensitive substring. The query is org-scoped through the
+    same WHERE clause that enforces tenant isolation on every read in
+    this module; the Text-preview match is gated on a correlated
+    ``EXISTS`` against ``contract_markdown_snapshots`` filtered by
+    the same ``organization_id``, so cross-org snapshot rows can
+    never widen results. There is no JSON path query, no FTS index,
+    and no storage metadata in the search predicate. Raw snapshot
+    text is *not* returned in the response — only the existing
+    ``ContractListItemResponse`` fields are projected — so even a
+    matched record never leaks the body of its Text preview.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
     stmt = select(Contract).where(Contract.organization_id == user.organization_id)
@@ -395,11 +406,32 @@ async def list_contracts(
     if q is not None:
         needle = q.strip()
         if needle:
-            # ILIKE is fine on the title column; an explicit
-            # ``escape`` keeps stray ``%`` / ``_`` in the user input
-            # from being interpreted as wildcards.
+            # ILIKE is fine on the title column and on Text preview
+            # content; an explicit ``escape`` keeps stray ``%`` /
+            # ``_`` in the user input from being interpreted as
+            # wildcards. The snapshot match uses a correlated
+            # ``EXISTS`` so a contract with multiple snapshots only
+            # appears once even when several rows match.
             escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            stmt = stmt.where(Contract.title.ilike(f"%{escaped}%", escape="\\"))
+            pattern = f"%{escaped}%"
+            snapshot_exists = (
+                select(ContractMarkdownSnapshot.id)
+                .where(
+                    ContractMarkdownSnapshot.contract_id == Contract.id,
+                    ContractMarkdownSnapshot.organization_id
+                    == user.organization_id,
+                    ContractMarkdownSnapshot.markdown_text.ilike(
+                        pattern, escape="\\"
+                    ),
+                )
+                .exists()
+            )
+            stmt = stmt.where(
+                or_(
+                    Contract.title.ilike(pattern, escape="\\"),
+                    snapshot_exists,
+                )
+            )
     stmt = stmt.order_by(Contract.created_at.desc(), Contract.id.desc())
     result = await session.execute(stmt)
     return [ContractListItemResponse.model_validate(row) for row in result.scalars()]

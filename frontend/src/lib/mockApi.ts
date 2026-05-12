@@ -171,11 +171,21 @@ export async function getContracts(
   if (!includeMerged) {
     rows = rows.filter((row) => !row.merged_into_contract_id);
   }
-  // PR #95 — case-insensitive title substring match mirroring the
-  // backend's q filter. Whitespace-only q is treated as no filter.
+  // PR #95 / PR #100 — case-insensitive substring match against the
+  // record title OR the attached Text preview body (mirroring the
+  // backend EXISTS subquery against ContractMarkdownSnapshot). The
+  // raw Text preview body is not returned in the list response;
+  // matching is purely a filter.
   const needle = (options.q ?? "").trim().toLowerCase();
   if (needle) {
-    rows = rows.filter((row) => row.title.toLowerCase().includes(needle));
+    rows = rows.filter((row) => {
+      if (row.title.toLowerCase().includes(needle)) return true;
+      const snapshot = MOCK_MARKDOWN_BY_CONTRACT_ID[row.id];
+      if (snapshot && snapshot.markdown_text.toLowerCase().includes(needle)) {
+        return true;
+      }
+      return false;
+    });
   }
   return rows;
 }
