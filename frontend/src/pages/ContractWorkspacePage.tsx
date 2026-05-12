@@ -485,7 +485,7 @@ export default function ContractWorkspacePage() {
 
   if (state.kind === "loading") {
     return (
-      <div>
+      <div data-testid="contract-workspace-loading">
         <Link
           to="/demo/repository"
           className="text-sm text-ink-muted hover:text-ink"
@@ -1814,7 +1814,7 @@ function ViewerModeToggle({
   onChange: (mode: ViewerMode) => void;
 }) {
   // Tiny segmented-button toggle. We deliberately keep the labels
-  // explicit ("Markdown preview" / "View original") so users always
+  // explicit ("Text preview" / "View original") so users always
   // know which representation they're looking at.
   const buttonClass = (active: boolean): string =>
     [

@@ -53,7 +53,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div>
+    <div data-testid="settings-page">
       <h1 className="font-serif text-2xl text-ink">Settings</h1>
       <p className="mt-1 text-sm text-ink-muted">
         Whereas does not have real authentication yet. The backend identifies

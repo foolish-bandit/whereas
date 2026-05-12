@@ -266,6 +266,9 @@ const SECRET_KEYS = new Set([
   "storage_key",
   "presigned_url",
   "presigned_uri",
+  "private_url",
+  "docuseal_webhook_secret",
+  "docuseal_api_token",
 ]);
 
 /**
