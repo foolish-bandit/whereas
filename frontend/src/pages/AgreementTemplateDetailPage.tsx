@@ -19,7 +19,7 @@ import {
   uploadAgreementTemplateArtifact,
 } from "../lib/api";
 import { artifactDisplayLabel } from "../lib/artifacts";
-import { formatDate } from "../lib/format";
+import { formatDate, mimeLabel } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { mountedPath } from "../lib/routes";
 import type {
@@ -456,6 +456,8 @@ export default function AgreementTemplateDetailPage() {
           </ul>
         )}
       </section>
+
+      <SourceHistorySection artifacts={state.artifacts} />
 
       <section
         className="overflow-hidden rounded border border-rule"
@@ -1271,4 +1273,100 @@ function resolveValue(
   values: Record<string, string>,
 ): string {
   return values[variable.key] ?? variable.default_value ?? "";
+}
+
+/**
+ * Template source file history (PR #102).
+ *
+ * Filters the artifact list to source-file uploads only (the
+ * "original_upload" rows that operators uploaded), sorts them
+ * newest-first, and visually marks the *current* source file —
+ * defined as the most recent ``is_official`` row, falling back to
+ * the most recent row when no row carries the flag. Renders only
+ * safe metadata: a user-friendly label (via ``artifactDisplayLabel``,
+ * so the raw artifact_type taxonomy never reaches the DOM), the
+ * original filename, the MIME label, and the created date.
+ *
+ * No download / preview affordance in this PR — the existing upload
+ * affordance and Text preview elsewhere on the page cover safe access;
+ * a per-version download is intentional future work that requires its
+ * own scoped endpoint + audit.
+ */
+function SourceHistorySection({
+  artifacts,
+}: {
+  artifacts: AgreementTemplateArtifact[];
+}) {
+  const sources = artifacts
+    .filter((a) => a.artifact_type === "original_upload")
+    .slice()
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const currentSourceId =
+    sources.find((s) => s.is_official)?.id ?? sources[0]?.id ?? null;
+  return (
+    <section
+      className="rounded border border-rule p-4"
+      data-testid="agreement-template-source-history"
+    >
+      <h2 className="text-sm font-medium text-ink">Source file history</h2>
+      <p className="mt-1 text-xs text-ink-subtle">
+        Every source file uploaded for this template, newest first.
+        The current source file is the version operators distribute;
+        older versions are kept for audit. Per-version download and
+        side-by-side compare are future work.
+      </p>
+      {sources.length === 0 ? (
+        <p
+          className="mt-3 text-xs text-ink-subtle"
+          data-testid="agreement-template-source-history-empty"
+        >
+          No source file uploads yet. Upload a DOCX or PDF above to
+          start the history.
+        </p>
+      ) : (
+        <ol
+          className="mt-3 space-y-2 text-xs"
+          data-testid="agreement-template-source-history-list"
+        >
+          {sources.map((s) => {
+            const isCurrent = s.id === currentSourceId;
+            return (
+              <li
+                key={s.id}
+                className={`flex flex-wrap items-baseline gap-2 rounded border p-2 ${
+                  isCurrent
+                    ? "border-info-ring bg-info-soft"
+                    : "border-rule bg-canvas"
+                }`}
+                data-testid="agreement-template-source-history-row"
+                data-current={isCurrent ? "true" : "false"}
+              >
+                <span className="font-medium text-ink">Source file</span>
+                {isCurrent && (
+                  <span
+                    className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info"
+                    data-testid="agreement-template-source-history-current-chip"
+                    title="The version operators distribute"
+                  >
+                    Current
+                  </span>
+                )}
+                {s.filename && (
+                  <span className="text-ink-muted">{s.filename}</span>
+                )}
+                {s.mime_type && (
+                  <span className="text-ink-subtle">
+                    {mimeLabel(s.mime_type)}
+                  </span>
+                )}
+                <span className="text-ink-subtle">
+                  Uploaded {formatDate(s.created_at)}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
 }

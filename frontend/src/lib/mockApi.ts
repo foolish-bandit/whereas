@@ -1658,6 +1658,7 @@ const demoAgreementTemplateMarkdown: Record<
 
 const demoAgreementTemplateArtifacts: Record<string, AgreementTemplateArtifact[]> = {
   [NDA_ID]: [
+    // Newest source upload — the current source file.
     {
       id: "44444444-4444-4444-8444-444444444444",
       template_id: NDA_ID,
@@ -1671,6 +1672,24 @@ const demoAgreementTemplateArtifacts: Record<string, AgreementTemplateArtifact[]
       source: "user_upload",
       is_official: true,
       created_at: "2026-04-01T10:05:00Z",
+      metadata_json: null,
+    },
+    // Older source upload — kept so the version history section
+    // (PR #102) has more than one row to render. Non-official so the
+    // "current source" marker only applies to the row above.
+    {
+      id: "44444444-4444-4444-8444-444444444443",
+      template_id: NDA_ID,
+      artifact_type: "original_upload",
+      storage_backend: "s3",
+      filename: "mutual-nda-v1.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 23552,
+      source: "user_upload",
+      is_official: false,
+      created_at: "2026-03-15T08:30:00Z",
       metadata_json: null,
     },
   ],

@@ -402,6 +402,38 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Agreement Template source file history (PR #102)
+
+Agreement Template detail pages
+(`/demo/agreement-templates/:id`, `/demo/requests/templates/:id`)
+now carry a *Source file history* section that lists every
+source-file upload for the template, newest first, with a small
+*Current* chip on the version operators distribute.
+
+- The section is view-only. Per-version download and side-by-side
+  compare are intentional future work — adding them requires a
+  scoped per-artifact-version download endpoint with its own
+  audit-log entry.
+- The history is derived from the existing
+  `GET /api/agreement-templates/{id}/artifacts` response, filtered to
+  `artifact_type === "original_upload"`. The raw `artifact_type`
+  taxonomy never reaches the DOM — labels go through the
+  shared `artifactDisplayLabel()` helper so the UI shows *"Source
+  file"* instead of leaking backend tokens like `original_upload` or
+  `generated_docx`. Generated artifacts (e.g. `generated_docx`) are
+  excluded from this section by construction.
+- *Current* is the most recent `is_official=true` row, falling back
+  to the most recent row when none is flagged.
+- No backend changes. No new exposure of storage internals,
+  `metadata_json`, document bytes, private URLs, or DocuSeal
+  artifacts — asserted by a forbidden-string DOM scan in the test
+  suite.
+
+Existing *Template source file* upload affordance, *Text preview*,
+*Variables*, *Generate*, and *Archive* sections behave exactly as
+before. Template generation, approval, DocuSeal, and Repository
+artifact semantics are unchanged.
+
 ## Repository search match hints (PR #101)
 
 Repository search results now carry a small categorical hint so users
