@@ -1,0 +1,231 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import MoveToReviewModal, {
+  type MoveToReviewValues,
+} from "../MoveToReviewModal";
+import { FORBIDDEN_DOM_TOKENS } from "../../test/forbiddenTokens";
+import type { AgreementTemplate } from "../../types/agreementTemplates";
+
+const SAMPLE_TEMPLATES: AgreementTemplate[] = [
+  {
+    id: "tpl-active",
+    organization_id: "org-1",
+    name: "Mutual NDA template",
+    description: null,
+    template_type: "NDA",
+    status: "active",
+    created_at: "2026-04-01T10:00:00Z",
+    updated_at: "2026-04-15T10:00:00Z",
+    metadata_json: null,
+  },
+  {
+    id: "tpl-archived",
+    organization_id: "org-1",
+    name: "Archived legacy NDA",
+    description: null,
+    template_type: "NDA",
+    status: "archived",
+    created_at: "2024-01-01T10:00:00Z",
+    updated_at: "2024-01-01T10:00:00Z",
+    metadata_json: null,
+  },
+];
+
+function setup(
+  overrides: Partial<React.ComponentProps<typeof MoveToReviewModal>> = {},
+) {
+  const onCancel = vi.fn();
+  const onSubmit = vi.fn();
+  const utils = render(
+    <MoveToReviewModal
+      open
+      itemTitle="Review: Acme MSA"
+      selectedCount={1}
+      demoMode={false}
+      busy={false}
+      templates={SAMPLE_TEMPLATES}
+      templatesLoading={false}
+      onCancel={onCancel}
+      onSubmit={onSubmit}
+      {...overrides}
+    />,
+  );
+  return { onCancel, onSubmit, ...utils };
+}
+
+describe("MoveToReviewModal", () => {
+  it("renders as an accessible dialog with title, subtitle, and all form fields", () => {
+    setup();
+    const modal = screen.getByTestId("move-to-review-modal");
+    expect(modal).toHaveAttribute("role", "dialog");
+    expect(modal).toHaveAttribute("aria-modal", "true");
+    expect(modal).toHaveAttribute("aria-labelledby");
+    expect(screen.getByTestId("move-to-review-modal-title")).toHaveTextContent(
+      "Move to Review",
+    );
+    expect(
+      screen.getByText(/add the supporting information legal needs/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-name")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("move-to-review-request-type"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-template")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-priority")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-owner")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-department")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("move-to-review-supporting-info"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-submit")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-cancel")).toBeInTheDocument();
+  });
+
+  it("defaults the Request name to the selected item's title", () => {
+    setup({ itemTitle: "Default name source" });
+    expect(screen.getByTestId("move-to-review-name")).toHaveValue(
+      "Default name source",
+    );
+  });
+
+  it("renders only active templates in the template selector", () => {
+    setup();
+    const options = screen.getAllByRole("option") as HTMLOptionElement[];
+    expect(options.some((o) => o.textContent === "Mutual NDA template")).toBe(
+      true,
+    );
+    expect(
+      options.some((o) => o.textContent === "Archived legacy NDA"),
+    ).toBe(false);
+    expect(
+      options.some((o) => /no template \/ third-party paper/i.test(o.textContent ?? "")),
+    ).toBe(true);
+  });
+
+  it("disables the template selector while templates are loading", () => {
+    setup({ templates: [], templatesLoading: true });
+    expect(screen.getByTestId("move-to-review-template")).toBeDisabled();
+    expect(screen.getByText(/loading templates/i)).toBeInTheDocument();
+  });
+
+  it("renders nothing when closed", () => {
+    render(
+      <MoveToReviewModal
+        open={false}
+        itemTitle={null}
+        selectedCount={0}
+        demoMode={false}
+        busy={false}
+        templates={[]}
+        templatesLoading={false}
+        onCancel={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("move-to-review-modal")).toBeNull();
+  });
+
+  it("requires the Request name before submitting", () => {
+    const { onSubmit } = setup({ itemTitle: "" });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("move-to-review-name-error"),
+    ).toHaveTextContent(/required/i);
+  });
+
+  it("submits trimmed values and includes only the captured form fields", () => {
+    const { onSubmit } = setup();
+    fireEvent.change(screen.getByTestId("move-to-review-name"), {
+      target: { value: "  Acme NDA review  " },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "nda_review" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "tpl-active" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-priority"), {
+      target: { value: "high" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-owner"), {
+      target: { value: " jordan@example.com " },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-department"), {
+      target: { value: " Sales " },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-supporting-info"), {
+      target: { value: " deal value 50k " },
+    });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const values = onSubmit.mock.calls[0][0] as MoveToReviewValues;
+    expect(values).toEqual({
+      name: "Acme NDA review",
+      requestType: "nda_review",
+      templateId: "tpl-active",
+      priority: "high",
+      owner: "jordan@example.com",
+      department: "Sales",
+      supportingInfo: "deal value 50k",
+    });
+  });
+
+  it("disables submit and shows an honest 'one item at a time' notice for multi-item selections", () => {
+    const { onSubmit } = setup({ selectedCount: 3 });
+    expect(screen.getByTestId("move-to-review-submit")).toBeDisabled();
+    expect(
+      screen.getByTestId("move-to-review-multi-notice"),
+    ).toHaveTextContent(/one intake item at a time/i);
+    // Form fields are not rendered at all in the multi-item state to
+    // make it obvious to the user that nothing will be submitted.
+    expect(screen.queryByTestId("move-to-review-name")).toBeNull();
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("calls onCancel from the Cancel button, Escape key, and backdrop click", () => {
+    const { onCancel } = setup();
+    fireEvent.click(screen.getByTestId("move-to-review-cancel"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(2);
+    // Click on the backdrop (the modal's outer wrapper) but not on the
+    // panel itself.
+    fireEvent.click(screen.getByTestId("move-to-review-modal"));
+    expect(onCancel).toHaveBeenCalledTimes(3);
+  });
+
+  it("disables all actions while busy", () => {
+    setup({ busy: true });
+    expect(screen.getByTestId("move-to-review-cancel")).toBeDisabled();
+    expect(screen.getByTestId("move-to-review-submit")).toBeDisabled();
+    expect(screen.getByTestId("move-to-review-submit")).toHaveTextContent(
+      /routing/i,
+    );
+  });
+
+  it("shows the demo subtitle without the real-mode note when demoMode=true", () => {
+    setup({ demoMode: true });
+    expect(screen.queryByTestId("move-to-review-real-note")).toBeNull();
+  });
+
+  it("renders the real-mode honest note when demoMode=false", () => {
+    setup({ demoMode: false });
+    expect(screen.getByTestId("move-to-review-real-note")).toHaveTextContent(
+      /existing requests api/i,
+    );
+    expect(screen.getByTestId("move-to-review-real-note")).toHaveTextContent(
+      /aren.?t sent to the server/i,
+    );
+  });
+
+  it("does not surface storage internals, raw metadata, or DocuSeal secrets", () => {
+    setup();
+    const text = document.body.textContent ?? "";
+    for (const needle of FORBIDDEN_DOM_TOKENS) {
+      expect(text).not.toContain(needle);
+    }
+  });
+});
