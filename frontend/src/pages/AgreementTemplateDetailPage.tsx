@@ -106,6 +106,13 @@ export default function AgreementTemplateDetailPage() {
   const [genResult, setGenResult] = useState<AgreementGenerationResponse | null>(
     null,
   );
+  // PR #97 — two-step generation. ``reviewing`` toggles the inline
+  // review panel below the form; the generation endpoint is only
+  // called on the panel's final "Generate agreement" button. The
+  // variable values stay in component state for the duration of the
+  // review and are never persisted anywhere (they're sent verbatim
+  // as the transient request body to /generate and forgotten).
+  const [reviewing, setReviewing] = useState(false);
 
   // Archive confirm.
   const [confirmingArchive, setConfirmingArchive] = useState(false);
@@ -227,12 +234,23 @@ export default function AgreementTemplateDetailPage() {
     }));
   }
 
-  async function onGenerate() {
-    if (missingRequiredKeys.length > 0) {
-      setGenAttempted(true);
-      return;
-    }
+  function onOpenReview() {
+    // The review panel always opens (so missing-required users see
+    // the full summary), but it gates the final Generate button on
+    // missing-required state. Setting ``genAttempted`` here makes
+    // the inline form warning consistent with the panel's gate.
     setGenAttempted(true);
+    setGenError(null);
+    setReviewing(true);
+  }
+
+  function onBackToEdit() {
+    setReviewing(false);
+    setGenError(null);
+  }
+
+  async function onConfirmGenerate() {
+    if (missingRequiredKeys.length > 0) return;
     setGenerating(true);
     setGenError(null);
     setGenResult(null);
@@ -242,6 +260,7 @@ export default function AgreementTemplateDetailPage() {
         variable_values: genValues,
       });
       setGenResult(result);
+      setReviewing(false);
     } catch (err) {
       setGenError(
         err instanceof Error ? err.message : "Could not generate agreement.",
@@ -770,13 +789,13 @@ export default function AgreementTemplateDetailPage() {
             <button
               type="button"
               className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-auto sm:py-1.5"
-              onClick={onGenerate}
-              disabled={generating || !hasOriginalUpload}
+              onClick={onOpenReview}
+              disabled={generating || !hasOriginalUpload || reviewing}
               data-testid="agreement-template-generate-submit"
             >
-              {generating ? "Generating…" : "Generate agreement"}
+              Review generation
             </button>
-            {genError && (
+            {genError && !reviewing && (
               <span
                 className="text-xs text-danger"
                 data-testid="agreement-template-generate-error"
@@ -785,6 +804,20 @@ export default function AgreementTemplateDetailPage() {
               </span>
             )}
           </div>
+
+          {reviewing && !genResult && (
+            <ReviewPanel
+              templateName={t.name}
+              requiredVariables={requiredVariables}
+              optionalVariables={optionalVariables}
+              values={genValues}
+              missingRequiredKeys={missingRequiredKeys}
+              generating={generating}
+              error={genError}
+              onConfirm={onConfirmGenerate}
+              onBack={onBackToEdit}
+            />
+          )}
 
           {genResult && (
             <div
@@ -941,4 +974,301 @@ function VariableField({
       )}
     </label>
   );
+}
+
+/**
+ * Pre-generation review panel (PR #97).
+ *
+ * Renders inline below the variable form when the user clicks
+ * *Review generation*. The user confirms the values that will be
+ * sent to ``/generate`` and then clicks the panel's final
+ * *Generate agreement* button to actually fire the existing
+ * generation endpoint. The panel does NOT persist anything — values
+ * stay in component state until the moment the generation request
+ * fires, and the request body is then forgotten.
+ *
+ * Privacy framing is explicit on the panel: variable values are
+ * sent only to render the agreement; they are not stored on the
+ * template itself. The generated DOCX becomes a separate
+ * ``ContractArtifact`` row on the new Repository record, and that
+ * artifact's allowlisted metadata (PR #42) does not include the
+ * plaintext variable values.
+ */
+function ReviewPanel({
+  templateName,
+  requiredVariables,
+  optionalVariables,
+  values,
+  missingRequiredKeys,
+  generating,
+  error,
+  onConfirm,
+  onBack,
+}: {
+  templateName: string;
+  requiredVariables: AgreementTemplateVariable[];
+  optionalVariables: AgreementTemplateVariable[];
+  values: Record<string, string>;
+  missingRequiredKeys: string[];
+  generating: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onBack: () => void;
+}) {
+  const requiredFilled =
+    requiredVariables.length - missingRequiredKeys.length;
+  const optionalBlank = optionalVariables.filter(
+    (v) => !resolveValue(v, values).trim(),
+  ).length;
+  const canConfirm = missingRequiredKeys.length === 0 && !generating;
+  return (
+    <section
+      className="mt-3 rounded border border-rule bg-canvas-subtle p-4"
+      data-testid="agreement-template-generate-review"
+      aria-label="Review generation"
+    >
+      <h3 className="text-sm font-medium text-ink">Review generation</h3>
+      <p className="mt-1 text-xs text-ink-subtle">
+        Using template{" "}
+        <strong className="font-medium text-ink">{templateName}</strong>.
+        Confirm the values below — this is the last step before a
+        Repository record is created.
+      </p>
+
+      <div
+        className="mt-3 grid gap-2 sm:grid-cols-3 text-xs"
+        data-testid="agreement-template-generate-review-summary"
+      >
+        <SummaryTile
+          label="Required filled"
+          value={requiredFilled}
+          testId="agreement-template-generate-review-required-filled"
+        />
+        <SummaryTile
+          label="Required missing"
+          value={missingRequiredKeys.length}
+          testId="agreement-template-generate-review-required-missing"
+          tone={
+            missingRequiredKeys.length > 0 ? "danger" : "default"
+          }
+        />
+        <SummaryTile
+          label="Optional blank"
+          value={optionalBlank}
+          testId="agreement-template-generate-review-optional-blank"
+        />
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {requiredVariables.length > 0 && (
+          <ReviewGroup
+            heading="Required"
+            variables={requiredVariables}
+            values={values}
+            missingRequiredKeys={missingRequiredKeys}
+            testId="agreement-template-generate-review-required-group"
+          />
+        )}
+        {optionalVariables.length > 0 && (
+          <ReviewGroup
+            heading="Optional"
+            variables={optionalVariables}
+            values={values}
+            missingRequiredKeys={[]}
+            testId="agreement-template-generate-review-optional-group"
+          />
+        )}
+      </div>
+
+      <p
+        className="mt-4 rounded border border-rule bg-canvas px-3 py-2 text-xs text-ink-muted"
+        data-testid="agreement-template-generate-review-result"
+      >
+        <span className="font-medium text-ink">Result:</span> this will
+        create a Repository record with a Generated Word document. The
+        template's source file is unchanged.
+      </p>
+      <p
+        className="mt-2 rounded border border-rule bg-canvas px-3 py-2 text-xs text-ink-muted"
+        data-testid="agreement-template-generate-review-privacy"
+      >
+        <span className="font-medium text-ink">Privacy:</span> variable
+        values are sent only to generate this agreement and are not
+        stored in template metadata.
+      </p>
+
+      {missingRequiredKeys.length > 0 && (
+        <p
+          className="mt-3 text-xs text-danger"
+          data-testid="agreement-template-generate-review-missing-warning"
+        >
+          Fill missing required fields before generating.
+        </p>
+      )}
+
+      {error && (
+        <p
+          className="mt-3 text-xs text-danger"
+          data-testid="agreement-template-generate-review-error"
+        >
+          {error}
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+        <button
+          type="button"
+          className="rounded border border-ink bg-ink px-3 py-1.5 text-canvas disabled:opacity-50"
+          onClick={onConfirm}
+          disabled={!canConfirm}
+          data-testid="agreement-template-generate-review-confirm"
+        >
+          {generating ? "Generating…" : "Generate agreement"}
+        </button>
+        <button
+          type="button"
+          className="rounded border border-rule px-3 py-1.5 text-ink hover:bg-canvas-muted disabled:opacity-50"
+          onClick={onBack}
+          disabled={generating}
+          data-testid="agreement-template-generate-review-back"
+        >
+          Back to edit
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  testId,
+  tone = "default",
+}: {
+  label: string;
+  value: number;
+  testId: string;
+  tone?: "default" | "danger";
+}) {
+  const danger = tone === "danger" && value > 0;
+  return (
+    <div
+      className={`rounded border bg-canvas p-2 ${
+        danger ? "border-danger-ring" : "border-rule"
+      }`}
+      data-testid={testId}
+    >
+      <p className="text-[11px] uppercase tracking-wide text-ink-subtle">
+        {label}
+      </p>
+      <p
+        className={`mt-1 text-lg font-semibold tabular-nums ${
+          danger ? "text-danger" : "text-ink"
+        }`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ReviewGroup({
+  heading,
+  variables,
+  values,
+  missingRequiredKeys,
+  testId,
+}: {
+  heading: string;
+  variables: AgreementTemplateVariable[];
+  values: Record<string, string>;
+  missingRequiredKeys: string[];
+  testId: string;
+}) {
+  return (
+    <div data-testid={testId}>
+      <h4 className="text-xs font-medium uppercase tracking-wide text-ink-muted">
+        {heading}
+      </h4>
+      <ul className="mt-1 space-y-1">
+        {variables.map((v) => {
+          const value = resolveValue(v, values).trim();
+          return (
+            <li
+              key={v.id}
+              className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-rule bg-canvas px-3 py-1.5 text-xs"
+              data-testid="agreement-template-generate-review-row"
+              data-variable-key={v.key}
+              data-status={
+                missingRequiredKeys.includes(v.key)
+                  ? "missing"
+                  : value === ""
+                    ? "blank"
+                    : "filled"
+              }
+            >
+              <div className="min-w-0">
+                <span className="text-ink">{v.label}</span>
+                <span className="ml-2 font-mono text-[11px] text-ink-subtle">
+                  {v.key}
+                </span>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-baseline gap-2">
+                {value && (
+                  <span className="max-w-[14rem] truncate text-ink-muted">
+                    “{value}”
+                  </span>
+                )}
+                <ReviewStatusChip
+                  status={
+                    missingRequiredKeys.includes(v.key)
+                      ? "missing"
+                      : value === ""
+                        ? "blank"
+                        : "filled"
+                  }
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function ReviewStatusChip({
+  status,
+}: {
+  status: "filled" | "blank" | "missing";
+}) {
+  const map = {
+    filled: {
+      label: "Filled",
+      cls: "bg-success/10 text-success border-success/40",
+    },
+    blank: {
+      label: "Blank",
+      cls: "bg-canvas-muted text-ink-muted border-rule",
+    },
+    missing: {
+      label: "Missing",
+      cls: "bg-danger/10 text-danger border-danger/40",
+    },
+  } as const;
+  const { label, cls } = map[status];
+  return (
+    <span
+      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function resolveValue(
+  variable: AgreementTemplateVariable,
+  values: Record<string, string>,
+): string {
+  return values[variable.key] ?? variable.default_value ?? "";
 }

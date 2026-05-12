@@ -242,6 +242,33 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Pre-generation review step (PR #97)
+
+The *Generate agreement* action on a template detail page is now a
+two-step flow. Click **Review generation** in the variable form to
+open an inline review panel that summarizes what's about to happen:
+
+- *Required filled* / *Required missing* / *Optional blank* counts
+- Per-variable rows with status chips (*Filled* / *Blank* /
+  *Missing*) and a short preview of the user-entered value (kept
+  in-component only — never persisted, never logged)
+- A clear *Result:* line ("this will create a Repository record
+  with a Generated Word document")
+- A privacy note: variable values are sent only to generate the
+  agreement and are **not** stored in template metadata
+
+If any required field is missing the panel still opens, but the
+panel's final *Generate agreement* button is disabled and a
+*"Fill missing required fields before generating."* message
+appears. A *Back to edit* button reopens the form. The actual
+generation endpoint is only called when the panel's final button
+fires, and the success state (link to the new Repository record,
+filename hint) renders in place of the panel.
+
+Frontend-only; no backend changes. The existing generation
+endpoint, request body shape, generated-artifact priority,
+DocuSeal flow, and approval gate are all unchanged.
+
 ## Agreement Template variable detection (PR #96)
 
 Uploading a template DOCX is now lower-friction: instead of typing
