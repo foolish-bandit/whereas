@@ -438,8 +438,14 @@ describe("AgreementTemplateDetailPage", () => {
       { target: { value: "2026-05-01" } },
     );
 
+    // PR #97 — top-level button opens the review panel; the actual
+    // API call only fires on the panel's final Generate button.
     fireEvent.click(
       screen.getByTestId("agreement-template-generate-submit"),
+    );
+    await screen.findByTestId("agreement-template-generate-review");
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-review-confirm"),
     );
 
     await screen.findByTestId("agreement-template-generate-success");
@@ -640,6 +646,256 @@ describe("AgreementTemplateDetailPage", () => {
       screen.getByTestId("agreement-template-status-pill"),
     ).toHaveTextContent(/archived/i);
     expect(screen.queryByTestId("agreement-template-archive")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #97 — pre-generation review step
+  // -------------------------------------------------------------------------
+
+  it("Review generation opens the inline review panel (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.queryByTestId("agreement-template-generate-review"),
+    ).toBeNull();
+
+    const submit = screen.getByTestId(
+      "agreement-template-generate-submit",
+    );
+    expect(submit).toHaveTextContent(/review generation/i);
+    fireEvent.click(submit);
+
+    const panel = await screen.findByTestId(
+      "agreement-template-generate-review",
+    );
+    expect(panel).toHaveAttribute("aria-label", "Review generation");
+    // While the panel is open the top-level button is disabled (the
+    // user uses the in-panel buttons from this point).
+    expect(submit).toBeDisabled();
+  });
+
+  it("review panel renders summary counts (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    // Fill one of two required variables so missing=1, filled=1.
+    fireEvent.change(
+      screen.getByTestId(
+        "agreement-template-generate-input-counterparty_name",
+      ),
+      { target: { value: "Acme" } },
+    );
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    const panel = await screen.findByTestId(
+      "agreement-template-generate-review",
+    );
+    expect(
+      within(panel).getByTestId(
+        "agreement-template-generate-review-required-filled",
+      ),
+    ).toHaveTextContent("1");
+    expect(
+      within(panel).getByTestId(
+        "agreement-template-generate-review-required-missing",
+      ),
+    ).toHaveTextContent("1");
+    // governing_law has a default of "California" — so the optional
+    // group has 0 blank entries despite the user not having typed
+    // anything (default fills it for the review).
+    expect(
+      within(panel).getByTestId(
+        "agreement-template-generate-review-optional-blank",
+      ),
+    ).toHaveTextContent("0");
+  });
+
+  it("review panel disables final Generate when required fields are missing (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    await screen.findByTestId("agreement-template-generate-review");
+    expect(
+      screen.getByTestId("agreement-template-generate-review-confirm"),
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId(
+        "agreement-template-generate-review-missing-warning",
+      ),
+    ).toHaveTextContent(/fill missing required/i);
+  });
+
+  it("review panel does not call the generation endpoint on open (PR #97)", async () => {
+    let generateCalled = false;
+    fetchMock.mockImplementation(
+      async (url: string, init?: RequestInit) => {
+        if (
+          url.endsWith(`/api/agreement-templates/${NDA_ID}/generate`) &&
+          init?.method === "POST"
+        ) {
+          generateCalled = true;
+          return jsonResponse({ detail: "should not fire" }, 500);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+          return jsonResponse(NDA_MARKDOWN);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+          return jsonResponse([NDA_ARTIFACT]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+          return jsonResponse(NDA_VARIABLES);
+        }
+        if (
+          url.endsWith(
+            `/api/agreement-templates/${NDA_ID}/variable-suggestions`,
+          )
+        ) {
+          return jsonResponse([]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+          return jsonResponse(NDA);
+        }
+        return jsonResponse({ detail: "unexpected " + url }, 500);
+      },
+    );
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    fireEvent.change(
+      screen.getByTestId(
+        "agreement-template-generate-input-counterparty_name",
+      ),
+      { target: { value: "Acme" } },
+    );
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-input-effective_date"),
+      { target: { value: "2026-05-01" } },
+    );
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    await screen.findByTestId("agreement-template-generate-review");
+    expect(generateCalled).toBe(false);
+  });
+
+  it("Back to edit closes the review panel (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    await screen.findByTestId("agreement-template-generate-review");
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-review-back"),
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("agreement-template-generate-review"),
+      ).toBeNull();
+    });
+    // Top-level button re-enabled.
+    expect(
+      screen.getByTestId("agreement-template-generate-submit"),
+    ).not.toBeDisabled();
+  });
+
+  it("review panel renders privacy note and result framing (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    const panel = await screen.findByTestId(
+      "agreement-template-generate-review",
+    );
+    expect(
+      within(panel).getByTestId(
+        "agreement-template-generate-review-result",
+      ),
+    ).toHaveTextContent(
+      /create a Repository record with a Generated Word document/i,
+    );
+    expect(
+      within(panel).getByTestId(
+        "agreement-template-generate-review-privacy",
+      ),
+    ).toHaveTextContent(
+      /not stored in template metadata/i,
+    );
+    // No raw backend labels.
+    expect(panel.textContent ?? "").not.toMatch(/\bgenerated_docx\b/);
+    expect(panel.textContent ?? "").not.toMatch(/\boriginal_upload\b/);
+  });
+
+  it("review panel rows report Filled / Blank / Missing status (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    // Fill counterparty_name; leave effective_date missing.
+    fireEvent.change(
+      screen.getByTestId(
+        "agreement-template-generate-input-counterparty_name",
+      ),
+      { target: { value: "Acme" } },
+    );
+    // Override the optional governing_law default to empty (Blank).
+    fireEvent.change(
+      screen.getByTestId(
+        "agreement-template-generate-input-governing_law",
+      ),
+      { target: { value: "" } },
+    );
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    const panel = await screen.findByTestId(
+      "agreement-template-generate-review",
+    );
+    const rows = within(panel).getAllByTestId(
+      "agreement-template-generate-review-row",
+    );
+    const byKey = new Map(
+      rows.map((row) => [row.getAttribute("data-variable-key"), row]),
+    );
+    expect(byKey.get("counterparty_name")?.getAttribute("data-status")).toBe(
+      "filled",
+    );
+    expect(byKey.get("effective_date")?.getAttribute("data-status")).toBe(
+      "missing",
+    );
+    expect(byKey.get("governing_law")?.getAttribute("data-status")).toBe(
+      "blank",
+    );
+  });
+
+  it("does not surface forbidden strings in the review panel (PR #97)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    fireEvent.click(
+      screen.getByTestId("agreement-template-generate-submit"),
+    );
+    await screen.findByTestId("agreement-template-generate-review");
+    const body = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+    ]) {
+      expect(body).not.toContain(needle);
+    }
   });
 
   // -------------------------------------------------------------------------
