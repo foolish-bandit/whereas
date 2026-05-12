@@ -71,6 +71,7 @@ export default function RequestsPage() {
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [titleTouched, setTitleTouched] = useState(false);
 
   useEffect(() => {
     let aborted = false;
@@ -91,6 +92,18 @@ export default function RequestsPage() {
       aborted = true;
     };
   }, [includeCancelled]);
+
+  useEffect(() => {
+    if (titleTouched) return;
+    const next = [counterparty.trim(), contractType.trim()].filter(Boolean).join(" ");
+    setTitle(next);
+  }, [counterparty, contractType, titleTouched]);
+
+  function applyDueDateOffset(days: number) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    setDueDate(d.toISOString().slice(0, 10));
+  }
 
   async function onCreate() {
     if (!title.trim()) return;
@@ -293,20 +306,57 @@ export default function RequestsPage() {
           className="rounded border border-rule px-2 py-1 text-sm"
           placeholder="Title (e.g. NDA with Acme Corp)"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitleTouched(true);
+            setTitle(e.target.value);
+          }}
         />
+        {state.kind === "loaded" && (
+          <>
+            <datalist id="counterparty-suggestions">
+              {Array.from(
+                new Set(
+                  state.rows
+                    .map((r) => r.counterparty_name?.trim())
+                    .filter((v): v is string => Boolean(v)),
+                ),
+              ).map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <datalist id="contract-type-suggestions">
+              {Array.from(
+                new Set(
+                  [
+                    "NDA",
+                    "MSA",
+                    "SOW",
+                    "DPA",
+                    ...state.rows
+                      .map((r) => r.contract_type?.trim())
+                      .filter((v): v is string => Boolean(v)),
+                  ],
+                ),
+              ).map((type) => (
+                <option key={type} value={type} />
+              ))}
+            </datalist>
+          </>
+        )}
         <div className="grid gap-2 sm:grid-cols-2">
           <input
             className="rounded border border-rule px-2 py-1 text-sm"
             placeholder="Counterparty"
             value={counterparty}
             onChange={(e) => setCounterparty(e.target.value)}
+            list="counterparty-suggestions"
           />
           <input
             className="rounded border border-rule px-2 py-1 text-sm"
             placeholder="Contract type (NDA, MSA, SOW, ...)"
             value={contractType}
             onChange={(e) => setContractType(e.target.value)}
+            list="contract-type-suggestions"
           />
           <select
             className="rounded border border-rule px-2 py-1 text-sm"
@@ -338,6 +388,12 @@ export default function RequestsPage() {
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
           />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-subtle">
+            <span>Quick due date:</span>
+            <button type="button" className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted" onClick={() => applyDueDateOffset(3)}>+3d</button>
+            <button type="button" className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted" onClick={() => applyDueDateOffset(7)}>+1w</button>
+            <button type="button" className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted" onClick={() => applyDueDateOffset(14)}>+2w</button>
+          </div>
         </div>
         <textarea
           className="rounded border border-rule px-2 py-1 text-sm"
