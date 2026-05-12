@@ -124,6 +124,14 @@ class AuditEventType(StrEnum):
     # and signer PII are NEVER recorded.
     CONTRACT_ARTIFACT_REDLINE_SAVED = "contract.artifact_redline_saved"
     CONTRACT_ARTIFACT_PREVIEWED = "contract.artifact_previewed"
+    # PR #103 — per-version download of an AgreementTemplateArtifact
+    # from the Source file history view. Payload identifies the
+    # template, the artifact, the artifact_type, and the filename;
+    # storage_key / wrapped_dek / raw bytes / template body text /
+    # variable values are NEVER recorded.
+    AGREEMENT_TEMPLATE_ARTIFACT_DOWNLOADED = (
+        "agreement_template.artifact_downloaded"
+    )
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"
 

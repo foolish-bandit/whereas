@@ -10,6 +10,7 @@ import {
   archiveAgreementTemplate,
   createAgreementTemplateVariable,
   deleteAgreementTemplateVariable,
+  downloadAgreementTemplateArtifact,
   generateAgreementFromTemplate,
   getAgreementTemplate,
   getAgreementTemplateArtifacts,
@@ -457,7 +458,10 @@ export default function AgreementTemplateDetailPage() {
         )}
       </section>
 
-      <SourceHistorySection artifacts={state.artifacts} />
+      <SourceHistorySection
+        templateId={state.template.id}
+        artifacts={state.artifacts}
+      />
 
       <section
         className="overflow-hidden rounded border border-rule"
@@ -1292,17 +1296,73 @@ function resolveValue(
  * a per-version download is intentional future work that requires its
  * own scoped endpoint + audit.
  */
+type SourceDownloadState =
+  | { kind: "idle" }
+  | { kind: "downloading" }
+  | { kind: "error"; message: string };
+
 function SourceHistorySection({
+  templateId,
   artifacts,
 }: {
+  templateId: string;
   artifacts: AgreementTemplateArtifact[];
 }) {
-  const sources = artifacts
-    .filter((a) => a.artifact_type === "original_upload")
-    .slice()
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const sources = useMemo(
+    () =>
+      artifacts
+        .filter((a) => a.artifact_type === "original_upload")
+        .slice()
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [artifacts],
+  );
   const currentSourceId =
     sources.find((s) => s.is_official)?.id ?? sources[0]?.id ?? null;
+  const [downloads, setDownloads] = useState<
+    Record<string, SourceDownloadState>
+  >({});
+
+  async function onDownload(artifact: AgreementTemplateArtifact) {
+    setDownloads((prev) => ({ ...prev, [artifact.id]: { kind: "downloading" } }));
+    try {
+      const result = await downloadAgreementTemplateArtifact(
+        templateId,
+        artifact.id,
+      );
+      const filename =
+        result.filename ||
+        (artifact.filename ?? "template-source").replace(
+          /[^A-Za-z0-9._-]+/g,
+          "_",
+        );
+      const url = URL.createObjectURL(result.blob);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      setDownloads((prev) => {
+        const next = { ...prev };
+        delete next[artifact.id];
+        return next;
+      });
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError || err instanceof ApiError
+          ? err.message
+          : "Could not download this version.";
+      setDownloads((prev) => ({
+        ...prev,
+        [artifact.id]: { kind: "error", message },
+      }));
+    }
+  }
+
   return (
     <section
       className="rounded border border-rule p-4"
@@ -1312,8 +1372,8 @@ function SourceHistorySection({
       <p className="mt-1 text-xs text-ink-subtle">
         Every source file uploaded for this template, newest first.
         The current source file is the version operators distribute;
-        older versions are kept for audit. Per-version download and
-        side-by-side compare are future work.
+        older versions are kept for audit. Side-by-side compare is
+        future work.
       </p>
       {sources.length === 0 ? (
         <p
@@ -1330,10 +1390,11 @@ function SourceHistorySection({
         >
           {sources.map((s) => {
             const isCurrent = s.id === currentSourceId;
+            const dl = downloads[s.id] ?? { kind: "idle" };
             return (
               <li
                 key={s.id}
-                className={`flex flex-wrap items-baseline gap-2 rounded border p-2 ${
+                className={`rounded border p-2 ${
                   isCurrent
                     ? "border-info-ring bg-info-soft"
                     : "border-rule bg-canvas"
@@ -1341,27 +1402,50 @@ function SourceHistorySection({
                 data-testid="agreement-template-source-history-row"
                 data-current={isCurrent ? "true" : "false"}
               >
-                <span className="font-medium text-ink">Source file</span>
-                {isCurrent && (
-                  <span
-                    className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info"
-                    data-testid="agreement-template-source-history-current-chip"
-                    title="The version operators distribute"
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-medium text-ink">Source file</span>
+                    {isCurrent && (
+                      <span
+                        className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info"
+                        data-testid="agreement-template-source-history-current-chip"
+                        title="The version operators distribute"
+                      >
+                        Current
+                      </span>
+                    )}
+                    {s.filename && (
+                      <span className="text-ink-muted">{s.filename}</span>
+                    )}
+                    {s.mime_type && (
+                      <span className="text-ink-subtle">
+                        {mimeLabel(s.mime_type)}
+                      </span>
+                    )}
+                    <span className="text-ink-subtle">
+                      Uploaded {formatDate(s.created_at)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDownload(s)}
+                    disabled={dl.kind === "downloading"}
+                    className="rounded border border-rule px-2 py-1 text-[11px] text-ink hover:bg-canvas-muted disabled:opacity-50"
+                    data-testid="agreement-template-source-history-download"
                   >
-                    Current
-                  </span>
+                    {dl.kind === "downloading"
+                      ? "Downloading…"
+                      : "Download version"}
+                  </button>
+                </div>
+                {dl.kind === "error" && (
+                  <p
+                    className="mt-1 text-[11px] text-danger"
+                    data-testid="agreement-template-source-history-download-error"
+                  >
+                    {dl.message}
+                  </p>
                 )}
-                {s.filename && (
-                  <span className="text-ink-muted">{s.filename}</span>
-                )}
-                {s.mime_type && (
-                  <span className="text-ink-subtle">
-                    {mimeLabel(s.mime_type)}
-                  </span>
-                )}
-                <span className="text-ink-subtle">
-                  Uploaded {formatDate(s.created_at)}
-                </span>
               </li>
             );
           })}

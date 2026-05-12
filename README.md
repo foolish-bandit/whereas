@@ -402,6 +402,40 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Agreement Template source file download (PR #103)
+
+Each row in the *Source file history* section now carries a
+*Download version* action so operators can pull a specific
+historical source-file upload.
+
+- **Backend**: new endpoint
+  `GET /api/agreement-templates/{template_id}/artifacts/{artifact_id}/download`.
+  Org + template + artifact scoped — cross-org, wrong-template, or
+  missing-artifact requests all return 404 with the same opaque shape
+  so callers cannot distinguish *"wrong artifact"* from *"wrong
+  template"*. Missing / unusable storage metadata returns 409.
+  Streams decrypted bytes as `Content-Disposition: attachment`. No
+  presigned or private URLs; no JSON or base64 body. No legacy
+  fallback to unrelated storage fields.
+- **Audit**: new event
+  `agreement_template.artifact_downloaded` with **allowlisted**
+  details only: `agreement_template_id`, `artifact_id`,
+  `artifact_type`, `filename`, `mime_type`. Never records
+  `storage_key`, `wrapped_dek`, `s3_key`, raw `metadata_json`,
+  private URLs, document bytes, template body text, variable values,
+  or DocuSeal secrets.
+- **Frontend**: per-row *Download version* button on the Source file
+  history section. Authenticated blob fetch via the shared
+  `downloadBlob` helper; object URL revoked in a `finally` so a
+  download error doesn't leak the URL. Errors surface a per-row
+  inline message. The page remains view-only otherwise — no preview,
+  rollback, or side-by-side compare in this PR.
+- **Demo mock**: returns a safe placeholder `text/plain` blob; no
+  storage internals.
+
+Template generation, approval, DocuSeal, Repository-artifact, and
+request semantics are unchanged.
+
 ## Agreement Template source file history (PR #102)
 
 Agreement Template detail pages

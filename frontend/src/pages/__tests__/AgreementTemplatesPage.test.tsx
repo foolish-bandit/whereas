@@ -1247,6 +1247,84 @@ describe("AgreementTemplateDetailPage", () => {
     expect(rows[0]).toHaveTextContent("nda.docx");
   });
 
+  it("renders a Download version button on each source row (PR #103)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    const section = await screen.findByTestId(
+      "agreement-template-source-history",
+    );
+    const buttons = within(section).getAllByTestId(
+      "agreement-template-source-history-download",
+    );
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveTextContent(/download version/i);
+  });
+
+  it("downloads via blob URL and revokes it on success (PR #103)", async () => {
+    setupDetailFetch(fetchMock);
+    // Override fetch to return raw bytes for the download endpoint.
+    const realFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/agreement-templates/${NDA_ID}/artifacts/${NDA_ARTIFACT.id}/download`,
+        )
+      ) {
+        return new Response(new Blob([new Uint8Array([1, 2, 3])]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="nda.pdf"',
+          },
+        });
+      }
+      return realFetch!(url, init);
+    });
+    const createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    try {
+      renderDetail();
+      const btn = await screen.findByTestId(
+        "agreement-template-source-history-download",
+      );
+      fireEvent.click(btn);
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalled());
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("renders a per-row error state when the download fails (PR #103)", async () => {
+    setupDetailFetch(fetchMock);
+    const realFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/agreement-templates/${NDA_ID}/artifacts/${NDA_ARTIFACT.id}/download`,
+        )
+      ) {
+        return new Response(
+          JSON.stringify({ detail: "Template artifact not found." }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return realFetch!(url, init);
+    });
+    renderDetail();
+    const btn = await screen.findByTestId(
+      "agreement-template-source-history-download",
+    );
+    fireEvent.click(btn);
+    expect(
+      await screen.findByTestId(
+        "agreement-template-source-history-download-error",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not leak forbidden artifact-type tokens or storage internals in the DOM", async () => {
     setupDetailFetch(fetchMock, {
       artifacts: [

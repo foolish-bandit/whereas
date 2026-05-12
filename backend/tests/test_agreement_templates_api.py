@@ -34,7 +34,7 @@ from app.models import (  # noqa: E402
     Organization,
     User,
 )
-from app.security.audit_log import AuditEvent  # noqa: E402
+from app.security.audit_log import AuditEvent, AuditEventType  # noqa: E402
 from app.security.encryption import create_org_master_key  # noqa: E402
 from app.services.document_markdown import MarkdownConversionResult  # noqa: E402
 from app.services.storage import StoredDocument  # noqa: E402
@@ -204,8 +204,18 @@ def _file_tuple(
 class FakeStorage:
     """Captures store_encrypted calls without doing real S3 work."""
 
+    # ``stored_blobs`` lets ``retrieve_decrypted`` return the exact
+    # bytes that were uploaded (PR #103 — download endpoint tests).
+    stored_blobs: dict[str, bytes] = {}
+    retrieve_calls: list[dict[str, Any]] = []
+
     def __init__(self, _settings: Any) -> None:
-        pass
+        self.__class__.stored_blobs = getattr(
+            self.__class__, "stored_blobs", {}
+        )
+        self.__class__.retrieve_calls = getattr(
+            self.__class__, "retrieve_calls", []
+        )
 
     async def store_encrypted(
         self,
@@ -214,12 +224,32 @@ class FakeStorage:
         document_id: str,
         org_master_key: bytes,
     ) -> StoredDocument:
+        s3_key = f"templates/{document_id}.enc"
+        self.__class__.stored_blobs[s3_key] = plaintext_bytes
         return StoredDocument(
-            s3_key=f"templates/{document_id}.enc",
+            s3_key=s3_key,
             wrapped_dek_bytes=b"wrapped-dek",
             encrypted_blob_sha256="a" * 64,
             size_bytes=len(plaintext_bytes) + 28,
         )
+
+    async def retrieve_decrypted(
+        self,
+        *,
+        s3_key: str,
+        document_id: str,
+        wrapped_dek_bytes: bytes,
+        org_master_key: bytes,
+        expected_blob_sha256: str | None = None,
+    ) -> bytes:
+        self.__class__.retrieve_calls.append(
+            {
+                "s3_key": s3_key,
+                "document_id": document_id,
+                "wrapped_dek_bytes": wrapped_dek_bytes,
+            }
+        )
+        return self.__class__.stored_blobs.get(s3_key, b"")
 
 
 @pytest.fixture(autouse=True)
@@ -556,6 +586,193 @@ async def test_artifacts_listing_does_not_expose_storage_key(
     assert len(rows) == 1
     assert "storage_key" not in rows[0]
     assert "storage_key" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# PR #103 — per-version download of AgreementTemplateArtifact
+# ---------------------------------------------------------------------------
+
+
+async def _make_template_with_upload(
+    client: httpx.AsyncClient, user_org: UserOrg, *, content: bytes
+) -> tuple[str, str]:
+    created = await client.post(
+        "/api/agreement-templates",
+        headers=_headers(user_org.user),
+        json={"name": "NDA"},
+    )
+    template_id = created.json()["id"]
+    upload = await client.post(
+        f"/api/agreement-templates/{template_id}/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(content=content),
+    )
+    assert upload.status_code == 201, upload.text
+    return template_id, upload.json()["id"]
+
+
+async def test_download_artifact_returns_bytes_and_audits(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    body = b"%PDF-1.4\nTEMPLATE-CONTENTS-A"
+    template_id, artifact_id = await _make_template_with_upload(
+        client, user_org, content=body
+    )
+
+    response = await client.get(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200, response.text
+    assert response.content == body
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert "attachment;" in response.headers["content-disposition"]
+
+    # Audit event is emitted with allowlisted details only.
+    audit_events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.AGREEMENT_TEMPLATE_ARTIFACT_DOWNLOADED.value
+            )
+        )
+    ).scalars().all()
+    assert len(audit_events) == 1
+    details = audit_events[0].details
+    assert details["agreement_template_id"] == template_id
+    assert details["artifact_id"] == artifact_id
+    assert details["artifact_type"] == "original_upload"
+    assert details["mime_type"] == "application/pdf"
+    assert "filename" in details
+    text_blob = str(details)
+    for forbidden in (
+        "storage_key",
+        "wrapped_dek",
+        "s3_key",
+        "private_url",
+        "presigned",
+        "variable",
+    ):
+        assert forbidden not in text_blob
+    assert body.hex() not in text_blob
+
+
+async def test_download_artifact_cross_org_template_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org_a = await _create_user_org(
+        db_session, email="dl-cross-tmpl-a@example.com"
+    )
+    org_b = await _create_user_org(
+        db_session, email="dl-cross-tmpl-b@example.com"
+    )
+    template_id, artifact_id = await _make_template_with_upload(
+        client, org_a, content=b"%PDF-1.4\nA",
+    )
+    response = await client.get(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/download",
+        headers=_headers(org_b.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_artifact_cross_org_artifact_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A second org's artifact id passed against the first org's template
+    must return 404 (same opaque shape as a missing artifact)."""
+    org_a = await _create_user_org(db_session, email="dl-x-art-a@example.com")
+    org_b = await _create_user_org(db_session, email="dl-x-art-b@example.com")
+    template_a_id, _ = await _make_template_with_upload(
+        client, org_a, content=b"%PDF-1.4\nA",
+    )
+    _, artifact_b_id = await _make_template_with_upload(
+        client, org_b, content=b"%PDF-1.4\nB",
+    )
+    response = await client.get(
+        f"/api/agreement-templates/{template_a_id}/artifacts/{artifact_b_id}/download",
+        headers=_headers(org_a.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_artifact_from_different_template_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    _, artifact_a_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    template_b_id, _ = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nB",
+    )
+    response = await client.get(
+        f"/api/agreement-templates/{template_b_id}/artifacts/{artifact_a_id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_artifact_missing_artifact_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, _ = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    bogus = "00000000-0000-4000-8000-000000000000"
+    response = await client.get(
+        f"/api/agreement-templates/{template_id}/artifacts/{bogus}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_artifact_missing_storage_returns_409(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, artifact_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    # Wipe storage_key on the row to simulate a stuck/failed upload.
+    artifact = await db_session.get(
+        AgreementTemplateArtifact, uuid.UUID(artifact_id)
+    )
+    assert artifact is not None
+    artifact.storage_key = None
+    await db_session.commit()
+    response = await client.get(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 409
+
+
+async def test_download_artifact_response_does_not_expose_storage_internals(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, artifact_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    response = await client.get(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/download",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    # Body is raw bytes — JSON shape entirely absent.
+    headers_text = " ".join(f"{k}: {v}" for k, v in response.headers.items())
+    for forbidden in (
+        "storage_key",
+        "wrapped_dek",
+        "s3_key",
+        "private_url",
+        "presigned",
+        "metadata_json",
+    ):
+        assert forbidden not in headers_text
 
 
 # ---------------------------------------------------------------------------
