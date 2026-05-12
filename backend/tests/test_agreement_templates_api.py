@@ -776,6 +776,239 @@ async def test_download_artifact_response_does_not_expose_storage_internals(
 
 
 # ---------------------------------------------------------------------------
+# PR #106 — restore prior AgreementTemplateArtifact as current source
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_sets_chosen_artifact_official_and_unsets_prior(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, first_artifact_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    second_upload = await client.post(
+        f"/api/agreement-templates/{template_id}/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(content=b"%PDF-1.4\nB"),
+    )
+    assert second_upload.status_code == 201
+    second_artifact_id = second_upload.json()["id"]
+
+    # Sanity: both rows exist and at least one is official.
+    pre_rows = (
+        await db_session.execute(
+            select(AgreementTemplateArtifact).where(
+                AgreementTemplateArtifact.template_id == uuid.UUID(template_id)
+            )
+        )
+    ).scalars().all()
+    assert {str(r.id) for r in pre_rows} == {
+        first_artifact_id,
+        second_artifact_id,
+    }
+    assert any(r.is_official for r in pre_rows)
+
+    # Restore the first upload as the current source.
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{first_artifact_id}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["id"] == first_artifact_id
+    assert payload["is_official"] is True
+
+    # Both rows are still present; only one is official, and it's the
+    # restored one.
+    db_session.expire_all()
+    rows = (
+        await db_session.execute(
+            select(AgreementTemplateArtifact).where(
+                AgreementTemplateArtifact.template_id == uuid.UUID(template_id)
+            )
+        )
+    ).scalars().all()
+    assert {str(r.id) for r in rows} == {first_artifact_id, second_artifact_id}
+    official = [r for r in rows if r.is_official]
+    assert len(official) == 1
+    assert str(official[0].id) == first_artifact_id
+
+    # Audit event carries the allowlisted before/after + safe metadata.
+    audit_events = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.AGREEMENT_TEMPLATE_ARTIFACT_RESTORED.value
+            )
+        )
+    ).scalars().all()
+    assert len(audit_events) == 1
+    details = audit_events[0].details
+    assert details["agreement_template_id"] == template_id
+    assert details["artifact_id"] == first_artifact_id
+    # ``previous_artifact_id`` records *some* prior official row that
+    # was unset. We don't care which one wins the race when multiple
+    # were flagged simultaneously — only that it is not the restored
+    # row and is one of the templates' artifacts.
+    assert details["previous_artifact_id"] != first_artifact_id
+    assert details["previous_artifact_id"] in {
+        second_artifact_id,
+        None,
+    }
+    assert details["artifact_type"] == "original_upload"
+    assert details["mime_type"] == "application/pdf"
+    text_blob = str(details)
+    for forbidden in (
+        "storage_key",
+        "wrapped_dek",
+        "s3_key",
+        "private_url",
+        "presigned",
+        "metadata_json",
+        "variable",
+    ):
+        assert forbidden not in text_blob
+
+
+async def test_restore_when_no_prior_official_has_previous_artifact_id_none(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, artifact_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    # Force the only artifact to non-official to simulate a regressed row.
+    artifact = await db_session.get(
+        AgreementTemplateArtifact, uuid.UUID(artifact_id)
+    )
+    assert artifact is not None
+    artifact.is_official = False
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    assert response.json()["is_official"] is True
+    audit = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.event_type
+                == AuditEventType.AGREEMENT_TEMPLATE_ARTIFACT_RESTORED.value
+            )
+        )
+    ).scalars().all()
+    assert audit[0].details["previous_artifact_id"] is None
+
+
+async def test_restore_cross_org_template_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org_a = await _create_user_org(db_session, email="r-x-tmpl-a@example.com")
+    org_b = await _create_user_org(db_session, email="r-x-tmpl-b@example.com")
+    template_id, artifact_id = await _make_template_with_upload(
+        client, org_a, content=b"%PDF-1.4\nA",
+    )
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/restore",
+        headers=_headers(org_b.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_restore_artifact_from_different_template_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    _, artifact_a_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    template_b_id, _ = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nB",
+    )
+    response = await client.post(
+        f"/api/agreement-templates/{template_b_id}/artifacts/{artifact_a_id}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_restore_missing_artifact_returns_404(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, _ = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    bogus = "00000000-0000-4000-8000-000000000000"
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{bogus}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 404
+
+
+async def test_restore_refuses_non_source_artifact_type(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A derived artifact (e.g. ``generated_docx``) cannot be promoted
+    to the template's official source — only ``original_upload`` rows
+    can be restored."""
+    user_org = await _create_user_org(db_session)
+    template_id, _ = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    derived = AgreementTemplateArtifact(
+        organization_id=user_org.org.id,
+        template_id=uuid.UUID(template_id),
+        artifact_type="generated_docx",
+        storage_backend="s3",
+        storage_key="templates/derived.enc",
+        wrapped_dek=b"wrapped-dek",
+        filename="derived.docx",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        file_hash_sha256=None,
+        size_bytes=10,
+        source="user_upload",
+        is_official=False,
+        created_by=user_org.user.id,
+    )
+    db_session.add(derived)
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{derived.id}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 422
+
+
+async def test_restore_response_does_not_expose_storage_internals(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    template_id, artifact_id = await _make_template_with_upload(
+        client, user_org, content=b"%PDF-1.4\nA",
+    )
+    response = await client.post(
+        f"/api/agreement-templates/{template_id}/artifacts/{artifact_id}/restore",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    body = response.text
+    for forbidden in (
+        "storage_key",
+        "wrapped_dek",
+        "s3_key",
+        "private_url",
+        "presigned",
+    ):
+        assert forbidden not in body
+
+
+# ---------------------------------------------------------------------------
 # Variables CRUD
 # ---------------------------------------------------------------------------
 

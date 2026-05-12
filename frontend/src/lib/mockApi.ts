@@ -1876,6 +1876,28 @@ export async function getAgreementTemplateArtifacts(
   return demoAgreementTemplateArtifacts[id] ?? [];
 }
 
+export async function restoreAgreementTemplateArtifact(
+  templateId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<AgreementTemplateArtifact> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const artifacts = demoAgreementTemplateArtifacts[templateId] ?? [];
+  const target = artifacts.find((a) => a.id === artifactId);
+  if (!target) {
+    throw new ApiError(404, "Template artifact not found.");
+  }
+  if (target.artifact_type !== "original_upload") {
+    throw new ApiError(422, "Only source-file artifacts can be restored.");
+  }
+  const next = artifacts.map((a) => {
+    if (a.artifact_type !== "original_upload") return a;
+    return { ...a, is_official: a.id === artifactId };
+  });
+  demoAgreementTemplateArtifacts[templateId] = next;
+  return next.find((a) => a.id === artifactId)!;
+}
+
 export async function downloadAgreementTemplateArtifact(
   templateId: string,
   artifactId: string,

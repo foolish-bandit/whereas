@@ -132,6 +132,15 @@ class AuditEventType(StrEnum):
     AGREEMENT_TEMPLATE_ARTIFACT_DOWNLOADED = (
         "agreement_template.artifact_downloaded"
     )
+    # PR #106 — restore a prior AgreementTemplateArtifact as the
+    # template's current/official source file. Payload identifies the
+    # template, the newly-current artifact, the previously-current
+    # artifact (when there was one), and safe metadata. No storage
+    # internals, raw metadata_json, document bytes, plaintext
+    # variable values, or DocuSeal secrets are ever recorded.
+    AGREEMENT_TEMPLATE_ARTIFACT_RESTORED = (
+        "agreement_template.artifact_restored"
+    )
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"
 

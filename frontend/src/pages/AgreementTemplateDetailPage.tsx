@@ -17,6 +17,7 @@ import {
   getAgreementTemplateMarkdown,
   listAgreementTemplateVariableSuggestions,
   listAgreementTemplateVariables,
+  restoreAgreementTemplateArtifact,
   uploadAgreementTemplateArtifact,
 } from "../lib/api";
 import { artifactDisplayLabel } from "../lib/artifacts";
@@ -461,6 +462,7 @@ export default function AgreementTemplateDetailPage() {
       <SourceHistorySection
         templateId={state.template.id}
         artifacts={state.artifacts}
+        onReload={reload}
       />
 
       <section
@@ -1301,12 +1303,20 @@ type SourceDownloadState =
   | { kind: "downloading" }
   | { kind: "error"; message: string };
 
+type SourceRestoreState =
+  | { kind: "idle" }
+  | { kind: "confirming" }
+  | { kind: "restoring" }
+  | { kind: "error"; message: string };
+
 function SourceHistorySection({
   templateId,
   artifacts,
+  onReload,
 }: {
   templateId: string;
   artifacts: AgreementTemplateArtifact[];
+  onReload: () => Promise<void> | void;
 }) {
   const sources = useMemo(
     () =>
@@ -1321,6 +1331,35 @@ function SourceHistorySection({
   const [downloads, setDownloads] = useState<
     Record<string, SourceDownloadState>
   >({});
+  const [restores, setRestores] = useState<
+    Record<string, SourceRestoreState>
+  >({});
+
+  function setRestoreState(id: string, state: SourceRestoreState) {
+    setRestores((prev) => {
+      if (state.kind === "idle") {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      return { ...prev, [id]: state };
+    });
+  }
+
+  async function onConfirmRestore(artifact: AgreementTemplateArtifact) {
+    setRestoreState(artifact.id, { kind: "restoring" });
+    try {
+      await restoreAgreementTemplateArtifact(templateId, artifact.id);
+      setRestoreState(artifact.id, { kind: "idle" });
+      await onReload();
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError || err instanceof ApiError
+          ? err.message
+          : "Could not restore this version.";
+      setRestoreState(artifact.id, { kind: "error", message });
+    }
+  }
 
   async function onDownload(artifact: AgreementTemplateArtifact) {
     setDownloads((prev) => ({ ...prev, [artifact.id]: { kind: "downloading" } }));
@@ -1391,6 +1430,7 @@ function SourceHistorySection({
           {sources.map((s) => {
             const isCurrent = s.id === currentSourceId;
             const dl = downloads[s.id] ?? { kind: "idle" };
+            const rs = restores[s.id] ?? { kind: "idle" };
             return (
               <li
                 key={s.id}
@@ -1426,18 +1466,92 @@ function SourceHistorySection({
                       Uploaded {formatDate(s.created_at)}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onDownload(s)}
-                    disabled={dl.kind === "downloading"}
-                    className="rounded border border-rule px-2 py-1 text-[11px] text-ink hover:bg-canvas-muted disabled:opacity-50"
-                    data-testid="agreement-template-source-history-download"
-                  >
-                    {dl.kind === "downloading"
-                      ? "Downloading…"
-                      : "Download version"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onDownload(s)}
+                      disabled={dl.kind === "downloading"}
+                      className="rounded border border-rule px-2 py-1 text-[11px] text-ink hover:bg-canvas-muted disabled:opacity-50"
+                      data-testid="agreement-template-source-history-download"
+                    >
+                      {dl.kind === "downloading"
+                        ? "Downloading…"
+                        : "Download version"}
+                    </button>
+                    {!isCurrent && rs.kind === "idle" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRestoreState(s.id, { kind: "confirming" })
+                        }
+                        className="rounded border border-rule px-2 py-1 text-[11px] text-ink hover:bg-canvas-muted"
+                        data-testid="agreement-template-source-history-restore"
+                      >
+                        Restore as current
+                      </button>
+                    )}
+                    {!isCurrent && rs.kind === "error" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRestoreState(s.id, { kind: "confirming" })
+                        }
+                        className="rounded border border-rule px-2 py-1 text-[11px] text-ink hover:bg-canvas-muted"
+                        data-testid="agreement-template-source-history-restore"
+                      >
+                        Restore as current
+                      </button>
+                    )}
+                  </div>
                 </div>
+                {!isCurrent && rs.kind === "confirming" && (
+                  <div
+                    className="mt-2 rounded border border-rule bg-canvas-subtle p-2 text-[11px] text-ink-muted"
+                    data-testid="agreement-template-source-history-restore-confirm"
+                  >
+                    <p>
+                      Restore this source file as the current template
+                      source? This does not delete any historical
+                      files, future generated agreements will use this
+                      source file, and template variables are not
+                      changed automatically.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onConfirmRestore(s)}
+                        className="rounded border border-ink bg-ink px-2 py-1 text-canvas disabled:opacity-50"
+                        data-testid="agreement-template-source-history-restore-confirm-yes"
+                      >
+                        Restore as current
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRestoreState(s.id, { kind: "idle" })}
+                        className="rounded border border-rule px-2 py-1 text-ink hover:bg-canvas-muted"
+                        data-testid="agreement-template-source-history-restore-cancel"
+                      >
+                        Keep current
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!isCurrent && rs.kind === "restoring" && (
+                  <p
+                    className="mt-1 text-[11px] text-ink-subtle"
+                    data-testid="agreement-template-source-history-restore-pending"
+                  >
+                    Restoring…
+                  </p>
+                )}
+                {!isCurrent && rs.kind === "error" && (
+                  <p
+                    className="mt-1 text-[11px] text-danger"
+                    data-testid="agreement-template-source-history-restore-error"
+                  >
+                    {rs.message}
+                  </p>
+                )}
                 {dl.kind === "error" && (
                   <p
                     className="mt-1 text-[11px] text-danger"

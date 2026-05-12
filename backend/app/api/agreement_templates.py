@@ -442,6 +442,110 @@ async def download_agreement_template_artifact(
     )
 
 
+@router.post(
+    "/{template_id}/artifacts/{artifact_id}/restore",
+    response_model=AgreementTemplateArtifactResponse,
+)
+async def restore_agreement_template_artifact(
+    template_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> AgreementTemplateArtifactResponse:
+    """Restore a prior source-file upload as the template's current source (PR #106).
+
+    Sets ``is_official=True`` on the chosen artifact and ``False`` on
+    every other ``original_upload`` artifact for the same template
+    (single-current invariant). All historical artifact rows are
+    preserved — no rows are deleted, no storage keys or wrapped DEKs
+    are mutated.
+
+    Resolution rules:
+      * Template must belong to the caller's org (cross-org → 404).
+      * Artifact must match ``artifact_id``, belong to *this*
+        template, and belong to the same organization — any miss
+        returns 404, matching the template-not-found shape.
+      * Only ``artifact_type='original_upload'`` rows can be restored
+        — generated/preview/attachment artifacts return 422 so the
+        endpoint cannot accidentally promote a derived file as the
+        template's source.
+
+    The audit event ``agreement_template.artifact_restored`` records
+    the template id, the newly-current artifact, the previously-
+    current artifact (when there was one), and safe metadata. Storage
+    internals, raw ``metadata_json``, document bytes, and plaintext
+    variable values are NEVER recorded.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    template = await _get_template_for_org(
+        session, template_id, user.organization_id
+    )
+    artifact = (
+        await session.execute(
+            select(AgreementTemplateArtifact).where(
+                AgreementTemplateArtifact.id == artifact_id,
+                AgreementTemplateArtifact.template_id == template.id,
+                AgreementTemplateArtifact.organization_id
+                == user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Template artifact not found.")
+    if artifact.artifact_type != "original_upload":
+        # Only source uploads can be promoted to current. Generated /
+        # preview / attachment rows live in their own taxonomy and
+        # have no notion of "official" source file.
+        raise HTTPException(
+            status_code=422,
+            detail="Only source-file artifacts can be restored.",
+        )
+
+    # Capture the previously-current source so the audit row can
+    # surface a before/after pair (allowlisted ids only).
+    siblings = (
+        await session.execute(
+            select(AgreementTemplateArtifact).where(
+                AgreementTemplateArtifact.template_id == template.id,
+                AgreementTemplateArtifact.organization_id
+                == user.organization_id,
+                AgreementTemplateArtifact.artifact_type == "original_upload",
+            )
+        )
+    ).scalars().all()
+    previous_current_id: uuid.UUID | None = None
+    for sibling in siblings:
+        if sibling.id == artifact.id:
+            continue
+        if sibling.is_official:
+            previous_current_id = sibling.id
+            sibling.is_official = False
+    artifact.is_official = True
+    await session.flush()
+    await session.refresh(artifact)
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.AGREEMENT_TEMPLATE_ARTIFACT_RESTORED,
+        actor_user_id=user.id,
+        target_type="agreement_template",
+        target_id=str(template.id),
+        details={
+            "agreement_template_id": str(template.id),
+            "artifact_id": str(artifact.id),
+            "previous_artifact_id": (
+                str(previous_current_id) if previous_current_id else None
+            ),
+            "artifact_type": artifact.artifact_type,
+            "filename": artifact.filename,
+            "mime_type": artifact.mime_type,
+        },
+    )
+
+    return AgreementTemplateArtifactResponse.model_validate(artifact)
+
+
 @router.get(
     "/{template_id}/markdown",
     response_model=AgreementTemplateMarkdownSnapshotResponse,

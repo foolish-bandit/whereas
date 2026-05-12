@@ -479,6 +479,47 @@ Frontend-only. No backend changes. No Repository API, search,
 artifact-priority, DocuSeal, approval, request, or duplicate-merge
 semantics changed.
 
+## Agreement Template source file rollback (PR #106)
+
+Each non-current row in the *Source file history* section now
+carries a *Restore as current* action behind a two-step confirm so
+operators can promote a prior source-file upload back to the
+template's current source.
+
+- **Backend**: new endpoint
+  `POST /api/agreement-templates/{template_id}/artifacts/{artifact_id}/restore`.
+  Org + template + artifact scoped — cross-org / wrong-template /
+  missing artifact all return 404. Only `original_upload` rows can
+  be restored; generated/derived rows return 422. Transactionally
+  sets `is_official=True` on the chosen artifact and `False` on
+  every other `original_upload` for the same template (single-current
+  invariant). **No rows are deleted, no storage keys or wrapped DEKs
+  are mutated.**
+- **Audit**: new event
+  `agreement_template.artifact_restored` with allowlisted details
+  only: `agreement_template_id`, `artifact_id`,
+  `previous_artifact_id` (when there was one), `artifact_type`,
+  `filename`, `mime_type`. Never records `storage_key`,
+  `wrapped_dek`, `s3_key`, raw `metadata_json`, document bytes,
+  plaintext variable values, or DocuSeal secrets.
+- **Frontend**: per-row *Restore as current* button on non-current
+  source rows; current row hides the action. Two-step confirm
+  explains: *this does not delete any files; future generated
+  agreements will use this source file; variables are not changed
+  automatically.* On success the page reloads template + artifacts
+  + Text preview so the *Current* marker moves to the restored row.
+  Per-row error state on failure with a retry path.
+- **Demo mock**: `restoreAgreementTemplateArtifact` flips the
+  in-memory `is_official` flag and returns the updated row;
+  matches backend semantics for the demo experience.
+
+Template generation logic that already relies on the official source
+artifact will naturally pick up the newly-current row on its next
+run — no generation-pipeline changes in this PR.
+
+Template variables, Repository artifact behavior, DocuSeal, approval,
+and request semantics are unchanged.
+
 ## Agreement Template source file download (PR #103)
 
 Each row in the *Source file history* section now carries a
