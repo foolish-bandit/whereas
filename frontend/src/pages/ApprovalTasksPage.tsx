@@ -128,8 +128,8 @@ export default function ApprovalTasksPage() {
           title="No approval tasks"
           description={
             includeCompleted
-              ? "Nothing in the approval queue yet. Open approval workflows or policies to attach approvals to a request."
-              : "Inbox zero for approvals. Toggle “Show completed” to see resolved approval tasks."
+              ? "Nothing has hit the approval queue yet. Attach a workflow or policy to a request or Repository record to create tasks."
+              : "Inbox zero for approvals. Toggle “Show completed” to review resolved approval work."
           }
         />
       )}

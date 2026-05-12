@@ -37,7 +37,12 @@ import {
   listRequests,
   uploadContract,
 } from "../mockApi";
-import { MOCK_FAILED_ID, MOCK_LIST, MOCK_NDA_ID } from "../mockData";
+import {
+  MOCK_EXECUTED_ID,
+  MOCK_FAILED_ID,
+  MOCK_LIST,
+  MOCK_NDA_ID,
+} from "../mockData";
 
 const NDA_TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
 const MSA_TEMPLATE_ID = "22222222-2222-4222-8222-222222222222";
@@ -209,12 +214,12 @@ describe("mockApi", () => {
   });
 
   it("compareContractArtifacts (PR #71) returns a structured diff for two demo artifacts", async () => {
-    const artifacts = await getContractArtifacts(MOCK_NDA_ID);
+    const artifacts = await getContractArtifacts(MOCK_EXECUTED_ID);
     expect(artifacts.length).toBeGreaterThanOrEqual(2);
     const source = artifacts.find((a) => a.artifact_type === "original_upload")!;
     const signed = artifacts.find((a) => a.artifact_type === "signed_pdf")!;
     const result = await compareContractArtifacts(
-      MOCK_NDA_ID,
+      MOCK_EXECUTED_ID,
       source.id,
       signed.id,
     );
@@ -402,10 +407,16 @@ describe("mockApi", () => {
         expect(value).toBeGreaterThanOrEqual(0);
       }
 
-      // The seeded MOCK_REQUESTS includes one open NDA, one in_progress
-      // MSA renewal, and one completed DPA.
-      expect(summary.counts.open_requests).toBeGreaterThanOrEqual(1);
-      expect(summary.counts.in_progress_requests).toBeGreaterThanOrEqual(1);
+      expect(summary.counts.open_requests).toBe(1);
+      expect(summary.counts.in_progress_requests).toBe(1);
+      expect(summary.counts.urgent_or_high_priority_requests).toBe(1);
+      expect(summary.counts.contracts_sent_for_signature).toBe(1);
+      expect(summary.counts.contracts_executed).toBe(1);
+      expect(summary.counts.templates_active).toBe(2);
+      expect(summary.counts.active_approval_workflows).toBe(1);
+      expect(summary.counts.pending_approval_steps).toBe(2);
+      expect(summary.counts.overdue_approval_steps).toBe(1);
+      expect(summary.counts.active_approval_workflow_templates).toBe(2);
 
       // No storage internals must end up in the response.
       const json = JSON.stringify(summary);

@@ -145,7 +145,7 @@ const NDA_FIELDS: ExtractedField[] = [
 export const MOCK_LIST: ContractListItem[] = [
   {
     id: MOCK_NDA_ID,
-    title: "Mutual NDA — Acme & Globex (sample)",
+    title: "Mutual NDA generated agreement — Acme & Globex (sample)",
     status: "ready",
     mime_type: PDF_MIME,
     file_hash_sha256:
@@ -156,7 +156,7 @@ export const MOCK_LIST: ContractListItem[] = [
   },
   {
     id: MOCK_MSA_ID,
-    title: "Mutual NDA Draft Source — Acme (sample)",
+    title: "Mutual NDA draft source — Acme (sample)",
     status: "uploaded",
     mime_type: DOCX_MIME,
     file_hash_sha256:
@@ -167,7 +167,7 @@ export const MOCK_LIST: ContractListItem[] = [
   },
   {
     id: MOCK_SIGNATURE_OUT_ID,
-    title: "NDA — Acme (out for signature, sample)",
+    title: "Mutual NDA — out for signature (sample)",
     status: "sent_for_signature",
     mime_type: PDF_MIME,
     file_hash_sha256:
@@ -178,7 +178,7 @@ export const MOCK_LIST: ContractListItem[] = [
   },
   {
     id: MOCK_EXECUTED_ID,
-    title: "NDA — Acme (executed, sample)",
+    title: "Mutual NDA — executed with signed PDF (sample)",
     status: "executed",
     mime_type: PDF_MIME,
     file_hash_sha256:
@@ -202,7 +202,7 @@ export const MOCK_LIST: ContractListItem[] = [
   },
   {
     id: MOCK_REDLINE_ID,
-    title: "NDA — Acme (redline history sample)",
+    title: "Mutual NDA negotiation draft — redline history (sample)",
     status: "ready",
     mime_type: DOCX_MIME,
     file_hash_sha256:
@@ -737,9 +737,9 @@ export const MOCK_REVIEW_BY_KEY: Record<string, PlaybookReviewResult> = {
 
 export const MOCK_DEMO_ORG_ID = "00000000-0000-4000-8000-000000000010";
 
-const MOCK_REQUEST_OPEN_ID = "00000000-0000-4000-8000-0000000000a1";
-const MOCK_REQUEST_IN_PROGRESS_ID = "00000000-0000-4000-8000-0000000000a2";
-const MOCK_REQUEST_COMPLETED_ID = "00000000-0000-4000-8000-0000000000a3";
+export const MOCK_REQUEST_OPEN_ID = "00000000-0000-4000-8000-0000000000a1";
+export const MOCK_REQUEST_LINKED_ID = "00000000-0000-4000-8000-0000000000a2";
+export const MOCK_REQUEST_BLOCKED_ID = "00000000-0000-4000-8000-0000000000a3";
 
 // Pinned for the demo so the request -> contract conversion flow
 // has a wired-up template to point at. Mirrors the NDA template id in
@@ -751,8 +751,9 @@ export const MOCK_REQUESTS: ContractRequest[] = [
   {
     id: MOCK_REQUEST_OPEN_ID,
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "NDA with Acme Corp",
-    description: "Initial conversation, pre-MSA. Need NDA before sharing roadmap.",
+    title: "Open NDA intake — Acme expansion",
+    description:
+      "Initial request intake. Start from the NDA template before sharing roadmap materials.",
     request_type: "new_contract",
     contract_type: "NDA",
     status: "open",
@@ -762,7 +763,7 @@ export const MOCK_REQUESTS: ContractRequest[] = [
     counterparty_name: "Acme Corp",
     due_date: "2026-05-20",
     assigned_to: null,
-    linked_contract_id: MOCK_NDA_ID,
+    linked_contract_id: null,
     linked_template_id: MOCK_DEMO_NDA_TEMPLATE_ID,
     created_at: "2026-05-08T16:00:00Z",
     updated_at: "2026-05-08T16:00:00Z",
@@ -770,44 +771,46 @@ export const MOCK_REQUESTS: ContractRequest[] = [
     metadata_json: null,
   },
   {
-    id: MOCK_REQUEST_IN_PROGRESS_ID,
+    id: MOCK_REQUEST_LINKED_ID,
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "NDA generation request linked to Repository",
-    description: "Renewal terms under negotiation; pricing TBD.",
-    request_type: "renewal",
-    contract_type: "MSA",
+    title: "Generated NDA linked to Repository",
+    description:
+      "Agreement was generated from the NDA template and is now tracked in the Repository.",
+    request_type: "new_contract",
+    contract_type: "NDA",
     status: "in_progress",
     priority: "high",
     requester_name: "Procurement",
     requester_email: null,
-    counterparty_name: "WidgetWorks",
-    due_date: "2026-06-30",
+    counterparty_name: "Globex Industries",
+    due_date: "2026-05-16",
     assigned_to: null,
-    linked_contract_id: null,
-    linked_template_id: null,
+    linked_contract_id: MOCK_NDA_ID,
+    linked_template_id: MOCK_DEMO_NDA_TEMPLATE_ID,
     created_at: "2026-05-01T10:00:00Z",
-    updated_at: "2026-05-07T11:30:00Z",
+    updated_at: "2026-05-08T11:30:00Z",
     created_by: null,
     metadata_json: null,
   },
   {
-    id: MOCK_REQUEST_COMPLETED_ID,
+    id: MOCK_REQUEST_BLOCKED_ID,
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "MSA request pending final approval",
-    description: "Waiting on executive approval before signature.",
+    title: "NDA blocked pending approval",
+    description:
+      "Generated agreement is waiting on legal and finance approval before signature can proceed.",
     request_type: "new_contract",
     contract_type: "NDA",
     status: "blocked",
-    priority: "normal",
+    priority: "high",
     requester_name: "Privacy team",
     requester_email: null,
     counterparty_name: "Acme Corp",
-    due_date: null,
+    due_date: "2026-05-14",
     assigned_to: null,
-    linked_contract_id: MOCK_NDA_ID,
-    linked_template_id: null,
-    created_at: "2026-04-12T09:00:00Z",
-    updated_at: "2026-04-30T14:00:00Z",
+    linked_contract_id: MOCK_SIGNATURE_OUT_ID,
+    linked_template_id: MOCK_DEMO_NDA_TEMPLATE_ID,
+    created_at: "2026-05-02T09:00:00Z",
+    updated_at: "2026-05-09T14:00:00Z",
     created_by: null,
     metadata_json: null,
   },
@@ -817,7 +820,7 @@ export const MOCK_INBOX_ITEMS: InboxItem[] = [
   {
     id: "00000000-0000-4000-8000-0000000000b1",
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "Review request: NDA with Acme Corp",
+    title: "Review request: Open NDA intake — Acme expansion",
     description: null,
     item_type: "request_review",
     status: "open",
@@ -835,16 +838,16 @@ export const MOCK_INBOX_ITEMS: InboxItem[] = [
   {
     id: "00000000-0000-4000-8000-0000000000b2",
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "Follow up on WidgetWorks signature",
+    title: "Follow up on Acme signature packet",
     description:
-      "Submission sent two weeks ago; ping counterparty if no movement by EOW.",
+      "Packet is out for signature. Follow up with the counterparty if it stalls again.",
     item_type: "signature_followup",
     status: "open",
     priority: "high",
     assigned_to: null,
     due_date: "2026-05-15",
     request_id: null,
-    contract_id: null,
+    contract_id: MOCK_SIGNATURE_OUT_ID,
     template_id: null,
     created_at: "2026-05-05T12:00:00Z",
     updated_at: "2026-05-05T12:00:00Z",
@@ -888,44 +891,88 @@ export const MOCK_INBOX_ITEMS: InboxItem[] = [
     created_by: null,
     metadata_json: null,
   },
+  {
+    id: "00000000-0000-4000-8000-0000000000b7",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "New upload intake: Vendor MSA draft",
+    description:
+      "New file arrived in intake and is ready to classify in Repository settings.",
+    item_type: "contract_review",
+    status: "open",
+    priority: "normal",
+    assigned_to: null,
+    due_date: "2026-05-18",
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-05-10T09:30:00Z",
+    updated_at: "2026-05-10T09:30:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
+  {
+    id: "00000000-0000-4000-8000-0000000000b8",
+    organization_id: MOCK_DEMO_ORG_ID,
+    title: "Send for review: Security addendum intake",
+    description:
+      "Route this intake item into Requests so legal can collect supporting information.",
+    item_type: "general",
+    status: "open",
+    priority: "normal",
+    assigned_to: null,
+    due_date: "2026-05-19",
+    request_id: null,
+    contract_id: null,
+    template_id: null,
+    created_at: "2026-05-10T11:00:00Z",
+    updated_at: "2026-05-10T11:00:00Z",
+    created_by: null,
+    metadata_json: null,
+  },
   // PR #79 — Seeded approval inbox items so the Approval Tasks view has
   // realistic content in demo mode. Mirror the demo workflow runs in
   // `_buildDemoApprovalRuns()` (see mockApi.ts).
   {
     id: "00000000-0000-4000-8000-0000000000b5",
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "Legal review — NDA with Acme Corp",
-    description: "Step 1 of NDA legal review workflow.",
+    title: "Legal review — NDA blocked pending approval",
+    description: "Current approval step for the blocked NDA request.",
     item_type: "approval",
     status: "open",
     priority: "high",
     assigned_to: "demo-user-alice",
-    due_date: "2026-05-09",
-    request_id: MOCK_REQUEST_OPEN_ID,
-    contract_id: null,
+    due_date: "2026-05-07",
+    request_id: MOCK_REQUEST_BLOCKED_ID,
+    contract_id: MOCK_SIGNATURE_OUT_ID,
     template_id: null,
     created_at: "2026-05-08T12:00:00Z",
     updated_at: "2026-05-08T12:00:00Z",
     created_by: null,
-    metadata_json: null,
+    metadata_json: {
+      workflow_run_id: "demo-run-active",
+      approval_step_id: "demo-step-active-1",
+    },
   },
   {
     id: "00000000-0000-4000-8000-0000000000b6",
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "Finance sign-off — MSA with WidgetWorks",
-    description: null,
+    title: "Finance sign-off — generated NDA",
+    description: "Completed approval task from the earlier generated NDA workflow.",
     item_type: "approval",
-    status: "open",
+    status: "completed",
     priority: "normal",
     assigned_to: "demo-user-bob",
-    due_date: "2026-05-18",
-    request_id: null,
-    contract_id: "00000000-0000-4000-8000-000000000001",
+    due_date: "2026-05-06",
+    request_id: MOCK_REQUEST_LINKED_ID,
+    contract_id: MOCK_NDA_ID,
     template_id: null,
-    created_at: "2026-05-09T08:00:00Z",
-    updated_at: "2026-05-09T08:00:00Z",
+    created_at: "2026-05-05T08:00:00Z",
+    updated_at: "2026-05-06T08:30:00Z",
     created_by: null,
-    metadata_json: null,
+    metadata_json: {
+      workflow_run_id: "demo-run-completed",
+      approval_step_id: "demo-step-completed-2",
+    },
   },
 ];
 
