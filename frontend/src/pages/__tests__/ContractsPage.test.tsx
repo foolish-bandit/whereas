@@ -580,4 +580,204 @@ describe("ContractsPage (Repository list)", () => {
       expect(text).not.toContain(needle);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // PR #104 — Built-in Repository views / presets
+  // -------------------------------------------------------------------------
+
+  it("renders the Views control with the default active preset", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    const views = await screen.findByTestId("repository-views");
+    expect(views).toBeInTheDocument();
+    // Default (no URL params) lands on the "All active" preset.
+    expect(
+      screen.getByTestId("repository-view-active"),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: all active/i);
+  });
+
+  it("selecting Executed pushes status=executed to the URL and refilters", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({ id: "c-1", title: "Acme NDA", status: "ready" }),
+        row({ id: "c-2", title: "Acme MSA", status: "executed" }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    fireEvent.click(screen.getByTestId("repository-view-executed"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("repository-view-executed"),
+      ).toHaveAttribute("data-active", "true");
+    });
+    expect(
+      (screen.getByTestId("repository-filter-status") as HTMLSelectElement)
+        .value,
+    ).toBe("executed");
+  });
+
+  it("selecting Out for signature applies sent_for_signature filter", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    fireEvent.click(screen.getByTestId("repository-view-out_for_signature"));
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("repository-filter-status") as HTMLSelectElement)
+          .value,
+      ).toBe("sent_for_signature");
+    });
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: out for signature/i);
+  });
+
+  it("selecting Merged toggles include_merged=true and reflects in the API call", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    fireEvent.click(screen.getByTestId("repository-view-merged"));
+    await waitFor(() => {
+      const lastUrl = String(fetchMock.mock.calls.at(-1)?.[0] ?? "");
+      expect(lastUrl).toContain("include_merged=true");
+    });
+    expect(
+      (screen.getByTestId("repository-include-merged") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("selecting Recently updated applies the updated_desc sort", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({
+          id: "c-old",
+          title: "Old update",
+          updated_at: "2025-12-01T00:00:00Z",
+        }),
+        row({
+          id: "c-new",
+          title: "New update",
+          updated_at: "2026-05-09T00:00:00Z",
+        }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("Old update");
+    fireEvent.click(screen.getByTestId("repository-view-recently_updated"));
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("repository-sort") as HTMLSelectElement).value,
+      ).toBe("updated_desc");
+    });
+  });
+
+  it("manually changing status away from the active preset switches to Custom view", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    // Pick a preset first so we have a known active view.
+    fireEvent.click(screen.getByTestId("repository-view-executed"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("repository-view-active-label"),
+      ).toHaveTextContent(/active: executed/i),
+    );
+    // Manually change the status to something that doesn't match any
+    // built-in preset (ready) — label switches to "Custom view".
+    fireEvent.change(screen.getByTestId("repository-filter-status"), {
+      target: { value: "ready" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("repository-view-active-label"),
+      ).toHaveTextContent(/custom view/i),
+    );
+  });
+
+  it("preset selection preserves the active q search", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByDisplayValue("Acme");
+    fireEvent.click(screen.getByTestId("repository-view-executed"));
+    await waitFor(() => {
+      const lastUrl = String(fetchMock.mock.calls.at(-1)?.[0] ?? "");
+      expect(lastUrl).toContain("q=Acme");
+    });
+    // The search box still shows the q.
+    expect(screen.getByTestId("repository-search")).toHaveValue("Acme");
+  });
+
+  it("hydrates from URL params on deep link (?status=executed)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ status: "executed", title: "Done deal" })]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?status=executed"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("repository-views");
+    expect(
+      (screen.getByTestId("repository-filter-status") as HTMLSelectElement)
+        .value,
+    ).toBe("executed");
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: executed/i);
+  });
+
+  it("hydrates from URL params on deep link (?merged=true)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?merged=true"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("repository-views");
+    expect(
+      (screen.getByTestId("repository-include-merged") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: merged/i);
+  });
+
+  it("does not leak storage internals in the DOM with a preset active", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({
+          status: "executed",
+          search_match_source: "text_preview",
+        }),
+      ]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?status=executed"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("repository-views");
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+      "docuseal_secret",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
 });

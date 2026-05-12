@@ -402,6 +402,50 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Repository quick views (PR #104)
+
+The Repository list (`/demo/repository`) now carries a compact
+*Views* bar with built-in URL-backed presets so users can switch
+between common list states in one click.
+
+Built-in presets:
+
+| Preset | Status | Sort | Merged |
+|---|---|---|---|
+| **All active** | all | Newest first | off |
+| **Needs attention** | Extraction failed | Newest first | off |
+| **Out for signature** | Out for signature | Newest first | off |
+| **Executed** | Executed | Newest first | off |
+| **Recently updated** | all | Recently updated (new) | off |
+| **Merged** | all | Newest first | on |
+
+- URL params: `status=…`, `sort=…`, `merged=true`. Defaults are
+  omitted from the URL so the default view stays at the clean
+  `/demo/repository`. Deep links work both directions —
+  `?status=executed` lands on the *Executed* preset, and clicking a
+  preset rewrites the URL via `replace` so the back / forward
+  buttons skip intermediate flips.
+- The active preset label (`Active: Executed`) appears beside the
+  bar. Manually changing the status, sort, or *Show merged* toggle
+  to a combination that doesn't match any built-in preset flips the
+  label to *Custom view*.
+- `q` is preserved across preset selection — searching within a
+  view is the common case.
+- Type filter remains in-memory only (it depends on what's loaded)
+  and is not part of any preset.
+- A new client-side *Recently updated* sort option (`updated_desc`)
+  was added to back the *Recently updated* preset; the existing
+  *Newest first* / *Oldest first* / *Title A→Z* options are
+  unchanged.
+
+These are URL-backed **built-in** views — not persisted
+user-saved views. Per-user named saved views require backend
+persistence + auth and are intentional future work.
+
+Frontend-only. No backend changes. No Repository API, search,
+artifact-priority, DocuSeal, approval, request, or duplicate-merge
+semantics changed.
+
 ## Agreement Template source file download (PR #103)
 
 Each row in the *Source file history* section now carries a

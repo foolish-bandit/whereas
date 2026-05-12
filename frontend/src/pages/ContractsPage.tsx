@@ -14,7 +14,7 @@ type LoadState =
   | { kind: "loaded"; contracts: ContractListItem[] }
   | { kind: "error"; title: string; description: string };
 
-type SortOrder = "newest" | "oldest" | "title_asc";
+type SortOrder = "newest" | "oldest" | "title_asc" | "updated_desc";
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "all", label: "All statuses" },
@@ -30,10 +30,86 @@ const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" },
   { value: "title_asc", label: "Title A→Z" },
+  { value: "updated_desc", label: "Recently updated" },
 ];
 
 const Q_PARAM = "q";
+const STATUS_PARAM = "status";
+const SORT_PARAM = "sort";
+const MERGED_PARAM = "merged";
 const SEARCH_DEBOUNCE_MS = 250;
+
+const STATUS_VALUES = new Set(STATUS_FILTERS.map((s) => s.value));
+const SORT_VALUES = new Set<SortOrder>(SORT_OPTIONS.map((s) => s.value));
+
+/**
+ * PR #104 — Built-in URL-backed Repository views.
+ *
+ * Each preset is a canonical combination of the existing
+ * status / sort / Show-merged filter state — it does NOT add new
+ * backend filter fields. Clicking a preset rewrites
+ * ``status`` / ``sort`` / ``merged`` URL params; the active preset
+ * label is derived from those params so the back / forward buttons
+ * and shared deep links Just Work. ``q`` is intentionally preserved
+ * across preset selection — searching within a view is the common
+ * case (see brief: "Preserve q unless the preset would be
+ * confusing").
+ *
+ * These are not persisted user-saved views; that requires backend
+ * + auth and is intentional future work.
+ */
+type RepositoryView = {
+  id: string;
+  label: string;
+  status: string;
+  sort: SortOrder;
+  merged: boolean;
+};
+
+const REPOSITORY_VIEWS: RepositoryView[] = [
+  { id: "active", label: "All active", status: "all", sort: "newest", merged: false },
+  {
+    id: "needs_attention",
+    label: "Needs attention",
+    status: "failed",
+    sort: "newest",
+    merged: false,
+  },
+  {
+    id: "out_for_signature",
+    label: "Out for signature",
+    status: "sent_for_signature",
+    sort: "newest",
+    merged: false,
+  },
+  {
+    id: "executed",
+    label: "Executed",
+    status: "executed",
+    sort: "newest",
+    merged: false,
+  },
+  {
+    id: "recently_updated",
+    label: "Recently updated",
+    status: "all",
+    sort: "updated_desc",
+    merged: false,
+  },
+  { id: "merged", label: "Merged", status: "all", sort: "newest", merged: true },
+];
+
+function matchView(
+  status: string,
+  sort: SortOrder,
+  merged: boolean,
+): RepositoryView | null {
+  return (
+    REPOSITORY_VIEWS.find(
+      (v) => v.status === status && v.sort === sort && v.merged === merged,
+    ) ?? null
+  );
+}
 
 export default function ContractsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -41,13 +117,25 @@ export default function ContractsPage() {
   // /repository?q=acme initializes the box with that query and the
   // first fetch already includes it (PR #95).
   const initialQ = searchParams.get(Q_PARAM) ?? "";
+  // PR #104 — seed status / sort / merged from URL so a preset
+  // deep link (?status=executed) and the back/forward buttons both
+  // restore the right view. Unknown values fall back to defaults.
+  const initialStatus = (() => {
+    const raw = searchParams.get(STATUS_PARAM) ?? "all";
+    return STATUS_VALUES.has(raw) ? raw : "all";
+  })();
+  const initialSort: SortOrder = (() => {
+    const raw = searchParams.get(SORT_PARAM) as SortOrder | null;
+    return raw && SORT_VALUES.has(raw) ? raw : "newest";
+  })();
+  const initialMerged = searchParams.get(MERGED_PARAM) === "true";
   const [search, setSearch] = useState(initialQ);
   const [committedSearch, setCommittedSearch] = useState(initialQ);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [typeFilter, setTypeFilter] = useState("all");
-  const [sort, setSort] = useState<SortOrder>("newest");
-  const [includeMerged, setIncludeMerged] = useState(false);
+  const [sort, setSort] = useState<SortOrder>(initialSort);
+  const [includeMerged, setIncludeMerged] = useState(initialMerged);
 
   // Debounce the URL + fetch updates so a fast typist doesn't fire a
   // request per keystroke. The committed value drives both the URL
@@ -86,6 +174,38 @@ export default function ContractsPage() {
     // changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedSearch]);
+
+  // PR #104 — keep ``status`` / ``sort`` / ``merged`` URL params in
+  // sync with state so presets are bookmarkable + back/forward
+  // friendly. Default values are omitted from the URL to keep
+  // ``/repository`` clean for the All-active default view.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (statusFilter !== "all") next.set(STATUS_PARAM, statusFilter);
+    else next.delete(STATUS_PARAM);
+    if (sort !== "newest") next.set(SORT_PARAM, sort);
+    else next.delete(SORT_PARAM);
+    if (includeMerged) next.set(MERGED_PARAM, "true");
+    else next.delete(MERGED_PARAM);
+    const before = searchParams.toString();
+    const after = next.toString();
+    if (before !== after) {
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, sort, includeMerged]);
+
+  const activeView = useMemo(
+    () => matchView(statusFilter, sort, includeMerged),
+    [statusFilter, sort, includeMerged],
+  );
+
+  function onSelectView(view: RepositoryView) {
+    setStatusFilter(view.status);
+    setSort(view.sort);
+    setIncludeMerged(view.merged);
+    // Type filter and q are intentionally preserved.
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -144,6 +264,8 @@ export default function ContractsPage() {
       sorted.sort((a, b) => a.created_at.localeCompare(b.created_at));
     } else if (sort === "title_asc") {
       sorted.sort((a, b) => a.title.localeCompare(b.title));
+    } else if (sort === "updated_desc") {
+      sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     }
     return sorted;
   }, [state, statusFilter, typeFilter, sort]);
@@ -176,6 +298,41 @@ export default function ContractsPage() {
         >
           Upload to repository
         </Link>
+      </div>
+
+      <div
+        className="mb-3 flex flex-wrap items-center gap-2 text-xs"
+        data-testid="repository-views"
+        role="group"
+        aria-label="Quick views"
+      >
+        <span className="text-ink-subtle">Views:</span>
+        {REPOSITORY_VIEWS.map((v) => {
+          const isActive = activeView?.id === v.id;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onSelectView(v)}
+              aria-pressed={isActive}
+              className={`rounded border px-2 py-1 ${
+                isActive
+                  ? "border-info-ring bg-info-soft text-info"
+                  : "border-rule bg-canvas text-ink-muted hover:border-rule-strong hover:text-ink"
+              }`}
+              data-testid={`repository-view-${v.id}`}
+              data-active={isActive ? "true" : "false"}
+            >
+              {v.label}
+            </button>
+          );
+        })}
+        <span
+          className="ml-1 text-ink-subtle"
+          data-testid="repository-view-active-label"
+        >
+          {activeView ? `Active: ${activeView.label}` : "Custom view"}
+        </span>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
