@@ -4,6 +4,8 @@ import { Link, useLocation } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import Pill, { type PillTone } from "../components/ui/Pill";
+import SeverityTag from "../components/ui/SeverityTag";
 import MoveToReviewModal, {
   type MoveToReviewValues,
 } from "../components/MoveToReviewModal";
@@ -653,12 +655,9 @@ function InboxRow({
               <span className="text-ink-subtle">due {row.due_date}</span>
             )}
             {overdue && (
-              <span
-                className="rounded bg-danger/10 px-1.5 py-0.5 font-medium uppercase tracking-wide text-danger"
-                data-testid="inbox-row-overdue"
-              >
+              <SeverityTag level="overdue" data-testid="inbox-row-overdue">
                 overdue
-              </span>
+              </SeverityTag>
             )}
           </div>
         </div>
@@ -705,43 +704,34 @@ function ItemTypeChip({ type }: { type: string }) {
   // copy converts the snake_case to a friendlier label.
   const friendly = type.replace(/_/g, " ");
   return (
-    <span
-      className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-ink-muted"
-      data-testid="inbox-row-type"
-    >
+    <Pill tone="neutral" variant="soft" data-testid="inbox-row-type">
       {friendly}
-    </span>
+    </Pill>
   );
 }
 
 function StatusChip({ status }: { status: string }) {
-  const tone =
-    status === "open"
-      ? "border-info-ring bg-info-soft text-info"
-      : status === "completed"
-        ? "border-success-ring bg-success-soft text-success"
-        : "border-rule bg-canvas-muted text-ink-muted";
+  const tone: PillTone =
+    status === "open" ? "info" : status === "completed" ? "success" : "neutral";
   return (
-    <span
-      className={`rounded border px-1.5 py-0.5 font-medium uppercase tracking-wide ${tone}`}
-    >
+    <Pill tone={tone} variant="soft" className="uppercase tracking-wide">
       <span data-testid="inbox-status">{status}</span>
-    </span>
+    </Pill>
   );
 }
 
 function PriorityChip({ priority }: { priority: string }) {
-  const tone =
-    priority === "urgent" || priority === "high"
-      ? "border-danger-ring bg-danger-soft text-danger"
-      : "border-rule bg-canvas-subtle text-ink-muted";
+  const tone: PillTone =
+    priority === "urgent" || priority === "high" ? "danger" : "neutral";
   return (
-    <span
-      className={`rounded border px-1.5 py-0.5 font-medium uppercase tracking-wide ${tone}`}
+    <Pill
+      tone={tone}
+      variant="soft"
+      className="uppercase tracking-wide"
       data-testid="inbox-row-priority"
     >
       {priority}
-    </span>
+    </Pill>
   );
 }
 

@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import { mountedPath } from "../lib/routes";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
+import Pill, { type PillTone } from "./ui/Pill";
 
 interface Props {
   /** ID of the request to look up approval status for. */
@@ -232,46 +233,46 @@ function ApprovalBadge({ status }: { status: RequestApprovalStatus }) {
   const { summary } = status;
   let label: string;
   let testIdSuffix: string;
-  let className: string;
+  let tone: PillTone;
 
   if (summary.has_active_workflows) {
     label = "Approval pending";
     testIdSuffix = "pending";
-    className = "border-warning text-warning";
+    tone = "warning";
   } else if (summary.has_rejected_workflows) {
     label = "Approval rejected";
     testIdSuffix = "rejected";
-    className = "border-danger text-danger";
+    tone = "danger";
   } else if (summary.ready_for_signature === true) {
     label = "Ready for signature";
     testIdSuffix = "ready";
-    className = "border-success text-success";
+    tone = "success";
   } else if (summary.has_completed_workflows && status.linked_contract_id == null) {
-    // Workflows completed but no contract yet — convey "approval done"
-    // without claiming gate readiness.
     label = "Approval completed";
     testIdSuffix = "completed";
-    className = "border-success text-success";
+    tone = "success";
   } else if (summary.blocking_reason) {
     label = "Approval blocked";
     testIdSuffix = "blocked";
-    className = "border-danger text-danger";
+    tone = "danger";
   } else if (status.matching_policies.length === 0 && status.workflow_runs.length === 0) {
     label = "No approval required";
     testIdSuffix = "none";
-    className = "border-rule text-ink-subtle";
+    tone = "neutral";
   } else {
     label = "Approval pending";
     testIdSuffix = "pending";
-    className = "border-warning text-warning";
+    tone = "warning";
   }
 
   return (
-    <span
-      className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${className}`}
+    <Pill
+      tone={tone}
+      variant="outline"
+      className="uppercase tracking-wide"
       data-testid={`request-approval-badge-${testIdSuffix}`}
     >
       {label}
-    </span>
+    </Pill>
   );
 }

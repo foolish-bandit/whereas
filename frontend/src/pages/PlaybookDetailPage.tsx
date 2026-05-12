@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import Pill from "../components/ui/Pill";
+import SeverityTag, { type Severity } from "../components/ui/SeverityTag";
 import {
   ApiError,
   MissingDevUserError,
@@ -285,29 +287,13 @@ function RulesPanel({ rules }: { rules: PlaybookRuleSummary[] }) {
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const color = (() => {
-    switch (severity) {
-      case "blocker":
-      case "high":
-        return "border-danger-ring bg-danger-soft text-danger";
-      case "medium":
-        return "border-warning-ring bg-warning-soft text-warning";
-      case "low":
-        return "border-rule bg-canvas-subtle text-ink-muted";
-      case "info":
-      default:
-        return "border-rule bg-canvas-subtle text-ink-subtle";
-    }
-  })();
+  if (severity === "blocker" || severity === "high" || severity === "medium" || severity === "low") {
+    return <SeverityTag level={severity as Severity}>{severity}</SeverityTag>;
+  }
   return (
-    <span
-      className={[
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
-        color,
-      ].join(" ")}
-    >
+    <Pill tone="neutral" variant="soft" className="uppercase tracking-wide">
       {severity}
-    </span>
+    </Pill>
   );
 }
 
