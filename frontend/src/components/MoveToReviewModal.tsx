@@ -1,5 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import SupportingQuestionsPanel from "./SupportingQuestionsPanel";
+import {
+  composeDescription,
+  getQuestionSetFor,
+  summarizeAnswers,
+  type SupportingAnswers,
+} from "../lib/supportingQuestions";
 import type { AgreementTemplate } from "../types/agreementTemplates";
 
 /**
@@ -90,6 +97,9 @@ export default function MoveToReviewModal(props: Props) {
   const [owner, setOwner] = useState("");
   const [department, setDepartment] = useState("");
   const [supportingInfo, setSupportingInfo] = useState("");
+  const [supportingAnswers, setSupportingAnswers] = useState<SupportingAnswers>(
+    {},
+  );
   const [nameError, setNameError] = useState<string | null>(null);
   const [requestTypeError, setRequestTypeError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
@@ -102,6 +112,7 @@ export default function MoveToReviewModal(props: Props) {
     setName(itemTitle ?? "");
     setNameError(null);
     setRequestTypeError(null);
+    setSupportingAnswers({});
     // Focus the name input on open so keyboard users can start typing.
     nameInputRef.current?.focus();
     nameInputRef.current?.select();
@@ -141,6 +152,18 @@ export default function MoveToReviewModal(props: Props) {
       setRequestTypeError(null);
     }
     if (!valid) return;
+    // PR #126 — fold structured supporting-question answers into the
+    // existing free-text `supportingInfo` field. The parent will map
+    // that to the request's `description`, so this stays inside the
+    // existing backend contract — no new schema, no new endpoint.
+    const summary = summarizeAnswers(
+      getQuestionSetFor(requestType, null),
+      supportingAnswers,
+    );
+    const composedSupportingInfo = composeDescription(
+      summary,
+      supportingInfo,
+    ).trim();
     void onSubmit({
       name: trimmedName,
       requestType,
@@ -148,7 +171,7 @@ export default function MoveToReviewModal(props: Props) {
       priority,
       owner: owner.trim(),
       department: department.trim(),
-      supportingInfo: supportingInfo.trim(),
+      supportingInfo: composedSupportingInfo,
     });
   }
 
@@ -312,6 +335,15 @@ export default function MoveToReviewModal(props: Props) {
                 data-testid="move-to-review-supporting-info"
               />
             </label>
+            <div className="sm:col-span-2">
+              <SupportingQuestionsPanel
+                requestType={requestType}
+                contractType={null}
+                answers={supportingAnswers}
+                onChange={setSupportingAnswers}
+                testIdPrefix="move-to-review-supporting-questions"
+              />
+            </div>
           </div>
         )}
 

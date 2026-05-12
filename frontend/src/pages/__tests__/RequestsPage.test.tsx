@@ -1099,4 +1099,188 @@ describe("RequestsPage", () => {
       within(feedback).queryByTestId("upload-review-duplicate-warning"),
     ).toBeNull();
   });
+
+  // ---------------------------------------------------------------------
+  // PR #126 — Supporting questions in the create form
+  // ---------------------------------------------------------------------
+
+  it("shows the 'pick a type' pending state when no request_type or contract_type is set", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    expect(
+      screen.getByTestId("requests-create-supporting-questions-pending"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the NDA question set when contract_type contains 'NDA'", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "NDA" },
+    });
+    const panel = screen.getByTestId("requests-create-supporting-questions");
+    expect(panel.getAttribute("data-supporting-question-group")).toBe("nda");
+    expect(panel.textContent).toMatch(/mutual or one-way/i);
+  });
+
+  it("switches the question set when contract_type changes from NDA to Vendor", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "NDA" },
+    });
+    expect(
+      screen
+        .getByTestId("requests-create-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("nda");
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "Vendor agreement" },
+    });
+    const panel = screen.getByTestId("requests-create-supporting-questions");
+    expect(panel.getAttribute("data-supporting-question-group")).toBe(
+      "vendor",
+    );
+    expect(panel.textContent).toMatch(/product or service/i);
+  });
+
+  it("falls back to the general 'other' question set for an unrecognized type", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "Statement of work" },
+    });
+    expect(
+      screen
+        .getByTestId("requests-create-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("other");
+  });
+
+  it("summarises supporting-question answers into description on submit, without sending unsupported fields", async () => {
+    let postBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/api/requests") && init?.method === "POST") {
+        postBody = JSON.parse(init.body as string);
+        return jsonResponse({
+          ...SAMPLE_REQUEST,
+          id: "req-new",
+          title: postBody!.title as string,
+          description: postBody!.description as string | null,
+          contract_type: postBody!.contract_type as string | null,
+        });
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+
+    fireEvent.change(screen.getByPlaceholderText(/Title/i), {
+      target: { value: "NDA with Globex" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "NDA" },
+    });
+    // Fill one structured answer …
+    const inputs = screen.getAllByTestId(
+      "requests-create-supporting-questions-input",
+    );
+    const directionInput = inputs.find(
+      (el) =>
+        el.getAttribute("data-supporting-question-input") === "nda_direction",
+    )!;
+    fireEvent.change(directionInput, { target: { value: "Mutual, 3 years" } });
+    // … plus a free-text description.
+    fireEvent.change(screen.getByTestId("requests-create-description"), {
+      target: { value: "Counterparty asked for quick turnaround." },
+    });
+
+    fireEvent.click(screen.getByTestId("requests-create-submit"));
+
+    await waitFor(() => expect(postBody).not.toBeNull());
+    // The payload uses only fields the existing POST /api/requests endpoint
+    // accepts.
+    const allowedKeys = new Set([
+      "title",
+      "description",
+      "contract_type",
+      "request_type",
+      "priority",
+      "counterparty_name",
+      "due_date",
+    ]);
+    for (const key of Object.keys(postBody!)) {
+      expect(allowedKeys.has(key)).toBe(true);
+    }
+    expect(postBody).toMatchObject({
+      title: "NDA with Globex",
+      contract_type: "NDA",
+    });
+    const description = postBody!.description as string;
+    expect(description).toContain("Supporting questions (NDA review)");
+    expect(description).toContain("Mutual, 3 years");
+    expect(description).toContain("Counterparty asked for quick turnaround.");
+    // No structured side-channel: no top-level `supporting_answers`,
+    // `metadata_json`, or similar field.
+    expect(postBody).not.toHaveProperty("supporting_answers");
+    expect(postBody).not.toHaveProperty("metadata_json");
+  });
+
+  it("submits description as null when neither free-text nor structured answers are provided", async () => {
+    let postBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/api/requests") && init?.method === "POST") {
+        postBody = JSON.parse(init.body as string);
+        return jsonResponse({
+          ...SAMPLE_REQUEST,
+          id: "req-new",
+          title: postBody!.title as string,
+          description: postBody!.description as string | null,
+        });
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.change(screen.getByPlaceholderText(/Title/i), {
+      target: { value: "Empty body request" },
+    });
+    fireEvent.click(screen.getByTestId("requests-create-submit"));
+    await waitFor(() => expect(postBody).not.toBeNull());
+    expect(postBody!.description).toBeNull();
+  });
+
+  it("does not leak forbidden tokens via the supporting-questions panel", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "DPA" },
+    });
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "wrapped_master_key",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned_url",
+      "presigned_uri",
+      "docuseal_webhook_secret",
+      "docuseal_api_token",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
 });

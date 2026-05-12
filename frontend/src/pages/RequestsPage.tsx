@@ -9,6 +9,7 @@ import RequestConvertSection, {
   ConvertedContractLink,
 } from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
+import SupportingQuestionsPanel from "../components/SupportingQuestionsPanel";
 import UploadReviewPanel from "../components/UploadReviewPanel";
 import { demoPath, mountedPath } from "../lib/routes";
 import {
@@ -23,6 +24,12 @@ import {
   DEEP_LINK_HIGHLIGHT_CLASS,
   scrollDeepLinkIntoView,
 } from "../lib/deepLinkHighlight";
+import {
+  composeDescription,
+  getQuestionSetFor,
+  summarizeAnswers,
+  type SupportingAnswers,
+} from "../lib/supportingQuestions";
 import type {
   ContractRequest,
   ConvertRequestToContractResponse,
@@ -72,6 +79,12 @@ export default function RequestsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [titleTouched, setTitleTouched] = useState(false);
+  // PR #126 — optional guided supporting questions, keyed by question
+  // id. The map is summarised into `description` at submit time so we
+  // never send unsupported fields to the server.
+  const [supportingAnswers, setSupportingAnswers] = useState<SupportingAnswers>(
+    {},
+  );
 
   useEffect(() => {
     let aborted = false;
@@ -110,9 +123,18 @@ export default function RequestsPage() {
     setCreating(true);
     setCreateError(null);
     try {
+      // PR #126 — fold structured supporting-question answers into the
+      // existing description field. The backend doesn't have a typed
+      // surface for these answers, so we summarise them so reviewers
+      // see them in the Request detail without inventing new schema.
+      const summary = summarizeAnswers(
+        getQuestionSetFor(requestType, contractType),
+        supportingAnswers,
+      );
+      const composed = composeDescription(summary, description);
       const row = await createRequest({
         title: title.trim(),
-        description: description.trim() || null,
+        description: composed.trim() || null,
         contract_type: contractType.trim() || null,
         request_type: requestType || null,
         priority: priority || null,
@@ -126,6 +148,7 @@ export default function RequestsPage() {
       setPriority("");
       setDueDate("");
       setDescription("");
+      setSupportingAnswers({});
       setState((prev) =>
         prev.kind === "loaded"
           ? { kind: "loaded", rows: [row, ...prev.rows] }
@@ -400,6 +423,14 @@ export default function RequestsPage() {
           placeholder="Description (optional)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          data-testid="requests-create-description"
+        />
+        <SupportingQuestionsPanel
+          requestType={requestType}
+          contractType={contractType}
+          answers={supportingAnswers}
+          onChange={setSupportingAnswers}
+          testIdPrefix="requests-create-supporting-questions"
         />
         <div className="flex items-center gap-3">
           <button
@@ -407,6 +438,7 @@ export default function RequestsPage() {
             className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-fit sm:py-1.5"
             onClick={onCreate}
             disabled={creating || !title.trim()}
+            data-testid="requests-create-submit"
           >
             {creating ? "Creating…" : "Create request"}
           </button>
