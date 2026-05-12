@@ -250,6 +250,67 @@ export function getQuestionSetFor(
 
 export type SupportingAnswers = Record<string, string>;
 
+export interface ParsedSupportingBlock {
+  label: string;
+  rows: Array<{ question: string; answer: string }>;
+  remainingDescription: string;
+}
+
+function splitBulletContent(content: string): { question: string; answer: string } {
+  const qIdx = content.indexOf("?");
+  if (qIdx !== -1 && qIdx < content.length - 1) {
+    const answer = content.slice(qIdx + 1).trim();
+    if (answer) return { question: content.slice(0, qIdx + 1).trim(), answer };
+  }
+  const dotIdx = content.indexOf(".");
+  if (dotIdx !== -1 && dotIdx < content.length - 1) {
+    const answer = content.slice(dotIdx + 1).trim();
+    if (answer) return { question: content.slice(0, dotIdx + 1).trim(), answer };
+  }
+  return { question: content.trim(), answer: "" };
+}
+
+/**
+ * Parses the stable supporting-questions summary block written by
+ * summarizeAnswers / composeDescription at Request submit time.
+ *
+ * Returns null if the description doesn't start with the expected header,
+ * if no bullet rows are found, or if an unexpected non-bullet line appears
+ * inside the block — all of which signal the caller to fall back to
+ * showing the raw description as plain text.
+ */
+export function parseSupportingQuestionsBlock(
+  description: string | null | undefined,
+): ParsedSupportingBlock | null {
+  if (!description) return null;
+  const text = description.trim();
+  const firstNl = text.indexOf("\n");
+  const headerLine = (firstNl === -1 ? text : text.slice(0, firstNl)).trim();
+  const m = headerLine.match(/^Supporting questions \((.+)\):$/);
+  if (!m) return null;
+  const label = m[1];
+  if (firstNl === -1) return null;
+  const bodyLines = text.slice(firstNl + 1).split("\n");
+  const rows: Array<{ question: string; answer: string }> = [];
+  let blockEnd = bodyLines.length;
+  for (let i = 0; i < bodyLines.length; i++) {
+    const line = bodyLines[i];
+    if (line.trim() === "") {
+      blockEnd = i;
+      break;
+    }
+    if (line.startsWith("• ")) {
+      const content = line.slice(2).trim();
+      if (content) rows.push(splitBulletContent(content));
+    } else {
+      return null;
+    }
+  }
+  if (rows.length === 0) return null;
+  const remaining = bodyLines.slice(blockEnd).join("\n").trim();
+  return { label, rows, remainingDescription: remaining };
+}
+
 /**
  * Render the structured answers as a human-readable supporting-info
  * block that we tack onto the existing free-text `description` /

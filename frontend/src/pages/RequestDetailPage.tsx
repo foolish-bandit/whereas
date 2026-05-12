@@ -18,6 +18,7 @@ import {
 } from "../lib/api";
 import { formatDateTime, humanizeFieldName } from "../lib/format";
 import { mountedPath } from "../lib/routes";
+import { parseSupportingQuestionsBlock } from "../lib/supportingQuestions";
 import type { ContractListItem } from "../types/contracts";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
 import type {
@@ -332,12 +333,53 @@ function SummarySection({
         />
         <Field label="Repository record" value={linkedLabel} />
       </dl>
-      {request.description && (
-        <p className="mt-4 text-sm text-ink-muted" data-testid="request-description">
-          {request.description}
-        </p>
-      )}
+      <DescriptionSection description={request.description} />
     </section>
+  );
+}
+
+function DescriptionSection({
+  description,
+}: {
+  description: string | null | undefined;
+}) {
+  if (!description) return null;
+  const parsed = parseSupportingQuestionsBlock(description);
+  if (!parsed) {
+    return (
+      <p className="mt-4 text-sm text-ink-muted" data-testid="request-description">
+        {description}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-4 space-y-3" data-testid="request-supporting-questions">
+      <div>
+        <p className="text-xs font-medium text-ink-subtle">Supporting questions</p>
+        <p
+          className="text-xs text-ink-subtle"
+          data-testid="request-supporting-questions-label"
+        >
+          {parsed.label}
+        </p>
+        <dl className="mt-2 space-y-2">
+          {parsed.rows.map((row, idx) => (
+            <div key={idx} data-testid="request-supporting-question-row">
+              <dt className="text-xs text-ink-subtle">{row.question || "—"}</dt>
+              <dd className="text-sm text-ink">{row.answer || "—"}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      {parsed.remainingDescription && (
+        <div data-testid="request-additional-context">
+          <p className="text-xs font-medium text-ink-subtle">Additional context</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            {parsed.remainingDescription}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
