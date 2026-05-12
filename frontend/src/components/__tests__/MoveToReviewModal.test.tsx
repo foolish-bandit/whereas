@@ -228,4 +228,95 @@ describe("MoveToReviewModal", () => {
       expect(text).not.toContain(needle);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // PR #126 — Supporting questions inside the modal
+  // ---------------------------------------------------------------------
+
+  it("renders the NDA supporting-questions panel when request type is NDA review", () => {
+    setup();
+    // Default request type in setup() is "review_existing", which
+    // falls back to "other". Switch to nda_review to see the NDA set.
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "nda_review" },
+    });
+    const panel = screen.getByTestId("move-to-review-supporting-questions");
+    expect(panel.getAttribute("data-supporting-question-group")).toBe("nda");
+    expect(panel.textContent).toMatch(/mutual or one-way/i);
+  });
+
+  it("switches the question set when the request type changes (vendor → employment)", () => {
+    setup();
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "vendor_agreement" },
+    });
+    expect(
+      screen
+        .getByTestId("move-to-review-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("vendor");
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "employment_agreement" },
+    });
+    expect(
+      screen
+        .getByTestId("move-to-review-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("employment");
+  });
+
+  it("summarises supporting-question answers into supportingInfo on submit", () => {
+    const { onSubmit } = setup();
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "nda_review" },
+    });
+    const inputs = screen.getAllByTestId(
+      "move-to-review-supporting-questions-input",
+    );
+    const direction = inputs.find(
+      (el) =>
+        el.getAttribute("data-supporting-question-input") === "nda_direction",
+    )!;
+    fireEvent.change(direction, { target: { value: "One-way (Acme discloses)" } });
+
+    // Free-text supporting info remains available alongside the
+    // structured panel.
+    fireEvent.change(screen.getByTestId("move-to-review-supporting-info"), {
+      target: { value: "Acme is a strategic prospect — turnaround Friday." },
+    });
+
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0] as MoveToReviewValues;
+    expect(submitted.requestType).toBe("nda_review");
+    expect(submitted.supportingInfo).toContain(
+      "Supporting questions (NDA review)",
+    );
+    expect(submitted.supportingInfo).toContain("One-way (Acme discloses)");
+    expect(submitted.supportingInfo).toContain(
+      "Acme is a strategic prospect",
+    );
+  });
+
+  it("submits an unchanged supportingInfo when no structured answers are filled", () => {
+    const { onSubmit } = setup();
+    fireEvent.change(screen.getByTestId("move-to-review-supporting-info"), {
+      target: { value: "Just the freeform note." },
+    });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0] as MoveToReviewValues;
+    expect(submitted.supportingInfo).toBe("Just the freeform note.");
+  });
+
+  it("hides the supporting-questions panel in the multi-select disabled state", () => {
+    setup({ selectedCount: 2, itemTitle: null });
+    expect(
+      screen.queryByTestId("move-to-review-supporting-questions"),
+    ).toBeNull();
+    expect(
+      screen.getByTestId("move-to-review-multi-notice"),
+    ).toBeInTheDocument();
+  });
 });

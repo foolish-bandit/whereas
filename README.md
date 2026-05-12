@@ -252,10 +252,25 @@ than the top-level nav:
     notice but never sent to the server. The success notice deep-links
     into `/requests/:id` (or `/demo/requests/:id`).
 
-Current Inbox routing is still narrow: no per-template follow-up
-questions, no automatic resolution of multiple intake items in one
-shot, and no backend intake-routing engine. Those remain follow-up
-work.
+#### Guided supporting questions (PR #126)
+
+The Request **New request** form on `/requests` and the Inbox
+**Move to Review** modal both now render a small *Supporting
+questions* panel underneath the existing free-text supporting-info
+field. The question set is chosen from `request_type` and / or
+`contract_type` (e.g. NDA / vendor agreement / MSA / employment
+agreement / DPA / general fallback) and updates live when the user
+changes the selected type. All answers are optional and copy-led
+("Answer what you know — these help reviewers understand the
+business context before review begins").
+
+Structured answers are folded into the existing free-text
+`description` field via a labelled summary block at submit time —
+the backend Request model is untouched, no new endpoints, and no
+new schema. The submitted `POST /api/requests` payload still only
+carries fields the endpoint already accepts. Clause/playbook
+integration remains future work and no LLM-based intake extraction
+is added.
 
 ### Playbooks grid foundation (PR #118)
 
