@@ -149,12 +149,18 @@ there is sent anywhere.
 The web UI is organized as a CLM workspace, not a database-table list.
 Top-level navigation:
 
-- **Dashboard** — `/demo/dashboard`. At-a-glance counts and recent
-  activity. A "Needs attention" banner surfaces overdue approval steps
-  / inbox items when present. Count tiles are grouped (Request
-  pipeline / Repository / Approvals / Inbox & templates) and each one
-  is a link to the matching surface. Recent-activity rows deep-link
-  to the specific Request / Repository record.
+- **Dashboard** — `/demo/dashboard`. Contract-ops command center.
+  An **Attention needed** rollup leads with the existing overdue
+  banner (or an honest *all clear* state when nothing is hot), then
+  **Quick actions** for the six top-of-mind destinations (Inbox,
+  Start a Request, Approval Tasks, Repository, Clause Manager,
+  Playbooks). Below that, grouped count tiles (Request pipeline /
+  Repository / Approvals / Inbox & templates) link to the matching
+  surface; an **Agreement mix** rollup tallies contract-type tags
+  across upcoming and recent requests; and the existing Upcoming /
+  Recent / Approval-analytics blocks render below. Analytics are
+  derived from existing dashboard summary data only — no new
+  reporting, exports, or BI features.
 - **Repository** — `/demo/repository` (legacy `/demo/contracts` still
   resolves). All agreements, drafts, signed documents, and contract
   records, backed by the same backend `Contract` APIs. The list
