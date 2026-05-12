@@ -1429,3 +1429,369 @@ export const MOCK_APPROVAL_POLICIES = [
     metadata_json: null,
   },
 ];
+
+// --------------------------------------------------------------------------
+// Demo playbook findings (per contract). Spans are anchored against the
+// full_text on the contract's mock detail so the citation jump
+// interaction from Prompt 5 lights up the right span.
+// --------------------------------------------------------------------------
+
+import type {
+  DocumentVersion,
+  PlaybookFinding,
+} from "../types/demoExtras";
+
+function buildFinding(
+  text: string,
+  spec: {
+    id: string;
+    rule_id: string;
+    rule_label: string;
+    severity: PlaybookFinding["severity"];
+    status?: PlaybookFinding["status"];
+    finding_text: string;
+    standard_position: string;
+    suggested_redline: string;
+    needle: string;
+  },
+): PlaybookFinding {
+  const s = span(text, spec.needle);
+  return {
+    id: spec.id,
+    playbook_rule_id: spec.rule_id,
+    rule_label: spec.rule_label,
+    severity: spec.severity,
+    status: spec.status ?? "open",
+    finding_text: spec.finding_text,
+    standard_position: spec.standard_position,
+    suggested_redline: spec.suggested_redline,
+    citation: {
+      text_preview_start: s.start,
+      text_preview_end: s.end,
+    },
+  };
+}
+
+const NDA_FINDINGS: PlaybookFinding[] = [
+  buildFinding(MUTUAL_NDA_TEXT, {
+    id: "find-nda-1",
+    rule_id: "rule.nda.term.cap",
+    rule_label: "Term exceeds playbook cap",
+    severity: "high",
+    finding_text:
+      "The Term is 24 months. The Acme NDA playbook caps mutual NDA terms at 12 months unless explicitly approved by Legal.",
+    standard_position:
+      "Mutual NDAs run for twelve (12) months unless a longer term is approved by Legal.",
+    suggested_redline:
+      "This Agreement shall remain in effect for a period of twelve (12) months from the Effective Date, unless earlier terminated as provided herein.",
+    needle: "twenty-four (24) months",
+  }),
+  buildFinding(MUTUAL_NDA_TEXT, {
+    id: "find-nda-2",
+    rule_id: "rule.nda.governing_law",
+    rule_label: "Non-preferred governing law",
+    severity: "medium",
+    finding_text:
+      "Governing law is Delaware. The playbook prefers New York or California for outbound NDAs.",
+    standard_position:
+      "Outbound mutual NDAs are governed by the laws of the State of New York.",
+    suggested_redline:
+      "This Agreement shall be governed by and construed in accordance with the laws of the State of New York, without regard to its conflict of laws principles.",
+    needle: "State of Delaware",
+  }),
+  buildFinding(MUTUAL_NDA_TEXT, {
+    id: "find-nda-3",
+    rule_id: "rule.nda.survival",
+    rule_label: "Survival period too long",
+    severity: "low",
+    finding_text:
+      "Confidentiality obligations survive 3 years post-termination. Playbook standard is 2 years.",
+    standard_position:
+      "Confidentiality obligations survive termination for an additional period of two (2) years.",
+    suggested_redline:
+      "The obligations of confidentiality set forth in Section 3 shall survive any expiration or termination of this Agreement for an additional period of two (2) years.",
+    needle: "additional period of three (3) years",
+  }),
+];
+
+const MSA_FINDINGS: PlaybookFinding[] = [
+  buildFinding(MSA_TEXT, {
+    id: "find-msa-1",
+    rule_id: "rule.msa.liability.cap",
+    rule_label: "Limitation of liability uncapped",
+    severity: "blocker",
+    finding_text:
+      "No express cap on Provider liability is present. The playbook requires a cap equal to fees paid in the prior twelve months.",
+    standard_position:
+      "Each party's aggregate liability under this Agreement is limited to the fees paid by Customer in the twelve (12) months preceding the claim.",
+    suggested_redline:
+      "Notwithstanding any provision to the contrary, each party's aggregate liability arising out of or related to this Agreement shall not exceed the fees paid by Customer to Provider in the twelve (12) months preceding the event giving rise to the claim.",
+    needle: "Provider shall perform the services",
+  }),
+  buildFinding(MSA_TEXT, {
+    id: "find-msa-2",
+    rule_id: "rule.msa.autorenew",
+    rule_label: "Auto-renew window too tight",
+    severity: "high",
+    finding_text:
+      "Notice-of-non-renewal window is 60 days. Playbook minimum is 90 days for MSAs over $250k ACV.",
+    standard_position:
+      "Non-renewal notice must be given at least ninety (90) days before the end of the then-current term.",
+    suggested_redline:
+      "This Agreement will automatically renew for successive one (1) year periods unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+    needle: "sixty (60) days before the end of the then-current term",
+  }),
+  buildFinding(MSA_TEXT, {
+    id: "find-msa-3",
+    rule_id: "rule.msa.governing_law",
+    rule_label: "Governing law as-expected",
+    severity: "low",
+    status: "accepted",
+    finding_text:
+      "California governing law matches the playbook preference for Provider-paper MSAs.",
+    standard_position:
+      "Provider-paper MSAs are governed by California law unless Customer requires a specific other jurisdiction.",
+    suggested_redline: "(no change required)",
+    needle: "State of California",
+  }),
+];
+
+const SIGNATURE_FINDINGS: PlaybookFinding[] = [
+  buildFinding(SIGNATURE_TEXT, {
+    id: "find-sig-1",
+    rule_id: "rule.nda.term.cap",
+    rule_label: "Term within playbook cap",
+    severity: "low",
+    status: "accepted",
+    finding_text: "12-month term matches the playbook standard for mutual NDAs.",
+    standard_position:
+      "Mutual NDAs run for twelve (12) months unless a longer term is approved by Legal.",
+    suggested_redline: "(no change required)",
+    needle: "twelve (12) months from the Effective Date",
+  }),
+  buildFinding(SIGNATURE_TEXT, {
+    id: "find-sig-2",
+    rule_id: "rule.nda.termination_notice",
+    rule_label: "Termination notice longer than standard",
+    severity: "medium",
+    finding_text:
+      "45-day termination notice exceeds the playbook standard of 30 days.",
+    standard_position:
+      "Mutual NDA termination requires thirty (30) days' prior written notice.",
+    suggested_redline:
+      "Either party may terminate this Agreement for any reason upon thirty (30) days' prior written notice to the other party.",
+    needle: "forty-five (45) days' prior written notice",
+  }),
+];
+
+const EXECUTED_FINDINGS: PlaybookFinding[] = [
+  buildFinding(EXECUTED_TEXT, {
+    id: "find-exec-1",
+    rule_id: "rule.nda.term.cap",
+    rule_label: "Term exceeds playbook cap",
+    severity: "high",
+    status: "waived",
+    finding_text:
+      "Original review flagged the 24-month term. Waived by Legal at execution because Stark Industries required a multi-year window.",
+    standard_position:
+      "Mutual NDAs run for twelve (12) months unless a longer term is approved by Legal.",
+    suggested_redline:
+      "This Agreement shall remain in effect for a period of twelve (12) months from the Effective Date.",
+    needle: "twenty-four (24) months from the Effective Date",
+  }),
+  buildFinding(EXECUTED_TEXT, {
+    id: "find-exec-2",
+    rule_id: "rule.nda.governing_law",
+    rule_label: "Governing law as-expected",
+    severity: "low",
+    status: "accepted",
+    finding_text:
+      "Delaware governing law matches the playbook preference for the Stark relationship.",
+    standard_position: "Stark Industries: Delaware preferred.",
+    suggested_redline: "(no change required)",
+    needle: "State of Delaware",
+  }),
+];
+
+const REDLINE_FINDINGS: PlaybookFinding[] = [
+  buildFinding(REDLINE_TEXT, {
+    id: "find-rl-1",
+    rule_id: "rule.nda.governing_law",
+    rule_label: "Governing law contested",
+    severity: "blocker",
+    finding_text:
+      "Counterparty's draft moves governing law from Delaware to New York. The playbook requires Delaware for Wayne Enterprises engagements.",
+    standard_position:
+      "Wayne Enterprises engagements are governed by Delaware law.",
+    suggested_redline:
+      "This Agreement is governed by the laws of the State of Delaware, without regard to its conflict of laws principles.",
+    needle: "State of New York",
+  }),
+  buildFinding(REDLINE_TEXT, {
+    id: "find-rl-2",
+    rule_id: "rule.nda.term.cap",
+    rule_label: "Term exceeds playbook cap",
+    severity: "high",
+    finding_text:
+      "36-month term exceeds the 12-month playbook cap for mutual NDAs.",
+    standard_position:
+      "Mutual NDAs run for twelve (12) months unless a longer term is approved by Legal.",
+    suggested_redline:
+      "This Agreement remains in effect for twelve (12) months from the Effective Date.",
+    needle: "thirty-six (36) months from the Effective Date",
+  }),
+  buildFinding(REDLINE_TEXT, {
+    id: "find-rl-3",
+    rule_id: "rule.nda.termination_notice",
+    rule_label: "Termination notice longer than standard",
+    severity: "medium",
+    finding_text:
+      "90-day termination notice substantially exceeds the playbook standard of 30 days.",
+    standard_position:
+      "Mutual NDA termination requires thirty (30) days' prior written notice.",
+    suggested_redline:
+      "Either party may terminate this Agreement upon thirty (30) days' prior written notice to the other party.",
+    needle: "ninety (90) days' prior written notice",
+  }),
+];
+
+const MERGED_FINDINGS: PlaybookFinding[] = [
+  buildFinding(MERGED_TEXT, {
+    id: "find-mrg-1",
+    rule_id: "rule.nda.term.cap",
+    rule_label: "Term exceeds playbook cap",
+    severity: "high",
+    status: "mitigated",
+    finding_text:
+      "Duplicate of the canonical record's finding. Mitigated by merge.",
+    standard_position:
+      "Mutual NDAs run for twelve (12) months unless a longer term is approved by Legal.",
+    suggested_redline: "(see canonical record)",
+    needle: "twenty-four (24) months",
+  }),
+  buildFinding(MERGED_TEXT, {
+    id: "find-mrg-2",
+    rule_id: "rule.nda.survival",
+    rule_label: "Survival period too long",
+    severity: "low",
+    status: "mitigated",
+    finding_text:
+      "Duplicate of the canonical record's finding. Mitigated by merge.",
+    standard_position:
+      "Confidentiality obligations survive for two (2) years.",
+    suggested_redline: "(see canonical record)",
+    needle: "additional period of three (3) years",
+  }),
+];
+
+// The Failed contract has no findings to match its "extraction failed"
+// state — the entire point of that demo entry.
+const FAILED_FINDINGS: PlaybookFinding[] = [];
+
+export const MOCK_DEMO_FINDINGS: Record<string, PlaybookFinding[]> = {
+  [MOCK_NDA_ID]: NDA_FINDINGS,
+  [MOCK_MSA_ID]: MSA_FINDINGS,
+  [MOCK_SIGNATURE_OUT_ID]: SIGNATURE_FINDINGS,
+  [MOCK_EXECUTED_ID]: EXECUTED_FINDINGS,
+  [MOCK_REDLINE_ID]: REDLINE_FINDINGS,
+  [MOCK_MERGED_ID]: MERGED_FINDINGS,
+  [MOCK_FAILED_ID]: FAILED_FINDINGS,
+};
+
+// --------------------------------------------------------------------------
+// Demo document versions. Two contracts get a multi-version timeline so
+// the History tab's diff is real. Bodies are small but meaningfully
+// different so diff lines actually appear.
+// --------------------------------------------------------------------------
+
+const NDA_V1 = MUTUAL_NDA_TEXT;
+const NDA_V2 = MUTUAL_NDA_TEXT.replace(
+  "twenty-four (24) months",
+  "twelve (12) months",
+).replace("State of Delaware", "State of New York");
+const NDA_V3 = NDA_V2.replace(
+  "additional period of three (3) years",
+  "additional period of two (2) years",
+);
+
+const NDA_VERSIONS: DocumentVersion[] = [
+  {
+    id: "ver-nda-v1",
+    version_label: "v1 — initial draft",
+    uploaded_at: "2026-01-15T10:30:00Z",
+    uploaded_by_display_name: "Rachel Vega",
+    source: "upload",
+    text_preview: NDA_V1,
+    summary:
+      "Initial Acme draft. 24-month term, Delaware governing law, 3-year survival.",
+  },
+  {
+    id: "ver-nda-v2",
+    version_label: "v2 — counterparty redline",
+    uploaded_at: "2026-01-18T14:00:00Z",
+    uploaded_by_display_name: "Globex Counsel",
+    source: "counterparty",
+    text_preview: NDA_V2,
+    summary:
+      "Globex shortened the term to 12 months and moved governing law to New York.",
+  },
+  {
+    id: "ver-nda-v3",
+    version_label: "v3 — Acme response",
+    uploaded_at: "2026-01-20T09:00:00Z",
+    uploaded_by_display_name: "Rachel Vega",
+    source: "upload",
+    text_preview: NDA_V3,
+    summary:
+      "Tightened the survival period from 3 years to 2 years per playbook standard.",
+  },
+];
+
+const MSA_V1 = MSA_TEXT;
+const MSA_V2 = MSA_TEXT.replace(
+  "sixty (60) days before the end of the then-current term",
+  "ninety (90) days before the end of the then-current term",
+);
+const MSA_V3 = MSA_V2.replace(
+  "$480,000 USD",
+  "$540,000 USD",
+).replace(
+  "sixty (60) days' written notice if the breaching party fails to cure during such period",
+  "thirty (30) days' written notice if the breaching party fails to cure during such period",
+);
+
+const MSA_VERSIONS: DocumentVersion[] = [
+  {
+    id: "ver-msa-v1",
+    version_label: "v1 — Initech paper",
+    uploaded_at: "2026-02-03T08:14:51Z",
+    uploaded_by_display_name: "Rachel Vega",
+    source: "upload",
+    text_preview: MSA_V1,
+    summary: "Provider-paper MSA from Initech. 60-day non-renewal window.",
+  },
+  {
+    id: "ver-msa-v2",
+    version_label: "v2 — Acme markup",
+    uploaded_at: "2026-02-08T12:00:00Z",
+    uploaded_by_display_name: "Mateo Ruiz",
+    source: "upload",
+    text_preview: MSA_V2,
+    summary: "Extended non-renewal window to 90 days per playbook.",
+  },
+  {
+    id: "ver-msa-v3",
+    version_label: "v3 — agreed terms",
+    uploaded_at: "2026-02-12T15:30:00Z",
+    uploaded_by_display_name: "Priya Shah",
+    source: "counterparty",
+    text_preview: MSA_V3,
+    summary:
+      "Agreed minimum bumped to $540k; cure period tightened to 30 days.",
+  },
+];
+
+export const MOCK_DEMO_VERSIONS: Record<string, DocumentVersion[]> = {
+  [MOCK_NDA_ID]: NDA_VERSIONS,
+  [MOCK_MSA_ID]: MSA_VERSIONS,
+};

@@ -9,12 +9,15 @@ import DocumentViewer from "../components/DocumentViewer";
 import DuplicateMergePanel from "../components/DuplicateMergePanel";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import HistoryTab from "../components/HistoryTab";
 import MarkdownPreview from "../components/MarkdownPreview";
 import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";
+import ReviewTab from "../components/ReviewTab";
 import RightPanelTabs from "../components/RightPanelTabs";
 import StatusBadge from "../components/StatusBadge";
 import UploadReviewPanel from "../components/UploadReviewPanel";
+import VersionDiffPane from "../components/VersionDiffPane";
 import {
   ApiError,
   MissingDevUserError,
@@ -40,6 +43,7 @@ import {
   type LifecycleSlot,
 } from "../lib/artifacts";
 import { clauseHasValidSpan } from "../lib/clauses";
+import { isDemoMode } from "../lib/env";
 import { fieldKey } from "../lib/fields";
 import {
   formatDate,
@@ -55,6 +59,10 @@ import type {
   ExtractedField,
 } from "../types/contracts";
 import type { ContractMetadataView } from "../types/contractIntake";
+import type {
+  DocumentVersion,
+  PlaybookFinding,
+} from "../types/demoExtras";
 import type { ReviewRunDetail } from "../types/findings";
 import type { ArtifactCompareResponse } from "../types/compare";
 import type {
@@ -167,6 +175,15 @@ export default function ContractWorkspacePage() {
     { kind: "idle" },
   );
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
+  // Demo-only: playbook findings + document versions are seeded from
+  // mockData. Real-mode contracts get an empty findings/versions list
+  // until the backend surfaces them.
+  const [demoFindings, setDemoFindings] = useState<PlaybookFinding[]>([]);
+  const [demoVersions, setDemoVersions] = useState<DocumentVersion[]>([]);
+  const [versionDiff, setVersionDiff] = useState<{
+    base: DocumentVersion;
+    against: DocumentVersion;
+  } | null>(null);
   // Full artifact list drives the lifecycle strip, the Files section,
   // the Current-document label, and the Details origin copy. Mirrors
   // the priority used by the backend's download endpoint.
@@ -179,6 +196,18 @@ export default function ContractWorkspacePage() {
 
   useEffect(() => {
     if (!id) return;
+    // Demo extras: lazy-import the seed so production builds tree-shake
+    // the demo strings out when isDemoMode() is false.
+    if (isDemoMode()) {
+      void import("../lib/mockData").then((mod) => {
+        setDemoFindings(mod.MOCK_DEMO_FINDINGS[id] ?? []);
+        setDemoVersions(mod.MOCK_DEMO_VERSIONS[id] ?? []);
+      });
+    } else {
+      setDemoFindings([]);
+      setDemoVersions([]);
+    }
+    setVersionDiff(null);
     const controller = new AbortController();
     setState({ kind: "loading" });
     setSelectedKey(null);
@@ -276,6 +305,15 @@ export default function ContractWorkspacePage() {
 
   const selectedSpan = useMemo(() => {
     if (!contract || !selectedKey) return null;
+    if (selectedKey.startsWith("finding:")) {
+      const findingId = selectedKey.slice("finding:".length);
+      const f = demoFindings.find((d) => d.id === findingId);
+      if (!f) return null;
+      return {
+        start: f.citation.text_preview_start,
+        end: f.citation.text_preview_end,
+      };
+    }
     if (selectedKey.startsWith("clause:")) {
       const clauseId = selectedKey.slice("clause:".length);
       const clause = contract.clauses.find((c) => c.id === clauseId);
@@ -315,14 +353,14 @@ export default function ContractWorkspacePage() {
       return null;
     }
     return { start: field.span_start, end: field.span_end };
-  }, [contract, selectedKey, activeRun]);
+  }, [contract, selectedKey, activeRun, demoFindings]);
 
   // Citation ranges for the original-text viewer: every extracted
   // field with a valid span. Marks are subdued; the active one (the
   // most recently clicked) is brighter and scrolls into view.
   const citationRanges = useMemo(() => {
     if (!contract) return [] as { key: string; start: number; end: number }[];
-    return contract.extracted_fields
+    const ranges = contract.extracted_fields
       .filter(
         (f) =>
           typeof f.span_start === "number" && typeof f.span_end === "number",
@@ -332,7 +370,15 @@ export default function ContractWorkspacePage() {
         start: f.span_start as number,
         end: f.span_end as number,
       }));
-  }, [contract]);
+    for (const f of demoFindings) {
+      ranges.push({
+        key: `finding:${f.id}`,
+        start: f.citation.text_preview_start,
+        end: f.citation.text_preview_end,
+      });
+    }
+    return ranges;
+  }, [contract, demoFindings]);
 
   // Auto-clear the active citation after 4 seconds so the brighter
   // highlight is a transient acknowledgement, not a persistent state
@@ -341,7 +387,10 @@ export default function ContractWorkspacePage() {
   // of the workspace and shouldn't auto-clear out from under the user.
   useEffect(() => {
     if (!selectedKey) return;
-    if (selectedKey.startsWith("clause:") || selectedKey.startsWith("review:")) {
+    if (
+      selectedKey.startsWith("clause:") ||
+      selectedKey.startsWith("review:")
+    ) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -618,7 +667,13 @@ export default function ContractWorkspacePage() {
           className="min-w-0 lg:max-h-[calc(100vh-13rem)] lg:overflow-auto"
           data-testid="contract-document-pane"
         >
-          {viewerMode === "markdown" ? (
+          {versionDiff ? (
+            <VersionDiffPane
+              base={versionDiff.base}
+              against={versionDiff.against}
+              onClose={() => setVersionDiff(null)}
+            />
+          ) : viewerMode === "markdown" ? (
             <MarkdownPreview
               contractId={state.contract.id}
               rightSlot={
@@ -675,6 +730,15 @@ export default function ContractWorkspacePage() {
             onExportRedline={onExportRedline}
             compareSaveState={compareSaveState}
             onSaveRedline={onSaveRedline}
+            demoFindings={demoFindings}
+            demoVersions={demoVersions}
+            onJumpToCitation={(key) => {
+              setSelectedKey(key);
+              setViewerMode("original");
+            }}
+            onCompareVersions={(base, against) => {
+              setVersionDiff({ base, against });
+            }}
           />
         </div>
       </div>
@@ -740,6 +804,10 @@ interface SidebarProps {
   onExportRedline: () => void;
   compareSaveState: CompareSaveState;
   onSaveRedline: () => void;
+  demoFindings: PlaybookFinding[];
+  demoVersions: DocumentVersion[];
+  onJumpToCitation: (key: string) => void;
+  onCompareVersions: (base: DocumentVersion, against: DocumentVersion) => void;
 }
 
 function Sidebar({
@@ -760,6 +828,10 @@ function Sidebar({
   onExportRedline,
   compareSaveState,
   onSaveRedline,
+  demoFindings,
+  demoVersions,
+  onJumpToCitation,
+  onCompareVersions,
 }: SidebarProps) {
   const tabs = [
     {
@@ -772,10 +844,18 @@ function Sidebar({
       label: "Clauses",
       count: contract.clauses.length,
     },
-    { id: "review" as const, label: "Review" },
+    {
+      id: "review" as const,
+      label: "Review",
+      count: demoFindings.length > 0 ? demoFindings.length : undefined,
+    },
     { id: "lifecycle" as const, label: "Lifecycle" },
     { id: "signers" as const, label: "Signers" },
-    { id: "history" as const, label: "History" },
+    {
+      id: "history" as const,
+      label: "History",
+      count: demoVersions.length > 0 ? demoVersions.length : undefined,
+    },
   ];
   return (
     <aside>
@@ -808,12 +888,20 @@ function Sidebar({
         aria-labelledby="tab-review"
         hidden={activeTab !== "review"}
       >
-        <ReviewPanel
-          contractId={contract.id}
-          selectedKey={selectedKey}
-          onSelect={onSelect}
-          onRunChange={onReviewRunChange}
-        />
+        {demoFindings.length > 0 ? (
+          <ReviewTab
+            contractId={contract.id}
+            findings={demoFindings}
+            onJumpToSource={(key) => onJumpToCitation(key)}
+          />
+        ) : (
+          <ReviewPanel
+            contractId={contract.id}
+            selectedKey={selectedKey}
+            onSelect={onSelect}
+            onRunChange={onReviewRunChange}
+          />
+        )}
       </div>
       <div
         role="tabpanel"
@@ -838,6 +926,14 @@ function Sidebar({
         hidden={activeTab !== "history"}
         data-testid="rail-tab-history"
       >
+        {demoVersions.length > 0 && (
+          <div className="mb-3">
+            <HistoryTab
+              versions={demoVersions}
+              onCompare={onCompareVersions}
+            />
+          </div>
+        )}
         <DocumentHistorySection
           state={artifactsState}
           artifactDownloads={artifactDownloads}
