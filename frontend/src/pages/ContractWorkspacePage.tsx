@@ -1886,8 +1886,8 @@ function CompareResultPanel({ result }: { result: ArtifactCompareResponse }) {
             >
               {block.lines.map((line, lineIdx) => (
                 <div key={lineIdx} className="grid grid-cols-2" data-testid={`compare-line-${line.type}`}>
-                  <div className={line.type === "removed" ? "bg-rose-50 px-2 py-0.5 text-rose-900" : "px-2 py-0.5 text-ink-muted"}>{line.type === "removed" ? line.text || " " : " "}</div>
-                  <div className={line.type === "added" ? "bg-emerald-50 px-2 py-0.5 text-emerald-900" : "px-2 py-0.5 text-ink-muted"}>{line.type === "added" ? line.text || " " : line.type === "context" ? line.text || " " : " "}</div>
+                  <div className={line.type === "removed" ? "bg-danger-soft px-2 py-0.5 text-danger" : "px-2 py-0.5 text-ink-muted"}>{line.type === "removed" ? line.text || " " : " "}</div>
+                  <div className={line.type === "added" ? "bg-success-soft px-2 py-0.5 text-success" : "px-2 py-0.5 text-ink-muted"}>{line.type === "added" ? line.text || " " : line.type === "context" ? line.text || " " : " "}</div>
                 </div>
               ))}
             </div>
