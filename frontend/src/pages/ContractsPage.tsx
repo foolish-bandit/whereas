@@ -7,14 +7,18 @@ import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import { ApiError, MissingDevUserError, getContracts } from "../lib/api";
 import { mimeLabel } from "../lib/format";
+import {
+  REPOSITORY_COLUMNS,
+  type RepositoryColumnId,
+  type SortDir,
+  type SortKey,
+} from "../lib/repositoryColumns";
 import type { ContractListItem } from "../types/contracts";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "loaded"; contracts: ContractListItem[] }
   | { kind: "error"; title: string; description: string };
-
-type SortOrder = "newest" | "oldest" | "title_asc" | "updated_desc";
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "all", label: "All statuses" },
@@ -26,124 +30,226 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "failed", label: "Extraction failed" },
 ];
 
-const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
-  { value: "newest", label: "Newest first" },
-  { value: "oldest", label: "Oldest first" },
-  { value: "title_asc", label: "Title A→Z" },
-  { value: "updated_desc", label: "Recently updated" },
-];
-
 const Q_PARAM = "q";
 const STATUS_PARAM = "status";
 const SORT_PARAM = "sort";
+const DIR_PARAM = "dir";
 const MERGED_PARAM = "merged";
+const COLUMNS_LS_KEY = "whereas:repository:columns";
 const SEARCH_DEBOUNCE_MS = 250;
 
 const STATUS_VALUES = new Set(STATUS_FILTERS.map((s) => s.value));
-const SORT_VALUES = new Set<SortOrder>(SORT_OPTIONS.map((s) => s.value));
+const SORT_KEYS = new Set<SortKey>([
+  "renewal_date",
+  "effective_date",
+  "title",
+  "counterparty",
+  "updated_at",
+  "created_at",
+  "status",
+]);
 
-/**
- * PR #104 — Built-in URL-backed Repository views.
- *
- * Each preset is a canonical combination of the existing
- * status / sort / Show-merged filter state — it does NOT add new
- * backend filter fields. Clicking a preset rewrites
- * ``status`` / ``sort`` / ``merged`` URL params; the active preset
- * label is derived from those params so the back / forward buttons
- * and shared deep links Just Work. ``q`` is intentionally preserved
- * across preset selection — searching within a view is the common
- * case (see brief: "Preserve q unless the preset would be
- * confusing").
- *
- * These are not persisted user-saved views; that requires backend
- * + auth and is intentional future work.
- */
+const DEFAULT_SORT: SortKey = "renewal_date";
+const DEFAULT_DIR: SortDir = "asc";
+
+// Pre-PR-#X legacy ?sort=newest|oldest|title_asc|updated_desc values
+// still appear in saved deep links. Map them onto the new (key, dir)
+// scheme so users don't see an empty list after upgrade.
+const LEGACY_SORT_MAP: Record<string, { sort: SortKey; dir: SortDir }> = {
+  newest: { sort: "created_at", dir: "desc" },
+  oldest: { sort: "created_at", dir: "asc" },
+  title_asc: { sort: "title", dir: "asc" },
+  updated_desc: { sort: "updated_at", dir: "desc" },
+};
+
+const ALL_COLUMN_IDS = REPOSITORY_COLUMNS.map((c) => c.id);
+// Owner is hidden by default per the brief — only show in larger
+// viewports or when the user explicitly enables it.
+const DEFAULT_VISIBLE_COLUMNS: Set<RepositoryColumnId> = new Set(
+  ALL_COLUMN_IDS.filter((id) => id !== "owner"),
+);
+const REQUIRED_COLUMNS: Set<RepositoryColumnId> = new Set(["title"]);
+
+function loadVisibleColumnsFromStorage(): Set<RepositoryColumnId> {
+  try {
+    const raw = window.localStorage.getItem(COLUMNS_LS_KEY);
+    if (!raw) return new Set(DEFAULT_VISIBLE_COLUMNS);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set(DEFAULT_VISIBLE_COLUMNS);
+    const valid = parsed.filter((id): id is RepositoryColumnId =>
+      ALL_COLUMN_IDS.includes(id as RepositoryColumnId),
+    );
+    // Always include required columns.
+    REQUIRED_COLUMNS.forEach((c) => {
+      if (!valid.includes(c)) valid.push(c);
+    });
+    return new Set(valid);
+  } catch {
+    return new Set(DEFAULT_VISIBLE_COLUMNS);
+  }
+}
+
+function persistVisibleColumns(cols: Set<RepositoryColumnId>) {
+  try {
+    window.localStorage.setItem(
+      COLUMNS_LS_KEY,
+      JSON.stringify(Array.from(cols)),
+    );
+  } catch {
+    // Quota / private-mode failures are fine to swallow — visibility
+    // falls back to the in-memory state.
+  }
+}
+
 type RepositoryView = {
   id: string;
   label: string;
   status: string;
-  sort: SortOrder;
+  sort: SortKey;
+  dir: SortDir;
   merged: boolean;
 };
 
 const REPOSITORY_VIEWS: RepositoryView[] = [
-  { id: "active", label: "All active", status: "all", sort: "newest", merged: false },
+  { id: "active", label: "All active", status: "all", sort: DEFAULT_SORT, dir: DEFAULT_DIR, merged: false },
   {
     id: "needs_attention",
     label: "Needs attention",
     status: "failed",
-    sort: "newest",
+    sort: DEFAULT_SORT,
+    dir: DEFAULT_DIR,
     merged: false,
   },
   {
     id: "out_for_signature",
     label: "Out for signature",
     status: "sent_for_signature",
-    sort: "newest",
+    sort: DEFAULT_SORT,
+    dir: DEFAULT_DIR,
     merged: false,
   },
   {
     id: "executed",
     label: "Executed",
     status: "executed",
-    sort: "newest",
+    sort: DEFAULT_SORT,
+    dir: DEFAULT_DIR,
     merged: false,
   },
   {
     id: "recently_updated",
     label: "Recently updated",
     status: "all",
-    sort: "updated_desc",
+    sort: "updated_at",
+    dir: "desc",
     merged: false,
   },
-  { id: "merged", label: "Merged", status: "all", sort: "newest", merged: true },
+  {
+    id: "merged",
+    label: "Merged",
+    status: "all",
+    sort: DEFAULT_SORT,
+    dir: DEFAULT_DIR,
+    merged: true,
+  },
 ];
 
 function matchView(
   status: string,
-  sort: SortOrder,
+  sort: SortKey,
+  dir: SortDir,
   merged: boolean,
 ): RepositoryView | null {
   return (
     REPOSITORY_VIEWS.find(
-      (v) => v.status === status && v.sort === sort && v.merged === merged,
+      (v) =>
+        v.status === status &&
+        v.sort === sort &&
+        v.dir === dir &&
+        v.merged === merged,
     ) ?? null
   );
 }
 
+function parseSortFromUrl(params: URLSearchParams): { sort: SortKey; dir: SortDir } {
+  const raw = params.get(SORT_PARAM) ?? "";
+  if (LEGACY_SORT_MAP[raw]) return LEGACY_SORT_MAP[raw];
+  if (SORT_KEYS.has(raw as SortKey)) {
+    const dirRaw = params.get(DIR_PARAM);
+    const dir: SortDir = dirRaw === "desc" ? "desc" : "asc";
+    return { sort: raw as SortKey, dir };
+  }
+  return { sort: DEFAULT_SORT, dir: DEFAULT_DIR };
+}
+
+function compareNullable<T>(
+  a: T | null | undefined,
+  b: T | null | undefined,
+  cmp: (x: T, y: T) => number,
+  dir: SortDir,
+): number {
+  const aNull = a == null;
+  const bNull = b == null;
+  if (aNull && bNull) return 0;
+  if (aNull) return 1; // nulls last regardless of direction
+  if (bNull) return -1;
+  const v = cmp(a as T, b as T);
+  return dir === "asc" ? v : -v;
+}
+
+function sortContracts(
+  rows: ContractListItem[],
+  sort: SortKey,
+  dir: SortDir,
+): ContractListItem[] {
+  const out = [...rows];
+  const strCmp = (a: string, b: string) => a.localeCompare(b);
+  out.sort((a, b) => {
+    switch (sort) {
+      case "renewal_date":
+        return compareNullable(a.renewal_date, b.renewal_date, strCmp, dir);
+      case "effective_date":
+        return compareNullable(a.effective_date, b.effective_date, strCmp, dir);
+      case "counterparty":
+        return compareNullable(a.counterparty, b.counterparty, strCmp, dir);
+      case "title":
+        return compareNullable(a.title, b.title, strCmp, dir);
+      case "updated_at":
+        return compareNullable(a.updated_at, b.updated_at, strCmp, dir);
+      case "created_at":
+        return compareNullable(a.created_at, b.created_at, strCmp, dir);
+      case "status":
+        return compareNullable(a.status, b.status, strCmp, dir);
+    }
+  });
+  return out;
+}
+
 export default function ContractsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  // Initial search state seeded from the URL so a deep link like
-  // /repository?q=acme initializes the box with that query and the
-  // first fetch already includes it (PR #95).
   const initialQ = searchParams.get(Q_PARAM) ?? "";
-  // PR #104 — seed status / sort / merged from URL so a preset
-  // deep link (?status=executed) and the back/forward buttons both
-  // restore the right view. Unknown values fall back to defaults.
   const initialStatus = (() => {
     const raw = searchParams.get(STATUS_PARAM) ?? "all";
     return STATUS_VALUES.has(raw) ? raw : "all";
   })();
-  const initialSort: SortOrder = (() => {
-    const raw = searchParams.get(SORT_PARAM) as SortOrder | null;
-    return raw && SORT_VALUES.has(raw) ? raw : "newest";
-  })();
+  const { sort: initialSort, dir: initialDir } = parseSortFromUrl(searchParams);
   const initialMerged = searchParams.get(MERGED_PARAM) === "true";
+
   const [search, setSearch] = useState(initialQ);
   const [committedSearch, setCommittedSearch] = useState(initialQ);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [typeFilter, setTypeFilter] = useState("all");
-  const [sort, setSort] = useState<SortOrder>(initialSort);
+  const [sort, setSort] = useState<SortKey>(initialSort);
+  const [dir, setDir] = useState<SortDir>(initialDir);
   const [includeMerged, setIncludeMerged] = useState(initialMerged);
-  // PR #105 — Advanced filters panel. Opens expanded by default so
-  // the existing inline controls remain available without an extra
-  // click; users can collapse it to reclaim vertical space.
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
+  const [visibleColumns, setVisibleColumns] = useState<Set<RepositoryColumnId>>(
+    () => loadVisibleColumnsFromStorage(),
+  );
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
 
-  // Debounce the URL + fetch updates so a fast typist doesn't fire a
-  // request per keystroke. The committed value drives both the URL
-  // and the API call.
+  // Debounce search to URL + fetch.
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (debounceRef.current !== null) {
@@ -159,8 +265,7 @@ export default function ContractsPage() {
     };
   }, [search]);
 
-  // Sync URL ?q= to the committed search. Replace, not push, so the
-  // back button skips intermediate keystrokes.
+  // Sync URL ?q= to the committed search.
   useEffect(() => {
     const trimmed = committedSearch.trim();
     const next = new URLSearchParams(searchParams);
@@ -173,22 +278,19 @@ export default function ContractsPage() {
       next.delete(Q_PARAM);
       setSearchParams(next, { replace: true });
     }
-    // setSearchParams identity is stable; depending on it would
-    // loop. We intentionally only re-run when the committed search
-    // changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committedSearch]);
 
-  // PR #104 — keep ``status`` / ``sort`` / ``merged`` URL params in
-  // sync with state so presets are bookmarkable + back/forward
-  // friendly. Default values are omitted from the URL to keep
-  // ``/repository`` clean for the All-active default view.
+  // Keep status / sort / dir / merged in sync with URL. Defaults are
+  // omitted from the URL to keep /repository clean.
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     if (statusFilter !== "all") next.set(STATUS_PARAM, statusFilter);
     else next.delete(STATUS_PARAM);
-    if (sort !== "newest") next.set(SORT_PARAM, sort);
+    if (sort !== DEFAULT_SORT) next.set(SORT_PARAM, sort);
     else next.delete(SORT_PARAM);
+    if (dir !== DEFAULT_DIR) next.set(DIR_PARAM, dir);
+    else next.delete(DIR_PARAM);
     if (includeMerged) next.set(MERGED_PARAM, "true");
     else next.delete(MERGED_PARAM);
     const before = searchParams.toString();
@@ -197,18 +299,40 @@ export default function ContractsPage() {
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, sort, includeMerged]);
+  }, [statusFilter, sort, dir, includeMerged]);
 
   const activeView = useMemo(
-    () => matchView(statusFilter, sort, includeMerged),
-    [statusFilter, sort, includeMerged],
+    () => matchView(statusFilter, sort, dir, includeMerged),
+    [statusFilter, sort, dir, includeMerged],
   );
 
   function onSelectView(view: RepositoryView) {
     setStatusFilter(view.status);
     setSort(view.sort);
+    setDir(view.dir);
     setIncludeMerged(view.merged);
-    // Type filter and q are intentionally preserved.
+  }
+
+  function onSortChange(key: SortKey) {
+    if (key === sort) {
+      setDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(key);
+      // First click on a new column sorts ascending — matches the
+      // brief's "Renewal date ascending, nulls last" default.
+      setDir("asc");
+    }
+  }
+
+  function toggleColumn(id: RepositoryColumnId) {
+    if (REQUIRED_COLUMNS.has(id)) return;
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      persistVisibleColumns(next);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -261,18 +385,8 @@ export default function ContractsPage() {
       if (typeFilter !== "all" && c.mime_type !== typeFilter) return false;
       return true;
     });
-    const sorted = [...rows];
-    if (sort === "newest") {
-      sorted.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    } else if (sort === "oldest") {
-      sorted.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    } else if (sort === "title_asc") {
-      sorted.sort((a, b) => a.title.localeCompare(b.title));
-    } else if (sort === "updated_desc") {
-      sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-    }
-    return sorted;
-  }, [state, statusFilter, typeFilter, sort]);
+    return sortContracts(rows, sort, dir);
+  }, [state, statusFilter, typeFilter, sort, dir]);
 
   const hasActiveFilter =
     committedSearch.trim().length > 0 ||
@@ -285,15 +399,11 @@ export default function ContractsPage() {
     setCommittedSearch("");
   }
 
-  // PR #105 — count of non-default filter dimensions currently
-  // applied. Each of (q, status, sort, type, merged) that differs
-  // from its default contributes 1; surfaced as a chip next to the
-  // Advanced filters toggle so users can see at a glance how
-  // narrowed the list is.
+  const isDefaultSort = sort === DEFAULT_SORT && dir === DEFAULT_DIR;
   const activeFilterCount =
     (committedSearch.trim() ? 1 : 0) +
     (statusFilter !== "all" ? 1 : 0) +
-    (sort !== "newest" ? 1 : 0) +
+    (isDefaultSort ? 0 : 1) +
     (typeFilter !== "all" ? 1 : 0) +
     (includeMerged ? 1 : 0);
 
@@ -302,7 +412,8 @@ export default function ContractsPage() {
     setCommittedSearch("");
     setStatusFilter("all");
     setTypeFilter("all");
-    setSort("newest");
+    setSort(DEFAULT_SORT);
+    setDir(DEFAULT_DIR);
     setIncludeMerged(false);
   }
 
@@ -360,7 +471,6 @@ export default function ContractsPage() {
         </span>
       </div>
 
-      {/* Search row — first-class, always inline. */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <label className="relative flex-1 min-w-[200px]">
           <span className="sr-only">
@@ -387,6 +497,55 @@ export default function ContractsPage() {
             </button>
           )}
         </label>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setColumnsMenuOpen((v) => !v)}
+            className="flex items-center gap-1 rounded border border-rule bg-canvas px-2.5 py-1.5 text-xs text-ink hover:border-rule-strong"
+            data-testid="repository-columns-toggle"
+            aria-expanded={columnsMenuOpen}
+            aria-haspopup="menu"
+          >
+            Show columns
+            <span aria-hidden>▾</span>
+          </button>
+          {columnsMenuOpen && (
+            <div
+              className="absolute right-0 z-10 mt-1 w-56 rounded border border-rule bg-canvas p-2 shadow-md"
+              role="menu"
+              data-testid="repository-columns-menu"
+            >
+              {REPOSITORY_COLUMNS.map((c) => {
+                const checked = visibleColumns.has(c.id);
+                const required = REQUIRED_COLUMNS.has(c.id);
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-2 rounded px-2 py-1 text-xs ${
+                      required
+                        ? "text-ink-subtle"
+                        : "text-ink hover:bg-canvas-subtle"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={required}
+                      onChange={() => toggleColumn(c.id)}
+                      data-testid={`repository-columns-toggle-${c.id}`}
+                    />
+                    {c.label}
+                    {required ? (
+                      <span className="ml-auto text-[10px] uppercase">
+                        required
+                      </span>
+                    ) : null}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => setShowAdvancedFilters((v) => !v)}
@@ -407,9 +566,6 @@ export default function ContractsPage() {
         </button>
       </div>
 
-      {/* Advanced filters panel. Open by default so existing inline
-          controls remain available without a click; users can fold
-          it to free up vertical space. */}
       {showAdvancedFilters && (
         <div
           id="repository-advanced-panel"
@@ -441,19 +597,6 @@ export default function ContractsPage() {
               {types.map((t) => (
                 <option key={t} value={t}>
                   {mimeLabel(t)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as SortOrder)}
-              className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
-              aria-label="Sort by"
-              data-testid="repository-sort"
-            >
-              {SORT_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
                 </option>
               ))}
             </select>
@@ -562,7 +705,13 @@ export default function ContractsPage() {
 
       {state.kind === "loaded" && state.contracts.length > 0 && (
         <>
-          <ContractTable contracts={filtered} />
+          <ContractTable
+            contracts={filtered}
+            visibleColumns={visibleColumns}
+            sort={sort}
+            dir={dir}
+            onSortChange={onSortChange}
+          />
           <p className="mt-3 text-xs text-ink-subtle">
             {filtered.length} of {state.contracts.length} agreements shown
             {committedSearch.trim() ? ` for "${committedSearch.trim()}"` : ""}

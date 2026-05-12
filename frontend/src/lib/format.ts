@@ -141,6 +141,44 @@ export function renderExtractedValue(value: unknown): string {
   return "—";
 }
 
+/**
+ * Days between today (midnight UTC) and an ISO date (date-only or
+ * date-time). Positive when the target is in the future. Returns null
+ * for invalid inputs so callers can render an em-dash.
+ */
+export function daysUntil(iso: string, now: Date = new Date()): number | null {
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return null;
+  const MS_PER_DAY = 86_400_000;
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const then = Date.UTC(
+    target.getUTCFullYear(),
+    target.getUTCMonth(),
+    target.getUTCDate(),
+  );
+  return Math.round((then - today) / MS_PER_DAY);
+}
+
+/**
+ * Friendly relative phrase for a date that's within `windowDays` of
+ * today. Returns null when the date is further out — callers should
+ * fall back to the absolute formatted date in that case.
+ */
+export function relativeDateWithin(
+  iso: string,
+  windowDays: number,
+  now: Date = new Date(),
+): string | null {
+  const delta = daysUntil(iso, now);
+  if (delta === null) return null;
+  if (Math.abs(delta) > windowDays) return null;
+  if (delta === 0) return "today";
+  if (delta === 1) return "tomorrow";
+  if (delta === -1) return "yesterday";
+  if (delta > 1) return `in ${delta} days`;
+  return `${Math.abs(delta)} days ago`;
+}
+
 export function confidenceTier(
   confidence: number,
 ): "high" | "medium" | "low" {
