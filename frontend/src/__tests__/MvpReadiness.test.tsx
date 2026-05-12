@@ -157,6 +157,7 @@ describe("PR #107 — MVP readiness audit", () => {
     { path: "/demo/approvals/tasks", readyTestId: "approval-tasks-page", label: "Approval Tasks" },
     { path: "/demo/clause-manager", readyTestId: "clause-manager-page", label: "Clause Manager" },
     { path: "/demo/clause-library", readyTestId: "clause-manager-page", label: "Clause Manager (legacy)" },
+    { path: "/demo/playbooks", readyTestId: "playbooks-page", label: "Playbooks" },
     { path: "/demo/settings", readyTestId: "settings-page", label: "Settings" },
     { path: "/requests", readyTestId: "requests-page", label: "Standalone /requests" },
     { path: "/requests/templates", readyTestId: "agreement-templates-page", label: "Standalone /requests/templates" },
