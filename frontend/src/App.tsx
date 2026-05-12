@@ -17,6 +17,7 @@ import RequestsPage from "./pages/RequestsPage";
 import InboxPage from "./pages/InboxPage";
 import ApprovalsLandingPage from "./pages/ApprovalsLandingPage";
 import ApprovalTasksPage from "./pages/ApprovalTasksPage";
+import ApprovalWorkflowDetailPage from "./pages/ApprovalWorkflowDetailPage";
 import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import ApprovalWorkflowTemplatesPage from "./pages/ApprovalWorkflowTemplatesPage";
 import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
@@ -110,6 +111,10 @@ function DemoApp() {
             PR #60–#61 keep working. */}
         <Route path="approvals" element={<ApprovalsEntry />} />
         <Route path="approvals/workflows" element={<ApprovalWorkflowsPage />} />
+        <Route
+          path="approvals/workflows/:id"
+          element={<ApprovalWorkflowDetailPage />}
+        />
         <Route
           path="approvals/templates"
           element={<ApprovalWorkflowTemplatesPage />}
