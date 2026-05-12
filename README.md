@@ -111,7 +111,10 @@ fastest path to a working local stack and a confirmed feature set is:
 3. **Walk the MVP smoke checklist** at
    [docs/mvp-smoke-checklist.md](docs/mvp-smoke-checklist.md) to
    confirm each shipped surface actually works against your setup.
-4. **Read [docs/security-notes.md](docs/security-notes.md)** before
+4. **Run the deployment/self-host smoke test guide** at
+   [docs/deployment-smoke-test.md](docs/deployment-smoke-test.md) to
+   verify post-install behavior after local or self-host deployment.
+5. **Read [docs/security-notes.md](docs/security-notes.md)** before
    exposing the instance anywhere beyond a single developer's machine
    — Whereas is pre-v0.1 and does not yet have real authentication.
 
