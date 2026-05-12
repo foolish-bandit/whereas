@@ -41,13 +41,14 @@ describe("Sidebar", () => {
     renderSidebar();
     // These used to be top-level sidebar items. They now live under
     // their respective workspaces (Requests, Approvals, Repository).
+    // Inbox is now a top-level entry under the WORK section (Prompt 7);
+    // the others still live behind their workspace landing pages.
     for (const label of [
       "Contracts",
       "Agreement Templates",
       "Approval Workflows",
       "Approval Templates",
       "Approval Policies",
-      "Inbox",
       "Upload",
       "Clause Library",
     ]) {
@@ -256,5 +257,26 @@ describe("Sidebar overdue badges (PR #86)", () => {
     expect(text).not.toContain("storage_key");
     expect(text).not.toContain("wrapped_dek");
     expect(text).not.toContain("should-not-appear");
+  });
+
+  it("renders four section groups (Work / Library / Knowledge / Admin)", () => {
+    renderSidebar();
+    for (const id of ["work", "library", "knowledge", "admin"]) {
+      expect(screen.getAllByTestId(`sidebar-section-${id}`).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("exposes Templates and Integrations as top-level entries", () => {
+    renderSidebar();
+    const linksByLabel = (label: string) =>
+      screen
+        .getAllByRole("link")
+        .filter((el) => (el.textContent ?? "").trim() === label);
+    expect(linksByLabel("Templates").length).toBeGreaterThan(0);
+    // Integrations link's label cell contains a 'Soon' badge alongside
+    // the text, so match by aria-label or accessible name via testid.
+    expect(
+      screen.getAllByTestId("sidebar-soon-badge-integrations").length,
+    ).toBeGreaterThan(0);
   });
 });

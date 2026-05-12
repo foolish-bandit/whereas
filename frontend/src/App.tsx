@@ -10,6 +10,7 @@ import PlaybooksPage from "./pages/PlaybooksPage";
 import UploadPage from "./pages/UploadPage";
 import SettingsPage from "./pages/SettingsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
+import IntegrationsPage from "./pages/IntegrationsPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
 import RequestDetailPage from "./pages/RequestDetailPage";
@@ -80,6 +81,7 @@ function DemoApp() {
         <Route path="playbooks/:id" element={<PlaybookDetailPage />} />
         <Route path="upload" element={<UploadPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="integrations" element={<IntegrationsPage />} />
 
         {/* Clause Manager (new label) + legacy /clause-library alias. */}
         <Route path="clause-manager" element={<ClauseLibraryPage />} />
