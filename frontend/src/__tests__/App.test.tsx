@@ -305,6 +305,15 @@ describe("App routing — UI consolidation pass", () => {
     );
   });
 
+  it("renders the new /demo/approvals/tasks/:id detail route (PR #99)", async () => {
+    renderAt("/demo/approvals/tasks/task-deep-detail");
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("approval-task-detail-loading"),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("renders the new /demo/approvals/templates route", async () => {
     renderAt("/demo/approvals/templates");
     await waitFor(() =>
