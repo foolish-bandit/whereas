@@ -29,18 +29,27 @@ def test_artifact_compare_label_covers_taxonomy() -> None:
 
 
 def test_compute_text_diff_simple_replace() -> None:
-    """Replacing one line yields exactly one changed block + accurate
-    summary counts."""
-    base = "alpha\nbeta\ngamma\ndelta\n"
-    compare = "alpha\nBETA\ngamma\ndelta\nepsilon\n"
+    """Replacing one paragraph yields exactly one changed block + accurate
+    summary counts.
+
+    PR #93 — the diff unit is a paragraph, not a raw line. Paragraphs are
+    delimited by blank lines (see ``_split_paragraphs``); single
+    newlines inside one logical paragraph are collapsed to one space so
+    a wrap-width change does not surface as a content change. The
+    fixtures below use blank-line separators so the splitter produces
+    one paragraph per token, mirroring the line-based intent of the
+    original PR #71 test.
+    """
+    base = "alpha\n\nbeta\n\ngamma\n\ndelta\n"
+    compare = "alpha\n\nBETA\n\ngamma\n\ndelta\n\nepsilon\n"
     result = service.compute_text_diff(base, compare)
     assert result.summary.added_lines == 2  # BETA + epsilon
     assert result.summary.removed_lines == 1  # beta
     assert result.summary.changed_blocks == 1
     assert result.summary.unchanged_lines == 3
     # Reconstruct the rendered text by walking blocks: every original
-    # line appears somewhere (context or removed) and every compare
-    # line appears (context or added).
+    # paragraph appears somewhere (context or removed) and every compare
+    # paragraph appears (context or added).
     rendered_added = [
         line.text for block in result.diff_blocks for line in block.lines if line.type == "added"
     ]
@@ -53,8 +62,10 @@ def test_compute_text_diff_simple_replace() -> None:
 
 
 def test_compute_text_diff_pure_insert_and_pure_delete() -> None:
-    base = "a\nb\nc\n"
-    compare = "a\nb\nc\nd\n"
+    # Blank-line-separated paragraphs (see PR #93 / paragraph-aware
+    # splitter notes on the preceding test).
+    base = "a\n\nb\n\nc\n"
+    compare = "a\n\nb\n\nc\n\nd\n"
     result = service.compute_text_diff(base, compare)
     assert result.summary.added_lines == 1
     assert result.summary.removed_lines == 0
@@ -84,8 +95,11 @@ def test_compute_text_diff_normalizes_line_endings() -> None:
 
 
 def test_compute_text_diff_truncates_with_warning() -> None:
-    base = "\n".join(f"L{i}" for i in range(2500)) + "\n"
-    compare = "\n".join(f"M{i}" for i in range(2500)) + "\n"
+    # Paragraph-aware splitter (PR #93): use blank-line separators so
+    # we materialize 2500 paragraphs on each side, not one giant
+    # paragraph of run-on text.
+    base = "\n\n".join(f"L{i}" for i in range(2500)) + "\n"
+    compare = "\n\n".join(f"M{i}" for i in range(2500)) + "\n"
     result = service.compute_text_diff(base, compare)
     emitted = sum(len(b.lines) for b in result.diff_blocks)
     assert emitted <= service.DEFAULT_MAX_LINES
