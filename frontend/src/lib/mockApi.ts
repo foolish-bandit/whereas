@@ -18,6 +18,9 @@ import {
   MOCK_LIST,
   MOCK_MARKDOWN_BY_CONTRACT_ID,
   MOCK_NDA_ID,
+  MOCK_SIGNATURE_OUT_ID,
+  MOCK_EXECUTED_ID,
+  MOCK_REDLINE_ID,
   MOCK_PLAYBOOK_DETAIL_BY_ID,
   MOCK_PLAYBOOK_LIST,
   MOCK_REVIEW_BY_KEY,
@@ -124,6 +127,8 @@ import {
   MOCK_INBOX_ITEMS,
   MOCK_REQUESTS,
   MOCK_APPROVAL_POLICIES,
+  MOCK_REQUEST_LINKED_ID,
+  MOCK_REQUEST_BLOCKED_ID,
 } from "./mockData";
 
 interface ApiOptions {
@@ -252,13 +257,10 @@ export async function getContractArtifacts(
   if (!detail) {
     throw new ApiError(404, "Contract not found.");
   }
-  // Demo mode synthesizes a small artifact lifecycle so the
-  // Repository detail view exercises the full lifecycle strip + the
-  // PR #69 document-history surface end to end. The seed NDA gets
-  // all three stages (uploaded source, generated Word document,
-  // signed PDF). The failed-upload demo intentionally returns no
-  // artifacts so the legacy-fallback row is exercised. Other rows
-  // just get a single original upload.
+  // Demo mode synthesizes artifact histories for a few seeded
+  // Repository records so the workspace tells a coherent lifecycle:
+  // source draft, generated agreement, out-for-signature packet,
+  // executed signed PDF, and redline history.
   if (id === MOCK_FAILED_ID) {
     return [];
   }
@@ -276,12 +278,6 @@ export async function getContractArtifacts(
     created_at: detail.created_at,
     metadata_json: null,
   };
-  if (id !== MOCK_NDA_ID) {
-    const savedNonNda = sessionSavedRedlinesByContractId[id] ?? [];
-    return savedNonNda.length === 0
-      ? [original]
-      : [...savedNonNda, original];
-  }
   const generated: ContractArtifact = {
     id: `${id}-artifact-generated`,
     contract_id: id,
@@ -314,9 +310,39 @@ export async function getContractArtifacts(
     created_at: detail.updated_at,
     metadata_json: { docuseal_submission_id: "demo-submission-1" },
   };
+  const seededRedline: ContractArtifact = {
+    id: `${id}-artifact-redline-seeded`,
+    contract_id: id,
+    artifact_type: "redline",
+    storage_backend: "s3",
+    filename: `${detail.title}.redline.docx`,
+    mime_type:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    file_hash_sha256: null,
+    size_bytes: 4096,
+    source: "comparison_report",
+    is_official: false,
+    created_at: detail.updated_at,
+    metadata_json: {
+      base_artifact_type: "original_upload",
+      compare_artifact_type: "generated_docx",
+      source_kind: "comparison_report",
+    },
+  };
+  let base: ContractArtifact[];
+  if (id === MOCK_NDA_ID) {
+    base = [generated, original];
+  } else if (id === MOCK_SIGNATURE_OUT_ID) {
+    base = [generated, original];
+  } else if (id === MOCK_EXECUTED_ID) {
+    base = [signed, generated, original];
+  } else if (id === MOCK_REDLINE_ID) {
+    base = [seededRedline, generated, original];
+  } else {
+    base = [original];
+  }
   // Listing order: newest first, matching the real backend's
   // ``created_at desc`` ordering.
-  const base = [signed, generated, original];
   const saved = sessionSavedRedlinesByContractId[id] ?? [];
   if (saved.length === 0) return base;
   return [...saved, ...base];
@@ -1485,6 +1511,8 @@ export async function updateFindingStatus(
  */
 export function __resetMockState(): void {
   sessionList.length = 0;
+  sessionRequests.length = 0;
+  sessionInboxItems.length = 0;
   for (const k of Object.keys(sessionDetailById)) {
     delete sessionDetailById[k];
   }
@@ -1508,6 +1536,7 @@ export function __resetMockState(): void {
   sessionApprovalRuns.length = 0;
   sessionApprovalRuns.push(..._buildDemoApprovalRuns());
   sessionApprovalTemplates.length = 0;
+  sessionApprovalTemplates.push(...buildSeedApprovalWorkflowTemplates());
   sessionApprovalPolicies.length = 0;
   sessionApprovalPolicies.push(...(MOCK_APPROVAL_POLICIES as ApprovalPolicy[]).map((p) => ({ ...p })));
 }
@@ -3537,8 +3566,8 @@ function _buildDemoApprovalRuns(): ApprovalWorkflowRun[] {
     organization_id: orgId,
     name: "NDA legal review",
     status: "active",
-    request_id: "demo-request-1",
-    contract_id: null,
+    request_id: MOCK_REQUEST_BLOCKED_ID,
+    contract_id: MOCK_SIGNATURE_OUT_ID,
     template_id: null,
     current_step_order: 1,
     started_at: minusTs(-3),
@@ -3592,10 +3621,10 @@ function _buildDemoApprovalRuns(): ApprovalWorkflowRun[] {
   const runCompleted: ApprovalWorkflowRun = {
     id: "demo-run-completed",
     organization_id: orgId,
-    name: "MSA renewal",
+    name: "Generated NDA approval",
     status: "completed",
-    request_id: "demo-request-2",
-    contract_id: null,
+    request_id: MOCK_REQUEST_LINKED_ID,
+    contract_id: MOCK_NDA_ID,
     template_id: null,
     current_step_order: null,
     started_at: minusTs(-10),
@@ -3604,16 +3633,55 @@ function _buildDemoApprovalRuns(): ApprovalWorkflowRun[] {
     updated_at: minusTs(-5),
     created_by: null,
     metadata_json: null,
-    steps: [],
+    steps: [
+      {
+        id: "demo-step-completed-1",
+        organization_id: orgId,
+        workflow_run_id: "demo-run-completed",
+        step_order: 1,
+        title: "Legal review",
+        description: null,
+        approver_name: "Alice Counsel",
+        approver_email: null,
+        assigned_to: "demo-user-alice",
+        status: "approved",
+        decision_note: null,
+        decided_at: minusTs(-7),
+        due_date: minus(-8),
+        inbox_item_id: null,
+        created_at: minusTs(-10),
+        updated_at: minusTs(-7),
+        metadata_json: null,
+      },
+      {
+        id: "demo-step-completed-2",
+        organization_id: orgId,
+        workflow_run_id: "demo-run-completed",
+        step_order: 2,
+        title: "Finance sign-off",
+        description: null,
+        approver_name: "Bob Finance",
+        approver_email: null,
+        assigned_to: "demo-user-bob",
+        status: "approved",
+        decision_note: null,
+        decided_at: minusTs(-5),
+        due_date: minus(-6),
+        inbox_item_id: "00000000-0000-4000-8000-0000000000b6",
+        created_at: minusTs(-10),
+        updated_at: minusTs(-5),
+        metadata_json: null,
+      },
+    ],
   };
 
   const runRejected: ApprovalWorkflowRun = {
     id: "demo-run-rejected",
     organization_id: orgId,
-    name: "Vendor SOW review",
+    name: "Vendor paper exception review",
     status: "rejected",
-    request_id: "demo-request-3",
-    contract_id: null,
+    request_id: null,
+    contract_id: MOCK_REDLINE_ID,
     template_id: null,
     current_step_order: null,
     started_at: minusTs(-12),
@@ -3936,6 +4004,113 @@ export async function cancelApprovalWorkflow(
 
 const DEMO_TODAY = "2026-05-09";
 
+function buildSeedApprovalWorkflowTemplates(): ApprovalWorkflowTemplate[] {
+  return [
+    {
+      id: "wftpl-legal-review",
+      organization_id: MOCK_DEMO_ORG_ID,
+      name: "NDA Legal Review",
+      description: "Standard NDA legal review before signature.",
+      template_type: "legal_review",
+      status: "active",
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-01T10:00:00Z",
+      created_by: null,
+      metadata_json: null,
+      steps: [
+        {
+          id: "wftpl-step-legal-1",
+          organization_id: MOCK_DEMO_ORG_ID,
+          workflow_template_id: "wftpl-legal-review",
+          step_order: 1,
+          title: "Legal review",
+          description: null,
+          approver_name: "Alice Counsel",
+          approver_email: null,
+          assigned_to: "demo-user-alice",
+          due_in_days: 2,
+          metadata_json: null,
+          created_at: "2026-04-01T10:00:00Z",
+          updated_at: "2026-04-01T10:00:00Z",
+        },
+        {
+          id: "wftpl-step-legal-2",
+          organization_id: MOCK_DEMO_ORG_ID,
+          workflow_template_id: "wftpl-legal-review",
+          step_order: 2,
+          title: "Finance sign-off",
+          description: null,
+          approver_name: "Bob Finance",
+          approver_email: null,
+          assigned_to: "demo-user-bob",
+          due_in_days: 5,
+          metadata_json: null,
+          created_at: "2026-04-01T10:00:00Z",
+          updated_at: "2026-04-01T10:00:00Z",
+        },
+      ],
+    },
+    {
+      id: "wftpl-exec-approval",
+      organization_id: MOCK_DEMO_ORG_ID,
+      name: "Executive Approval",
+      description: "Extra executive review for high-priority agreements.",
+      template_type: "executive_approval",
+      status: "active",
+      created_at: "2026-04-02T10:00:00Z",
+      updated_at: "2026-04-02T10:00:00Z",
+      created_by: null,
+      metadata_json: null,
+      steps: [
+        {
+          id: "wftpl-step-exec-1",
+          organization_id: MOCK_DEMO_ORG_ID,
+          workflow_template_id: "wftpl-exec-approval",
+          step_order: 1,
+          title: "Executive sign-off",
+          description: null,
+          approver_name: "Casey Exec",
+          approver_email: null,
+          assigned_to: "demo-user-casey",
+          due_in_days: 3,
+          metadata_json: null,
+          created_at: "2026-04-02T10:00:00Z",
+          updated_at: "2026-04-02T10:00:00Z",
+        },
+      ],
+    },
+    {
+      id: "wftpl-legacy",
+      organization_id: MOCK_DEMO_ORG_ID,
+      name: "Legacy Approval Flow",
+      description: "Archived sample workflow retained for audit history.",
+      template_type: "general",
+      status: "archived",
+      created_at: "2026-03-01T10:00:00Z",
+      updated_at: "2026-03-15T10:00:00Z",
+      created_by: null,
+      metadata_json: null,
+      steps: [
+        {
+          id: "wftpl-step-legacy-1",
+          organization_id: MOCK_DEMO_ORG_ID,
+          workflow_template_id: "wftpl-legacy",
+          step_order: 1,
+          title: "Legacy review",
+          description: null,
+          approver_name: null,
+          approver_email: null,
+          assigned_to: null,
+          due_in_days: null,
+          metadata_json: null,
+          created_at: "2026-03-01T10:00:00Z",
+          updated_at: "2026-03-15T10:00:00Z",
+        },
+      ],
+    },
+  ];
+}
+
 function _isoToDate(iso: string): Date {
   return new Date(`${iso}T00:00:00Z`);
 }
@@ -3981,17 +4156,22 @@ function _toDashboardInbox(row: InboxItem): DashboardInboxSummary {
 function _toDashboardContract(
   row: ContractListItem,
 ): DashboardContractSummary {
-  // Demo mock contracts don't carry artifact lists or DocuSeal ids;
-  // show the truthful answer rather than faking it.
   return {
     id: row.id,
     title: row.title,
     status: row.status,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    docuseal_submission_id: null,
-    has_generated_docx: false,
-    has_signed_pdf: false,
+    docuseal_submission_id:
+      row.status === "executed" || row.status === "sent_for_signature"
+        ? "demo-submission-1"
+        : null,
+    has_generated_docx:
+      row.id === MOCK_NDA_ID ||
+      row.id === MOCK_SIGNATURE_OUT_ID ||
+      row.id === MOCK_EXECUTED_ID ||
+      row.id === MOCK_REDLINE_ID,
+    has_signed_pdf: row.id === MOCK_EXECUTED_ID,
   };
 }
 
@@ -4693,3 +4873,4 @@ export async function archiveApprovalPolicy(id: string, options: ApiOptions = {}
 // the file so all referenced helpers (DEMO_TODAY, _addDays,
 // MOCK_DEMO_ORG_ID, _buildDemoApprovalRuns) are already initialized.
 sessionApprovalRuns.push(..._buildDemoApprovalRuns());
+sessionApprovalTemplates.push(...buildSeedApprovalWorkflowTemplates());

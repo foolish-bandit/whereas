@@ -87,8 +87,8 @@ export default function ActivityTimeline(props: Props) {
         className="mt-3 text-xs text-ink-subtle"
         data-testid="activity-timeline-empty"
       >
-        No recorded activity yet. The timeline starts recording approval and
-        signature events as they happen.
+        No activity recorded yet. Approval decisions, signature events, and
+        other workflow milestones will appear here as they happen.
       </p>
     );
   }

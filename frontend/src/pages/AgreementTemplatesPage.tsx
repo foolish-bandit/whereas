@@ -159,8 +159,8 @@ export default function AgreementTemplatesPage() {
           }
           description={
             includeArchived
-              ? "Create one above. Templates power the start-from-template and generate-agreement flows under Requests."
-              : "Create a template above, then upload its DOCX or PDF original. The text preview will appear once conversion succeeds."
+              ? "Create one above. Templates feed the request intake and agreement-generation flows under Requests."
+              : "Create a template above, then upload its DOCX or PDF source file. Variables, source history, and the text preview appear here once conversion succeeds."
           }
         />
       )}

@@ -255,7 +255,7 @@ export default function ClauseLibraryPage() {
           description={
             search
               ? "Try a different search term or clear the filter."
-              : "Add a clause above to start building the library."
+              : "Add a clause above to start the Clause Manager library for fallback language, playbooks, and negotiation standards."
           }
         />
       )}
