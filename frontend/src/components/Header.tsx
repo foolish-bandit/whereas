@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import CommandPalette from "./CommandPalette";
+import DemoModePill from "./DemoModePill";
 import { getDashboardSummary } from "../lib/api";
 import { demoPath } from "../lib/routes";
 
@@ -102,6 +103,11 @@ export default function Header({
             <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
             {demoMode ? "Demo workspace" : "Self-hosted workspace"}
           </span>
+          {demoMode && (
+            <div className="hidden md:inline-flex">
+              <DemoModePill />
+            </div>
+          )}
         </div>
 
         <button
@@ -240,15 +246,6 @@ export default function Header({
             </div>
           </Dropdown>
 
-          {demoMode ? (
-            <span
-              className="hidden items-center gap-2 rounded border border-info-ring bg-info-soft px-2 py-1 text-info sm:inline-flex sm:px-2.5"
-              title="The frontend is running with mock data; no backend is being called."
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden />
-              <span>Demo mode</span>
-            </span>
-          ) : null}
         </div>
       </header>
       <CommandPalette
