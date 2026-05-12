@@ -242,6 +242,45 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Agreement Template builder polish (PR #94)
+
+The Agreement Template detail page (`/demo/requests/templates/:id`,
+legacy `/demo/agreement-templates/:id`) is now organized into
+discrete sections so a non-engineer can scan and act without reading
+the whole page or feeling like they're editing a backend record:
+
+- **Header**: name, *Active / Archived* status pill, template-type
+  chip, updated date, breadcrumb (*Requests → Agreement Templates →
+  …*) using `mountedPath()` so both the demo and any future
+  standalone mount resolve correctly.
+- **Template source file**: upload affordance plus a user-friendly
+  artifact list — labels go through `artifactDisplayLabel()` so
+  uploaded sources read as *"Source file"* rather than the raw
+  `original_upload` enum.
+- **Text preview**: existing Markdown renderer; empty state now
+  uses the shared `EmptyState` component.
+- **Variables**: required variables float to the top, each row
+  shows a *Required* chip when applicable, and help text + variable
+  key + variable type appear inline. No raw JSON.
+- **Generate agreement**: variable form groups *Required* fields
+  before *Optional* ones; clicking *Generate agreement* with blanks
+  surfaces a clear *"Missing required fields: …"* warning instead
+  of silently disabling the button. A privacy note next to the form
+  documents that the values you enter are only sent to the
+  generation endpoint to render the agreement — they are **not**
+  stored on the template itself. Success state links to the new
+  Repository record (via `/repository/:id`, mount-aware).
+- **Archive**: two-step confirm on active templates only; the
+  section disappears on already-archived templates.
+
+What's gone: the raw `metadata_json` `<pre>` dump at the bottom of
+the page; the *"Generate DOCX"* label that exposed `generated_docx`;
+the inline artifact-type enum names in the source-file list.
+
+Backend untouched: template generation semantics, generated-agreement
+artifact priority, Repository / Contract naming, DocuSeal flow,
+approval gate, request workflow state machine — all preserved.
+
 ## Paragraph-aware redline diff (PR #93)
 
 The comparison engine that powers the on-screen compare, the

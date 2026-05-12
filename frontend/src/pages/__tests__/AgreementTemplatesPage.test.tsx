@@ -88,6 +88,37 @@ const NDA_VARIABLES = [
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
   },
+  // PR #94 — a second required variable so the missing-required
+  // warning has more than one entry, plus an optional variable that
+  // exercises the required/optional grouping in the generation form.
+  {
+    id: "v-2",
+    template_id: NDA_ID,
+    key: "effective_date",
+    label: "Effective Date",
+    variable_type: "date",
+    required: true,
+    default_value: null,
+    help_text: null,
+    sort_order: 2,
+    metadata_json: null,
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: "2026-04-01T00:00:00Z",
+  },
+  {
+    id: "v-3",
+    template_id: NDA_ID,
+    key: "governing_law",
+    label: "Governing Law",
+    variable_type: "text",
+    required: false,
+    default_value: "California",
+    help_text: null,
+    sort_order: 3,
+    metadata_json: null,
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: "2026-04-01T00:00:00Z",
+  },
 ];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -229,12 +260,18 @@ describe("AgreementTemplateDetailPage", () => {
     clearDevUserId();
   });
 
-  function renderDetail() {
+  function renderDetail(
+    initialPath: string = `/demo/agreement-templates/${NDA_ID}`,
+  ) {
     return render(
-      <MemoryRouter initialEntries={[`/agreement-templates/${NDA_ID}`]}>
+      <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route
-            path="/agreement-templates/:id"
+            path="/demo/agreement-templates/:id"
+            element={<AgreementTemplateDetailPage />}
+          />
+          <Route
+            path="/demo/requests/templates/:id"
             element={<AgreementTemplateDetailPage />}
           />
         </Routes>
@@ -373,6 +410,12 @@ describe("AgreementTemplateDetailPage", () => {
       screen.getByTestId("agreement-template-generate-input-counterparty_name"),
       { target: { value: "Acme Inc." } },
     );
+    // PR #94 — the fixture now carries two required variables, so we
+    // also fill effective_date before clicking Generate.
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-input-effective_date"),
+      { target: { value: "2026-05-01" } },
+    );
 
     fireEvent.click(
       screen.getByTestId("agreement-template-generate-submit"),
@@ -388,19 +431,235 @@ describe("AgreementTemplateDetailPage", () => {
     expect(document.body.textContent ?? "").not.toContain("should-not-be-here");
   });
 
-  it("disables the generate button when required variables are blank", async () => {
+  it("warns about missing required fields when generate is clicked with blanks (PR #94)", async () => {
     setupDetailFetch(fetchMock);
     renderDetail();
     await screen.findByTestId("agreement-template-markdown-body");
 
+    // The button is no longer disabled when a required field is blank
+    // (PR #94 — clicking surfaces a clear "Missing required fields"
+    // message rather than silently disabling).
     const button = screen.getByTestId("agreement-template-generate-submit");
-    expect(button).toBeDisabled();
+    expect(button).not.toBeDisabled();
+    expect(
+      screen.queryByTestId("agreement-template-generate-missing-required"),
+    ).toBeNull();
+
+    fireEvent.click(button);
+    const missing = await screen.findByTestId(
+      "agreement-template-generate-missing-required",
+    );
+    // The fixture defines two required variables; both should be in the
+    // warning since neither has been filled.
+    expect(missing.textContent ?? "").toMatch(/counterparty name/i);
+    expect(missing.textContent ?? "").toMatch(/effective date/i);
+  });
+
+  it("renders an Active status pill, breadcrumb, and a template-type chip (PR #94)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(screen.getByTestId("agreement-template-status-pill")).toHaveTextContent(
+      /active/i,
+    );
+    expect(screen.getByTestId("agreement-template-type-chip")).toHaveTextContent(
+      "NDA",
+    );
+    // Breadcrumb is mount-aware: when we render under /demo/* the
+    // links point at the demo-prefixed routes.
+    const breadcrumb = screen.getByTestId(
+      "agreement-template-breadcrumb-templates",
+    );
+    expect(breadcrumb).toHaveAttribute(
+      "href",
+      "/demo/requests/templates",
+    );
+  });
+
+  it("renders a user-friendly artifact label (no raw original_upload / generated_docx) (PR #94)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    const list = await screen.findByTestId(
+      "agreement-template-artifact-list",
+    );
+    expect(list.textContent ?? "").toMatch(/source file/i);
+    // The raw enum names should never leak into the rendered DOM.
+    const body = document.body.textContent ?? "";
+    expect(body).not.toMatch(/\boriginal_upload\b/);
+    expect(body).not.toMatch(/\bgenerated_docx\b/);
+  });
+
+  it("does not surface raw metadata_json anywhere on the detail page (PR #94)", async () => {
+    const tampered = {
+      ...NDA,
+      metadata_json: {
+        secret_note: "should-not-render",
+        storage_key: "should-not-render",
+      } as Record<string, unknown>,
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+        return jsonResponse(NDA_MARKDOWN);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+        return jsonResponse([NDA_ARTIFACT]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+        return jsonResponse(NDA_VARIABLES);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+        return jsonResponse(tampered);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    const body = document.body.textContent ?? "";
+    // The pre-#94 implementation dumped metadata_json into a <pre>
+    // block at the bottom of the page; PR #94 removed that.
+    expect(body).not.toContain("metadata_json");
+    expect(body).not.toContain("should-not-render");
+    expect(body).not.toContain("storage_key");
+  });
+
+  it("groups required variables before optional ones in the generate form (PR #94)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.getByTestId("agreement-template-generate-required-group"),
+    ).toHaveTextContent(/counterparty name/i);
+    expect(
+      screen.getByTestId("agreement-template-generate-required-group"),
+    ).toHaveTextContent(/effective date/i);
+    expect(
+      screen.getByTestId("agreement-template-generate-optional-group"),
+    ).toHaveTextContent(/governing law/i);
+  });
+
+  it("archives the template behind a two-step confirm (PR #94)", async () => {
+    let archived = false;
+    fetchMock.mockImplementation(
+      async (url: string, init?: RequestInit) => {
+        if (
+          url.endsWith(`/api/agreement-templates/${NDA_ID}`) &&
+          init?.method === "DELETE"
+        ) {
+          archived = true;
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+          return jsonResponse(NDA_MARKDOWN);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+          return jsonResponse([NDA_ARTIFACT]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+          return jsonResponse(NDA_VARIABLES);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+          return jsonResponse(archived ? { ...NDA, status: "archived" } : NDA);
+        }
+        return jsonResponse({ detail: "unexpected " + url }, 500);
+      },
+    );
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    // Single click reveals confirm — no DELETE goes out yet.
+    fireEvent.click(
+      screen.getByTestId("agreement-template-archive-button"),
+    );
+    expect(archived).toBe(false);
+    expect(
+      screen.getByTestId("agreement-template-confirm-archive"),
+    ).toBeInTheDocument();
+    // Cancel keeps us in pristine state.
+    fireEvent.click(
+      screen.getByTestId("agreement-template-cancel-archive"),
+    );
+    expect(archived).toBe(false);
+    // Re-open + confirm sends the DELETE.
+    fireEvent.click(
+      screen.getByTestId("agreement-template-archive-button"),
+    );
+    fireEvent.click(
+      screen.getByTestId("agreement-template-confirm-archive"),
+    );
+    await waitFor(() => expect(archived).toBe(true));
+    // After the reload, the status pill flips to Archived and the
+    // Archive section disappears (only shown on Active templates).
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("agreement-template-status-pill"),
+      ).toHaveTextContent(/archived/i);
+    });
+    expect(screen.queryByTestId("agreement-template-archive")).toBeNull();
+  });
+
+  it("hides the Archive section entirely on already-archived templates (PR #94)", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+        return jsonResponse(NDA_MARKDOWN);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+        return jsonResponse([NDA_ARTIFACT]);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+        return jsonResponse(NDA_VARIABLES);
+      }
+      if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+        return jsonResponse({ ...NDA, status: "archived" });
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.getByTestId("agreement-template-status-pill"),
+    ).toHaveTextContent(/archived/i);
+    expect(screen.queryByTestId("agreement-template-archive")).toBeNull();
+  });
+
+  it("does not surface forbidden strings in the rendered DOM (PR #94)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    const body = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+    ]) {
+      expect(body).not.toContain(needle);
+    }
+  });
+
+  it("clears the missing-required warning once required fields are filled (PR #94)", async () => {
+    setupDetailFetch(fetchMock);
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+
+    fireEvent.click(screen.getByTestId("agreement-template-generate-submit"));
+    await screen.findByTestId("agreement-template-generate-missing-required");
 
     fireEvent.change(
       screen.getByTestId("agreement-template-generate-input-counterparty_name"),
       { target: { value: "Acme" } },
     );
-    expect(button).not.toBeDisabled();
+    fireEvent.change(
+      screen.getByTestId("agreement-template-generate-input-effective_date"),
+      { target: { value: "2026-05-01" } },
+    );
+    // The warning disappears as soon as both required values are non-blank.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("agreement-template-generate-missing-required"),
+      ).toBeNull();
+    });
   });
 
   it("warns when generation is attempted without an original upload", async () => {

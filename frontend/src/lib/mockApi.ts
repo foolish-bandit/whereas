@@ -1562,6 +1562,11 @@ const DEMO_ORG_AT = "00000000-0000-4000-8000-0000000000aa";
 const NDA_ID = "11111111-1111-4111-8111-111111111111";
 const MSA_ID = "22222222-2222-4222-8222-222222222222";
 
+// Archived demo template id — surfaces archived UI states without
+// touching the two active templates the existing tests / demo flows
+// already rely on.
+const LEGACY_NDA_ID = "33333333-3333-4333-8333-333333333344";
+
 const demoAgreementTemplates: AgreementTemplate[] = [
   {
     id: NDA_ID,
@@ -1585,6 +1590,18 @@ const demoAgreementTemplates: AgreementTemplate[] = [
     updated_at: "2026-04-20T10:00:00Z",
     metadata_json: null,
   },
+  {
+    id: LEGACY_NDA_ID,
+    organization_id: DEMO_ORG_AT,
+    name: "Legacy NDA (2024)",
+    description:
+      "Archived — superseded by the current mutual NDA. Kept for audit history.",
+    template_type: "NDA",
+    status: "archived",
+    created_at: "2024-08-12T10:00:00Z",
+    updated_at: "2026-02-04T10:00:00Z",
+    metadata_json: null,
+  },
 ];
 
 const demoAgreementTemplateMarkdown: Record<
@@ -1606,6 +1623,7 @@ const demoAgreementTemplateMarkdown: Record<
   // MSA conversion produced warnings and no snapshot — exercises the empty
   // state in the UI.
   [MSA_ID]: null,
+  [LEGACY_NDA_ID]: null,
 };
 
 const demoAgreementTemplateArtifacts: Record<string, AgreementTemplateArtifact[]> = {
@@ -1627,6 +1645,7 @@ const demoAgreementTemplateArtifacts: Record<string, AgreementTemplateArtifact[]
     },
   ],
   [MSA_ID]: [],
+  [LEGACY_NDA_ID]: [],
 };
 
 const demoAgreementTemplateVariables: Record<string, AgreementTemplateVariable[]> = {
@@ -1659,8 +1678,39 @@ const demoAgreementTemplateVariables: Record<string, AgreementTemplateVariable[]
       created_at: "2026-04-01T10:00:00Z",
       updated_at: "2026-04-01T10:00:00Z",
     },
+    // Two optional variables exercise the required/optional grouping
+    // in the generation form (PR #94).
+    {
+      id: "55555555-5555-4555-8555-555555555553",
+      template_id: NDA_ID,
+      key: "term_years",
+      label: "Term (years)",
+      variable_type: "number",
+      required: false,
+      default_value: "2",
+      help_text: "Default is two (2) years.",
+      sort_order: 3,
+      metadata_json: null,
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-01T10:00:00Z",
+    },
+    {
+      id: "55555555-5555-4555-8555-555555555554",
+      template_id: NDA_ID,
+      key: "governing_law",
+      label: "Governing Law",
+      variable_type: "text",
+      required: false,
+      default_value: "California",
+      help_text: null,
+      sort_order: 4,
+      metadata_json: null,
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-01T10:00:00Z",
+    },
   ],
   [MSA_ID]: [],
+  [LEGACY_NDA_ID]: [],
 };
 
 function _findTemplate(id: string): AgreementTemplate | undefined {
