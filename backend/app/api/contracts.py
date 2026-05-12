@@ -400,41 +400,71 @@ async def list_contracts(
     matched record never leaks the body of its Text preview.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
-    stmt = select(Contract).where(Contract.organization_id == user.organization_id)
+    base_where = [Contract.organization_id == user.organization_id]
     if not include_merged:
-        stmt = stmt.where(Contract.merged_into_contract_id.is_(None))
-    if q is not None:
-        needle = q.strip()
-        if needle:
-            # ILIKE is fine on the title column and on Text preview
-            # content; an explicit ``escape`` keeps stray ``%`` /
-            # ``_`` in the user input from being interpreted as
-            # wildcards. The snapshot match uses a correlated
-            # ``EXISTS`` so a contract with multiple snapshots only
-            # appears once even when several rows match.
-            escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            pattern = f"%{escaped}%"
-            snapshot_exists = (
-                select(ContractMarkdownSnapshot.id)
-                .where(
-                    ContractMarkdownSnapshot.contract_id == Contract.id,
-                    ContractMarkdownSnapshot.organization_id
-                    == user.organization_id,
-                    ContractMarkdownSnapshot.markdown_text.ilike(
-                        pattern, escape="\\"
-                    ),
-                )
-                .exists()
+        base_where.append(Contract.merged_into_contract_id.is_(None))
+    needle = q.strip() if q is not None else ""
+    if needle:
+        # ILIKE is fine on the title column and on Text preview
+        # content; an explicit ``escape`` keeps stray ``%`` / ``_``
+        # in the user input from being interpreted as wildcards.
+        # The snapshot match uses a correlated ``EXISTS`` so a
+        # contract with multiple snapshots only appears once even
+        # when several rows match.
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        title_match = Contract.title.ilike(pattern, escape="\\")
+        snapshot_exists = (
+            select(ContractMarkdownSnapshot.id)
+            .where(
+                ContractMarkdownSnapshot.contract_id == Contract.id,
+                ContractMarkdownSnapshot.organization_id
+                == user.organization_id,
+                ContractMarkdownSnapshot.markdown_text.ilike(
+                    pattern, escape="\\"
+                ),
             )
-            stmt = stmt.where(
-                or_(
-                    Contract.title.ilike(pattern, escape="\\"),
-                    snapshot_exists,
-                )
+            .exists()
+        )
+        stmt = (
+            select(
+                Contract,
+                title_match.label("title_match"),
+                snapshot_exists.label("text_preview_match"),
             )
-    stmt = stmt.order_by(Contract.created_at.desc(), Contract.id.desc())
+            .where(*base_where)
+            .where(or_(title_match, snapshot_exists))
+            .order_by(Contract.created_at.desc(), Contract.id.desc())
+        )
+        result = await session.execute(stmt)
+        rows: list[ContractListItemResponse] = []
+        for contract, title_hit, text_hit in result.all():
+            item = ContractListItemResponse.model_validate(contract)
+            item.search_match_source = _match_source(bool(title_hit), bool(text_hit))
+            rows.append(item)
+        return rows
+    stmt = (
+        select(Contract)
+        .where(*base_where)
+        .order_by(Contract.created_at.desc(), Contract.id.desc())
+    )
     result = await session.execute(stmt)
     return [ContractListItemResponse.model_validate(row) for row in result.scalars()]
+
+
+def _match_source(title_hit: bool, text_hit: bool) -> str | None:
+    # PR #101 — closed enum of search match sources. We never expose
+    # the raw matched snippet here; the UI gets a tiny categorical
+    # hint so a user knows *why* a record showed up. Both flags False
+    # should be impossible (the WHERE clause guarantees at least one
+    # hit) but we return ``None`` defensively rather than guessing.
+    if title_hit and text_hit:
+        return "title_and_text_preview"
+    if title_hit:
+        return "title"
+    if text_hit:
+        return "text_preview"
+    return None
 
 
 @router.get("/{contract_id}", response_model=ContractDetailResponse)

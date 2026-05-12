@@ -29,6 +29,14 @@ export interface ContractListItem {
    */
   merged_into_contract_id?: string | null;
   merged_at?: string | null;
+  /**
+   * PR #101 — present only when the list was fetched with ``?q=…``.
+   * Tells the UI *why* a record matched so it can render a small
+   * "Matched title" / "Matched Text preview" / "Matched title +
+   * Text preview" chip. The raw matched snippet is intentionally
+   * NOT exposed; this is a closed enum.
+   */
+  search_match_source?: "title" | "text_preview" | "title_and_text_preview" | null;
 }
 
 export type ExtractedFieldValue = unknown;

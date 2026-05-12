@@ -75,6 +75,16 @@ class ContractListItemResponse(BaseModel):
     # detail page can still render a safe "merged into …" notice.
     merged_into_contract_id: uuid.UUID | None = None
     merged_at: datetime | None = None
+    # PR #101 — when the list endpoint is called with ``?q=…``, each
+    # row carries a small hint about *why* the record matched: against
+    # its title, its Text preview body, or both. ``None`` when no
+    # query is active. The field is deliberately a closed enum of
+    # ``"title" | "text_preview" | "title_and_text_preview"`` so the
+    # UI never has to interpret raw snapshot content; storage
+    # internals, document bytes, private URLs, ``metadata_json``, and
+    # any raw ``markdown_text`` are still not returned in the list
+    # response.
+    search_match_source: str | None = None
 
 
 class ContractUploadResponse(ContractListItemResponse):

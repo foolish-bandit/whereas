@@ -402,6 +402,33 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Repository search match hints (PR #101)
+
+Repository search results now carry a small categorical hint so users
+know *why* a record matched.
+
+- **Backend**: `ContractListItemResponse` gained an optional
+  `search_match_source: "title" | "text_preview" | "title_and_text_preview" | null`.
+  When the list endpoint is called with `?q=…` each row's hint is
+  computed from two booleans — title ILIKE hit + correlated snapshot
+  EXISTS hit — that already drove the PR #100 search predicate. The
+  field is `null` when `q` is absent or whitespace-only. The raw
+  matched snippet is **not** exposed; the field is a closed enum.
+- **Frontend**: `ContractTable` renders a tiny *"Matched title"* /
+  *"Matched Text preview"* / *"Matched title + Text preview"* chip
+  next to the status badge whenever the field is set; missing /
+  null values render no chip at all. URL `?q=`, debounce,
+  status/sort/show-merged filters, mount-aware links, and the
+  legacy `/contracts` alias are unchanged.
+- **Mock parity**: the demo `getContracts({ q })` mock also
+  annotates `search_match_source` per row from the same two
+  booleans so demo mode behaves consistently.
+
+No artifact-priority / DocuSeal / approval-workflow / approval-gate /
+approval-policy / duplicate-merge / request-status semantics changed.
+No raw Text preview content, document bytes, `metadata_json`,
+private URLs, or storage internals are exposed.
+
 ## Repository Text-preview search (PR #100)
 
 The Repository search box (`/demo/repository?q=…`) now matches the
