@@ -415,8 +415,8 @@ async def _two_artifacts(
     db_session: AsyncSession,
     user_org: UserOrg,
     *,
-    base_text: str = "alpha\nbeta\ngamma\ndelta\n",
-    compare_text: str = "alpha\nBETA\ngamma\ndelta\nepsilon\n",
+    base_text: str = "alpha\n\nbeta\n\ngamma\n\ndelta\n",
+    compare_text: str = "alpha\n\nBETA\n\ngamma\n\ndelta\n\nepsilon\n",
 ) -> tuple[uuid.UUID, ContractArtifact, ContractArtifact]:
     """Upload a contract and attach two artifacts with controlled bodies.
 
@@ -424,6 +424,12 @@ async def _two_artifacts(
     upload is done with a stub PDF header to satisfy the upload
     validator; the artifact's bytes are then overridden in
     ``FakeStorage`` so the compare service sees the desired text.
+
+    PR #93 — the default fixtures use blank-line-separated paragraphs
+    so the paragraph-aware splitter (see ``_split_paragraphs`` in the
+    artifact_compare service) produces four base paragraphs and five
+    compare paragraphs, mirroring the line-based counts the original
+    PR #71 tests pinned. Same conceptual diff, paragraph unit.
     """
     upload = await _upload(client, user_org.user, name="base.pdf")
     contract_id = uuid.UUID(upload["id"])
@@ -818,11 +824,17 @@ async def test_compare_truncates_large_diff_with_warning(
 ) -> None:
     """A diff that would emit more than DEFAULT_MAX_LINES lines is
     truncated and a ``diff_lines_truncated`` warning is appended.
-    Summary counts remain accurate against the full diff."""
+    Summary counts remain accurate against the full diff.
+
+    PR #93 — fixture switched from single newline separators to blank
+    lines so the paragraph-aware splitter sees 3 000 distinct
+    paragraphs per side (matching the pre-#93 ``3 000 lines per side``
+    expectation).
+    """
     stub_markdown_converter()
     user_org = await _create_user_org(db_session)
-    base_text = "\n".join(f"base-{i:04d}" for i in range(3000)) + "\n"
-    compare_text = "\n".join(f"compare-{i:04d}" for i in range(3000)) + "\n"
+    base_text = "\n\n".join(f"base-{i:04d}" for i in range(3000)) + "\n"
+    compare_text = "\n\n".join(f"compare-{i:04d}" for i in range(3000)) + "\n"
     contract_id, base, compare = await _two_artifacts(
         client,
         db_session,

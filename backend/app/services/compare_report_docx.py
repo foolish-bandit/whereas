@@ -107,14 +107,19 @@ def render_compare_report_docx(
     _add_side_paragraph(document, side_label="Left version", side=base)
     _add_side_paragraph(document, side_label="Right version", side=compare)
 
-    # Summary.
+    # Summary. PR #93 — the unit is now a paragraph (see
+    # ``_split_paragraphs`` in the artifact_compare service); the
+    # underlying ``DiffSummary`` field names stay as ``added_lines``
+    # etc. for back-compat with persisted ``metadata_json`` on saved
+    # redlines, but the user-facing labels in the DOCX use the right
+    # word.
     document.add_heading("Summary", level=2)
     summary_para = document.add_paragraph()
     summary_para.add_run(
-        f"Added lines: {diff.summary.added_lines}    "
-        f"Removed lines: {diff.summary.removed_lines}    "
+        f"Added paragraphs: {diff.summary.added_lines}    "
+        f"Removed paragraphs: {diff.summary.removed_lines}    "
         f"Changed blocks: {diff.summary.changed_blocks}    "
-        f"Unchanged lines: {diff.summary.unchanged_lines}"
+        f"Unchanged paragraphs: {diff.summary.unchanged_lines}"
     )
     if diff.warnings:
         warning_para = document.add_paragraph()
@@ -169,24 +174,80 @@ def _add_side_paragraph(
 
 
 def _add_block(document, block: DiffBlock) -> None:
+    """Render one diff block into the DOCX body, paragraph-aware.
+
+    The unit is now a paragraph (see :func:`_split_paragraphs` in the
+    artifact_compare service): ``context`` blocks collapse to a muted
+    "N unchanged paragraphs" indicator, ``added`` and ``removed``
+    blocks get a small section label, and ``changed`` blocks split
+    visually into "Before:" (the removed paragraphs) and "After:"
+    (the added paragraphs) so a legal reviewer can scan the swap.
+    """
     if block.type == "context":
         # Collapse runs of equal text to a single muted indicator so
         # the report stays focused on differences. Users with the
         # original artifacts can still inspect unchanged text directly.
         para = document.add_paragraph()
         muted = para.add_run(
-            f"… {len(block.lines)} unchanged line"
+            f"… {len(block.lines)} unchanged paragraph"
             f"{'s' if len(block.lines) != 1 else ''} …"
         )
         muted.italic = True
         muted.font.color.rgb = _MUTED_COLOR
         return
 
-    # For added / removed / changed: one paragraph per diff line so
-    # long inserts wrap naturally instead of forming a single giant
-    # paragraph with mixed runs.
-    for line in block.lines:
-        _add_line(document, line)
+    if block.type == "added":
+        _add_section_label(document, "Added paragraphs", tone="added")
+        for line in block.lines:
+            _add_line(document, line)
+        return
+
+    if block.type == "removed":
+        _add_section_label(document, "Removed paragraphs", tone="removed")
+        for line in block.lines:
+            _add_line(document, line)
+        return
+
+    # ``changed`` block: split the inner lines into removed-first /
+    # added-after (the order difflib hands us) and render them under
+    # explicit Before / After labels so a reviewer can scan the swap.
+    _add_section_label(document, "Changed paragraph", tone="changed")
+    removed_lines = [line for line in block.lines if line.type == "removed"]
+    added_lines = [line for line in block.lines if line.type == "added"]
+    if removed_lines:
+        _add_subsection_label(document, "Before:")
+        for line in removed_lines:
+            _add_line(document, line)
+    if added_lines:
+        _add_subsection_label(document, "After:")
+        for line in added_lines:
+            _add_line(document, line)
+
+
+def _add_section_label(document, label: str, *, tone: str) -> None:
+    """Render a short, tone-coded label paragraph above a diff block.
+
+    Matches the spirit of a legal redline summary: each block has a
+    one-line header so the reader knows what changed without reading
+    the whole paragraph first.
+    """
+    para = document.add_paragraph()
+    run = para.add_run(label)
+    run.bold = True
+    if tone == "added":
+        run.font.color.rgb = _ADDED_COLOR
+    elif tone == "removed":
+        run.font.color.rgb = _REMOVED_COLOR
+    else:  # changed (or any future tone)
+        run.font.color.rgb = _MUTED_COLOR
+
+
+def _add_subsection_label(document, label: str) -> None:
+    """Render a small muted sub-label ("Before:" / "After:")."""
+    para = document.add_paragraph()
+    run = para.add_run(label)
+    run.italic = True
+    run.font.color.rgb = _MUTED_COLOR
 
 
 def _add_line(document, line: DiffLine) -> None:

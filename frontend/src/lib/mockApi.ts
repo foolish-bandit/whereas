@@ -944,17 +944,23 @@ function _demoLabel(artifactType: string): string {
 
 function _demoArtifactText(artifactType: string, title: string): string {
   // Each lifecycle stage gets a slightly different canned body so the
-  // demo diff shows realistic added/removed/changed lines without
-  // needing real document conversion.
+  // demo diff shows realistic added/removed/changed paragraphs.
+  // PR #93 — paragraphs are blank-line-separated so the new
+  // paragraph-aware splitter produces multiple comparable units
+  // instead of collapsing the whole body into one paragraph.
   const heading = `# ${title}`;
   if (artifactType === "signed_pdf") {
     return [
       heading,
       "",
       "Section 1. Term.",
+      "",
       "The Agreement is for two (2) years from the Effective Date.",
+      "",
       "Section 2. Confidentiality.",
+      "",
       "Each party shall hold the other party's Confidential Information in strict confidence.",
+      "",
       "Signed by both parties.",
       "",
     ].join("\n");
@@ -964,8 +970,11 @@ function _demoArtifactText(artifactType: string, title: string): string {
       heading,
       "",
       "Section 1. Term.",
+      "",
       "The Agreement is for two (2) years from the Effective Date.",
+      "",
       "Section 2. Confidentiality.",
+      "",
       "Each party shall hold the other party's Confidential Information in strict confidence.",
       "",
     ].join("\n");
@@ -976,22 +985,44 @@ function _demoArtifactText(artifactType: string, title: string): string {
     heading,
     "",
     "Section 1. Term.",
+    "",
     "The Agreement is for one (1) year from the Effective Date.",
+    "",
     "Section 2. Confidentiality.",
+    "",
     "Each party shall hold Confidential Information in confidence.",
     "",
   ].join("\n");
+}
+
+/**
+ * Split ``text`` into paragraph-shaped blocks mirroring the backend's
+ * ``_split_paragraphs`` (PR #93): blank-line-separated, internal
+ * whitespace collapsed to single spaces, empty paragraphs dropped.
+ * Production diffs come from the backend; this is the in-browser
+ * equivalent used by the hosted demo so the demo behaves like prod.
+ */
+function _splitParagraphs(text: string): string[] {
+  if (!text) return [];
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const chunks = normalized.split(/\n[ \t]*\n[\s]*/);
+  const paragraphs: string[] = [];
+  for (const chunk of chunks) {
+    const collapsed = chunk.replace(/\s+/g, " ").trim();
+    if (collapsed) paragraphs.push(collapsed);
+  }
+  return paragraphs;
 }
 
 function _demoDiff(
   baseText: string,
   compareText: string,
 ): { summary: ArtifactCompareResponse["summary"]; blocks: DiffBlock[] } {
-  // Small handwritten LCS-equivalent: line-by-line walk. Good enough
-  // for the demo's canned text, which we control. Production diffs
-  // come from the backend.
-  const baseLines = baseText.replace(/\r\n/g, "\n").split("\n");
-  const compareLines = compareText.replace(/\r\n/g, "\n").split("\n");
+  // Paragraph-by-paragraph walk over the splitter output. Good
+  // enough for the demo's canned text; production diffs come from
+  // the backend.
+  const baseLines = _splitParagraphs(baseText);
+  const compareLines = _splitParagraphs(compareText);
   const blocks: DiffBlock[] = [];
   let summary = {
     added_lines: 0,
