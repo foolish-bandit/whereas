@@ -83,17 +83,37 @@ Requires Docker and Docker Compose.
 
 Whereas will be available at `http://localhost:8080`. DocuSeal at `http://localhost:8081`. The API at `http://localhost:8000`.
 
-For production deployment, read [docs/deployment-guide.md](docs/deployment-guide.md) before exposing this to the internet. There are non-negotiable hardening steps that the local quickstart skips.
-
-For the security architecture and threat model, see [docs/security-model.md](docs/security-model.md).
+For an end-to-end local setup (infra + backend + frontend + first-run
+workspace), see [docs/local-developer-quickstart.md](docs/local-developer-quickstart.md).
 
 For frontend-only development (without the full Docker stack), see
 [frontend/README.md](frontend/README.md). The frontend dev server runs on
 `http://localhost:5173` and expects the backend at `VITE_API_BASE_URL`
 (default `http://localhost:8000`).
 
-For an end-to-end local setup (infra + backend + frontend + first-run
-workspace), see [docs/local-developer-quickstart.md](docs/local-developer-quickstart.md).
+## Self-host evaluator quickstart
+
+If you are evaluating Whereas as a potential self-host deployment, the
+fastest path to a working local stack and a confirmed feature set is:
+
+1. **Stand up the stack** following
+   [docs/local-developer-quickstart.md](docs/local-developer-quickstart.md).
+2. **Decide which optional dependencies you need** —
+   [docs/optional-dependencies.md](docs/optional-dependencies.md)
+   covers LibreOffice (DOCX → PDF preview), MarkItDown (higher-fidelity
+   Text-preview structure), DocuSeal (signing flow), and Ollama (LLM
+   extraction). The core Repository / Requests / Approvals / Templates
+   flows do not require any of them.
+3. **Walk the MVP smoke checklist** at
+   [docs/mvp-smoke-checklist.md](docs/mvp-smoke-checklist.md) to
+   confirm each shipped surface actually works against your setup.
+4. **Read [docs/security-notes.md](docs/security-notes.md)** before
+   exposing the instance anywhere beyond a single developer's machine
+   — Whereas is pre-v0.1 and does not yet have real authentication.
+
+Production deployment guidance (TLS, reverse proxy, auth replacement
+for the dev-user bridge, backup encryption) is not yet written; the
+security notes above list the hardening points to consider.
 
 On first run, open the app, go to **Settings**, and click
 **Create local development workspace**. That creates an organization, a
@@ -478,6 +498,43 @@ persistence + auth and are intentional future work.
 Frontend-only. No backend changes. No Repository API, search,
 artifact-priority, DocuSeal, approval, request, or duplicate-merge
 semantics changed.
+
+## Self-host / local demo setup polish (PR #108)
+
+Docs-only pass to make local setup and evaluation easier. No product
+features, no backend behavior changes.
+
+- **New: [docs/optional-dependencies.md](docs/optional-dependencies.md).**
+  Per-dependency clarity on what each optional service unlocks, what
+  stops working without it, and how to install/configure it. Covers
+  LibreOffice (DOCX → PDF preview), MarkItDown (higher-fidelity Text
+  preview), DocuSeal (signing flow), and Ollama / LiteLLM-compatible
+  LLM (metadata extraction). The core Repository / Requests /
+  Approvals / Templates flows do not require any of them.
+- **New: [docs/mvp-smoke-checklist.md](docs/mvp-smoke-checklist.md).**
+  ~15-minute end-to-end checklist a new evaluator can run after the
+  quickstart to confirm Repository upload + search, Requests,
+  Templates generate + history + rollback, Approvals workflows /
+  tasks, DocuSeal sign (if configured), Document History
+  preview/download/compare/redline, activity export, duplicate
+  merge, and the cross-route security sanity checks all work. Steps
+  marked **(demo OK)** are exercisable in frontend demo mode.
+- **New: [docs/security-notes.md](docs/security-notes.md).**
+  Shipped-behavior reference (not the full threat model) for: AES at
+  rest with `WHEREAS_INSTANCE_KEY`, no `/api/*` service-worker
+  caching, no storage internals in public responses, audit-log
+  allowlisting, DocuSeal webhook HMAC verification + 5-minute replay
+  window, per-organization scoping, and the CI defense-in-depth
+  gates.
+- **Root README: self-host evaluator quickstart section** that
+  threads the four docs above into a single decision path
+  (stack → optional deps → smoke checklist → security review).
+- **Fixed dead doc links.** The previous `docs/deployment-guide.md`
+  and `docs/security-model.md` link targets did not exist. The
+  security-model link now points at the new
+  `docs/security-notes.md`; the deployment-guide reference is
+  replaced with an honest pointer that production-deploy guidance
+  isn't written yet.
 
 ## MVP readiness audit (PR #107)
 
