@@ -167,6 +167,21 @@ describe("InboxPage", () => {
     expect(screen.queryByTestId("repo-classify-submit")).toBeNull();
   });
 
+  it("prefixes the real-mode Upload link with /demo when mounted under /demo", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage("/demo/inbox");
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-repository"));
+
+    await screen.findByTestId("repository-classification-modal");
+    expect(screen.getByTestId("repo-classify-open-upload")).toHaveAttribute(
+      "href",
+      "/demo/upload",
+    );
+  });
+
   it("opens the Move to Review panel from bulk actions", async () => {
     fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
     renderPage();

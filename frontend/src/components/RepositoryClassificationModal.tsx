@@ -26,7 +26,7 @@ interface Props {
 }
 
 /**
- * PR #114 — Repository settings / classification modal.
+ * PR #116 — Repository settings / classification modal.
  *
  * Routed from Inbox → Move to Repository. Mirrors the kind of
  * lightweight classification step Summize-style intake products

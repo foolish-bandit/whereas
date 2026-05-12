@@ -287,6 +287,15 @@ describe("App routing — UI consolidation pass", () => {
     );
   });
 
+  it("renders the Repository upload flow at /demo/upload (target of the Inbox classification-modal real-mode link)", async () => {
+    renderAt("/demo/upload");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /^upload$/i, level: 1 }),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("renders the new /demo/approvals/workflows route", async () => {
     renderAt("/demo/approvals/workflows");
     await waitFor(() =>
