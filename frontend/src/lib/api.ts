@@ -294,6 +294,13 @@ export interface GetContractsOptions extends ApiOptions {
    * server-side.
    */
   include_merged?: boolean;
+  /**
+   * Case-insensitive substring match against Repository record
+   * ``title`` (PR #95). Blank / whitespace-only values are ignored
+   * (no ``q`` param is sent) so the server returns the unfiltered
+   * list.
+   */
+  q?: string;
 }
 
 export async function getContracts(
@@ -302,6 +309,8 @@ export async function getContracts(
   if (isDemoMode()) return mockApi.getContracts(options);
   const params = new URLSearchParams();
   if (options.include_merged) params.set("include_merged", "true");
+  const trimmedQ = options.q?.trim() ?? "";
+  if (trimmedQ) params.set("q", trimmedQ);
   const qs = params.toString();
   const data = await call<ContractListItem[]>(
     `/api/contracts${qs ? `?${qs}` : ""}`,

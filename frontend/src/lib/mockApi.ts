@@ -162,14 +162,21 @@ function combinedList(): ContractListItem[] {
 }
 
 export async function getContracts(
-  options: ApiOptions & { include_merged?: boolean } = {},
+  options: ApiOptions & { include_merged?: boolean; q?: string } = {},
 ): Promise<ContractListItem[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
   const includeMerged = options.include_merged === true;
-  const rows = combinedList();
-  return includeMerged
-    ? rows
-    : rows.filter((row) => !row.merged_into_contract_id);
+  let rows = combinedList();
+  if (!includeMerged) {
+    rows = rows.filter((row) => !row.merged_into_contract_id);
+  }
+  // PR #95 — case-insensitive title substring match mirroring the
+  // backend's q filter. Whitespace-only q is treated as no filter.
+  const needle = (options.q ?? "").trim().toLowerCase();
+  if (needle) {
+    rows = rows.filter((row) => row.title.toLowerCase().includes(needle));
+  }
+  return rows;
 }
 
 export async function getContract(

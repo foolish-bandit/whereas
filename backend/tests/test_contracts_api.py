@@ -534,6 +534,235 @@ async def test_list_endpoint_scopes_to_user_org(
     _assert_no_secrets(rows)
 
 
+# --------------------------------------------------------------------------
+# PR #95 — Repository search (?q=…)
+# --------------------------------------------------------------------------
+
+
+async def _upload_with_title(
+    client: httpx.AsyncClient,
+    user_org: UserOrg,
+    *,
+    title: str,
+    filename: str,
+    content: bytes,
+) -> str:
+    """Upload a contract with an explicit title; return its id."""
+    response = await client.post(
+        "/api/contracts/upload",
+        headers=_headers(user_org.user),
+        files=_file_tuple(filename, content),
+        data={"title": title},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def test_list_q_filters_by_case_insensitive_title_substring(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``?q=foo`` returns only the rows whose title contains ``foo``
+    (case-insensitive substring)."""
+    user_org = await _create_user_org(db_session, email="q-1@example.com")
+    nda_id = await _upload_with_title(
+        client,
+        user_org,
+        title="Acme NDA — mutual",
+        filename="nda.pdf",
+        content=b"%PDF-1.4\nA",
+    )
+    msa_id = await _upload_with_title(
+        client,
+        user_org,
+        title="WidgetWorks MSA",
+        filename="msa.pdf",
+        content=b"%PDF-1.4\nB",
+    )
+    await _upload_with_title(
+        client,
+        user_org,
+        title="Vendor DPA",
+        filename="dpa.pdf",
+        content=b"%PDF-1.4\nC",
+    )
+
+    # case-insensitive substring on "nda"
+    response = await client.get(
+        "/api/contracts?q=nda",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200, response.text
+    ids = [row["id"] for row in response.json()]
+    assert ids == [nda_id]
+
+    # "MSA" upper-case still hits the lower-cased pattern
+    response = await client.get(
+        "/api/contracts?q=MSA",
+        headers=_headers(user_org.user),
+    )
+    assert [row["id"] for row in response.json()] == [msa_id]
+
+    # whitespace-only q is treated as no filter (full list back)
+    response = await client.get(
+        "/api/contracts?q=%20%20",
+        headers=_headers(user_org.user),
+    )
+    assert len(response.json()) == 3
+
+
+async def test_list_q_does_not_cross_organizations(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A matching title in another org never bleeds into this org's
+    search results, even when the caller's own contracts don't match."""
+    first = await _create_user_org(db_session, email="q-x@example.com")
+    second = await _create_user_org(db_session, email="q-y@example.com")
+    await _upload_with_title(
+        client,
+        first,
+        title="OnlyOnFirstOrg",
+        filename="one.pdf",
+        content=b"%PDF-1.4\nX",
+    )
+    await _upload_with_title(
+        client,
+        second,
+        title="OnlyOnFirstOrg",  # same title, different org
+        filename="two.pdf",
+        content=b"%PDF-1.4\nY",
+    )
+
+    response = await client.get(
+        "/api/contracts?q=OnlyOnFirstOrg",
+        headers=_headers(first.user),
+    )
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    # The matching row is the one owned by ``first``.
+    assert rows[0]["file_hash_sha256"] == hashlib.sha256(
+        b"%PDF-1.4\nX"
+    ).hexdigest()
+
+
+async def test_list_q_respects_include_merged_default(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A merged Repository record is hidden from ``q`` results by
+    default, the same as the unfiltered list. ``include_merged=true``
+    surfaces it back."""
+    from datetime import UTC, datetime
+
+    user_org = await _create_user_org(db_session, email="q-merge@example.com")
+    canonical_id = await _upload_with_title(
+        client,
+        user_org,
+        title="MergeCanonical",
+        filename="canon.pdf",
+        content=b"%PDF-1.4\nC",
+    )
+    duplicate_id = await _upload_with_title(
+        client,
+        user_org,
+        title="MergeDuplicate",
+        filename="dup.pdf",
+        content=b"%PDF-1.4\nD",
+    )
+
+    # Mark the duplicate as merged into the canonical — this is what
+    # the PR #76 service does in production. We do it directly here
+    # rather than calling the merge route to keep this test focused on
+    # the q-filter / include_merged interaction.
+    duplicate = await db_session.get(Contract, uuid.UUID(duplicate_id))
+    assert duplicate is not None
+    duplicate.merged_into_contract_id = uuid.UUID(canonical_id)
+    duplicate.merged_at = datetime.now(tz=UTC)
+    await db_session.commit()
+
+    # Default: merged hidden, even on a q match.
+    response = await client.get(
+        "/api/contracts?q=Merge",
+        headers=_headers(user_org.user),
+    )
+    ids = [row["id"] for row in response.json()]
+    assert ids == [canonical_id]
+
+    # include_merged=true: both surface.
+    response = await client.get(
+        "/api/contracts?q=Merge&include_merged=true",
+        headers=_headers(user_org.user),
+    )
+    ids = sorted(row["id"] for row in response.json())
+    assert ids == sorted([canonical_id, duplicate_id])
+
+
+async def test_list_q_does_not_match_storage_internals_or_metadata(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The q filter is strictly a title substring — it must not match
+    on ``s3_key``, ``wrapped_dek`` bytes, ``file_hash_sha256``, or
+    any other storage / hash metadata."""
+    user_org = await _create_user_org(db_session, email="q-safe@example.com")
+    contract_id = await _upload_with_title(
+        client,
+        user_org,
+        title="SafeTitle",
+        filename="x.pdf",
+        content=b"%PDF-1.4\nZ",
+    )
+    contract = await db_session.get(Contract, uuid.UUID(contract_id))
+    assert contract is not None
+    # The s3_key for this contract is ``documents/{id}.enc`` — i.e.
+    # the id appears verbatim in the storage key. q on that id
+    # fragment must NOT return the row (only the title is searched).
+    s3_id_fragment = contract.s3_key.replace("documents/", "").replace(".enc", "")
+    response = await client.get(
+        f"/api/contracts?q={s3_id_fragment[:8]}",
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    ids = [row["id"] for row in response.json()]
+    # The id substring isn't in the title, so this should be empty.
+    assert ids == []
+    # And the response never includes storage internals regardless.
+    _assert_no_secrets(response.json())
+
+
+async def test_list_q_escapes_sql_wildcards(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A user query containing ``%`` should be matched literally, not
+    treated as the SQL LIKE wildcard."""
+    user_org = await _create_user_org(db_session, email="q-esc@example.com")
+    a = await _upload_with_title(
+        client,
+        user_org,
+        title="50% discount agreement",
+        filename="a.pdf",
+        content=b"%PDF-1.4\nA",
+    )
+    await _upload_with_title(
+        client,
+        user_org,
+        title="No discount agreement",
+        filename="b.pdf",
+        content=b"%PDF-1.4\nB",
+    )
+
+    response = await client.get(
+        "/api/contracts?q=50%25%20discount",  # 50% discount URL-encoded
+        headers=_headers(user_org.user),
+    )
+    assert response.status_code == 200
+    ids = [row["id"] for row in response.json()]
+    assert ids == [a]
+
+
 async def test_detail_endpoint_scopes_to_user_org(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
