@@ -190,6 +190,13 @@ function ApprovalTaskRow({
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
+          <Link
+            to={mountedPath(`/approvals/tasks/${row.id}`, pathname)}
+            className="rounded border border-rule px-2 py-1 text-ink hover:bg-canvas-muted"
+            data-testid="approval-task-open-detail"
+          >
+            Open detail
+          </Link>
           {reviewHref && (
             <Link
               to={reviewHref}

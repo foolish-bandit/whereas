@@ -242,6 +242,60 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Approval Task detail page (PR #99)
+
+Approval Tasks now have a dedicated detail / action page at
+`/demo/approvals/tasks/:id` so an approver can understand and act on
+a single pending approval task without hopping through the workflow
+list.
+
+Sections on the page:
+
+- **Header**: breadcrumb (*Approvals → Tasks → title*), task title,
+  status pill, *priority* and *overdue* indicators (when applicable),
+  created / due dates.
+- **What am I approving?**: a one-line explanation of the action
+  required (*"You are being asked to approve step N of M: <title>"*),
+  plus mount-aware links to the related Request, Repository record,
+  and the parent Approval Workflow when present.
+- **Context cards**: separate cards for the linked Request, Repository
+  record, and Approval Workflow (with *"<name> · <status> · Step N of
+  M"*). No document bytes are fetched or rendered here.
+- **Action panel**:
+  - For approval-type tasks with an actionable current step: Approve /
+    Reject buttons that reuse the existing
+    `approveApprovalStep` / `rejectApprovalStep` API client. An
+    optional decision-note textarea is included; the note is sent
+    only when non-empty and matches the existing API contract — the
+    approval state machine is unchanged.
+  - For non-approval tasks (e.g. `request_review`, `contract_review`):
+    *Mark complete* / *Dismiss* buttons reusing the existing inbox
+    update / delete clients.
+  - Completed or dismissed tasks render a read-only state ("No
+    further action is available from this page"). The page never
+    shows approve / reject controls on a non-actionable task.
+  - After a successful action the page refreshes the task and
+    workflow and shows next-step guidance.
+- **Defensive rendering**: the parent workflow is loaded
+  best-effort. If the workflow fetch fails (404 / 500), the page
+  still renders the task header and explains that the workflow
+  could not be loaded — the approve / reject buttons are hidden so
+  no half-actionable surface appears.
+
+The existing `/demo/approvals/tasks` list page gained a per-row
+*Open detail* link to reach the new page; the legacy `/inbox`
+alias is unchanged.
+
+Allowlisted `metadata_json` projection: only `workflow_run_id` and
+`approval_step_id` are read from the inbox item's metadata; the raw
+dict is never rendered. No storage internals, raw `metadata_json`,
+document bytes, private URLs, signer PII, or DocuSeal secrets appear
+in the DOM — asserted by a forbidden-string scan in the test suite.
+
+Frontend-only — no backend changes. No approval state machine,
+gate, policy matching, DocuSeal flow, request workflow, or
+artifact-priority changes.
+
 ## Approval Workflow detail page (PR #98)
 
 Approval Workflows now have a dedicated detail page at

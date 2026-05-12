@@ -167,6 +167,13 @@ describe("ApprovalTasksPage", () => {
     }
   });
 
+  it("renders a per-row 'Open detail' link to /approvals/tasks/:id (PR #99)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow({})]));
+    renderAt("/demo/approvals/tasks");
+    const link = await screen.findByTestId("approval-task-open-detail");
+    expect(link).toHaveAttribute("href", "/demo/approvals/tasks/task-1");
+  });
+
   it("shows an error state when the inbox endpoint fails", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ detail: "boom" }, 500));
     renderAt("/approvals/tasks");
