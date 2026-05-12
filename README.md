@@ -242,6 +242,45 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Persisted redline (PR #91)
+
+PR #90 shipped on-demand redline export — download a comparison
+report DOCX and forget. PR #91 adds the opt-in companion: **Save to
+Document History** persists the same rendered DOCX as a `redline`
+`ContractArtifact` on the contract, so collaborators can find it
+later via the existing Document History list and per-artifact
+download endpoint (PR #70).
+
+What landed:
+
+- `POST /api/contracts/{contract_id}/artifacts/compare/save` — same
+  resolution rules and scoping invariants as the export endpoint.
+  Encrypts the rendered DOCX via the existing `DocumentStorage`
+  pipeline with a fresh per-artifact wrapped DEK (matching the
+  `signed_pdf` pattern from PR #45) and writes a `ContractArtifact`
+  row with `artifact_type="redline"`, `is_official=false`,
+  `source="comparison_report"`.
+- **Download priority unchanged**: the saved redline is deliberately
+  not "official" AND its `artifact_type` is not in
+  `DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY`. The default *Download
+  current document* action keeps preferring
+  `signed_pdf` → `generated_docx` → `original_upload`.
+- New audit event `contract.artifact_redline_saved` recording the
+  contract, the new artifact id, the two source artifact ids/types,
+  the diff summary counts, and `format=docx`. Allowlisted only —
+  never the extracted text, the diff text, storage internals, or
+  signer PII.
+- `metadata_json` on the saved row is also allowlisted (same shape
+  as the audit details, no text).
+- Frontend: new **Save to Document History** button next to *Export
+  redline (DOCX)*. After a successful save, the compare panel shows
+  a confirmation with the filename, and `getContractArtifacts` is
+  re-fetched so the new redline row appears in Document History
+  without a full page reload.
+- Mock / demo parity: the demo persists the synthetic redline in a
+  session-scoped map so the new row shows up on the next list
+  fetch, mirroring real-backend behavior.
+
 ## Redline export foundation (PR #90)
 
 The Document History compare panel on a Repository workspace now

@@ -114,6 +114,15 @@ class AuditEventType(StrEnum):
     # Storage internals (storage_key, wrapped_dek), raw bytes, the
     # extracted/diff text, and signer PII are NEVER recorded.
     CONTRACT_ARTIFACTS_COMPARE_EXPORTED = "contract.artifacts_compare_exported"
+    # PR #91 — persisted comparison-report DOCX saved to Document
+    # History as a ``redline`` ``ContractArtifact``. Distinct from
+    # ``CONTRACT_ARTIFACTS_COMPARE_EXPORTED`` so operators can tell
+    # apart "user downloaded a one-off redline" from "user added a
+    # redline to the official record". Payload mirrors the export
+    # event plus the new artifact id. Storage internals
+    # (``storage_key``, ``wrapped_dek``), the diff / extracted text,
+    # and signer PII are NEVER recorded.
+    CONTRACT_ARTIFACT_REDLINE_SAVED = "contract.artifact_redline_saved"
     CONTRACT_ARTIFACT_PREVIEWED = "contract.artifact_previewed"
     CONTRACT_DELETED = "contract.deleted"
     CONTRACT_FIELD_OVERRIDDEN = "contract.field.overridden"

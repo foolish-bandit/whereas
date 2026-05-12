@@ -20,6 +20,7 @@ import {
   MissingDevUserError,
   compareContractArtifacts,
   exportContractArtifactsCompare,
+  saveContractArtifactsCompare,
   downloadContract,
   downloadContractArtifact,
   previewContractArtifact,
@@ -110,6 +111,16 @@ type CompareExportState =
   | { kind: "exporting" }
   | { kind: "error"; message: string };
 
+// PR #91 — independent of the export state. ``saved`` carries a short
+// confirmation message that the redline joined Document History; the
+// artifact list is refreshed separately so the new row appears
+// immediately.
+type CompareSaveState =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "saved"; filename: string }
+  | { kind: "error"; message: string };
+
 type SidebarTab = "metadata" | "clauses" | "review";
 
 type ArtifactsState =
@@ -144,6 +155,9 @@ export default function ContractWorkspacePage() {
   });
   const [compareState, setCompareState] = useState<CompareState>({ kind: "idle" });
   const [compareExportState, setCompareExportState] = useState<CompareExportState>(
+    { kind: "idle" },
+  );
+  const [compareSaveState, setCompareSaveState] = useState<CompareSaveState>(
     { kind: "idle" },
   );
   const [activeRun, setActiveRun] = useState<ReviewRunDetail | null>(null);
@@ -403,6 +417,38 @@ export default function ContractWorkspacePage() {
     if (compareExportState.kind !== "idle") {
       setCompareExportState({ kind: "idle" });
     }
+    if (compareSaveState.kind !== "idle") {
+      setCompareSaveState({ kind: "idle" });
+    }
+  }
+
+  async function onSaveRedline() {
+    if (!contract) return;
+    const { baseId, compareId } = compareSelection;
+    if (!baseId || !compareId || baseId === compareId) return;
+    setCompareSaveState({ kind: "saving" });
+    try {
+      const artifact = await saveContractArtifactsCompare(
+        contract.id,
+        baseId,
+        compareId,
+      );
+      setCompareSaveState({
+        kind: "saved",
+        filename: artifact.filename ?? "comparison-report.docx",
+      });
+      // Refresh the artifact list so the new redline row appears in
+      // Document History without a full page reload.
+      await reloadArtifacts();
+    } catch (err) {
+      const message =
+        err instanceof MissingDevUserError
+          ? err.message
+          : err instanceof ApiError
+            ? err.message
+            : "Saving the redline failed unexpectedly.";
+      setCompareSaveState({ kind: "error", message });
+    }
   }
 
   async function onExportRedline() {
@@ -642,6 +688,8 @@ export default function ContractWorkspacePage() {
         onCompare={onCompareArtifacts}
         compareExportState={compareExportState}
         onExportRedline={onExportRedline}
+        compareSaveState={compareSaveState}
+        onSaveRedline={onSaveRedline}
       />
     </div>
   );
@@ -1120,6 +1168,8 @@ function DocumentHistorySection({
   onCompare,
   compareExportState,
   onExportRedline,
+  compareSaveState,
+  onSaveRedline,
 }: {
   state: ArtifactsState;
   artifactDownloads: ArtifactDownloadStateMap;
@@ -1130,6 +1180,8 @@ function DocumentHistorySection({
   onCompare: () => void;
   compareExportState: CompareExportState;
   onExportRedline: () => void;
+  compareSaveState: CompareSaveState;
+  onSaveRedline: () => void;
 }) {
   const artifacts = state.kind === "loaded" ? state.artifacts : [];
   return (
@@ -1186,6 +1238,8 @@ function DocumentHistorySection({
                 onCompare={onCompare}
                 exportState={compareExportState}
                 onExportRedline={onExportRedline}
+                saveState={compareSaveState}
+                onSaveRedline={onSaveRedline}
               />
             )}
           </>
@@ -1378,6 +1432,8 @@ function CompareVersionsPanel({
   onCompare,
   exportState,
   onExportRedline,
+  saveState,
+  onSaveRedline,
 }: {
   artifacts: readonly ContractArtifact[];
   selection: CompareSelection;
@@ -1386,6 +1442,8 @@ function CompareVersionsPanel({
   onCompare: () => void;
   exportState: CompareExportState;
   onExportRedline: () => void;
+  saveState: CompareSaveState;
+  onSaveRedline: () => void;
 }) {
   const hasPair =
     selection.baseId !== null &&
@@ -1393,6 +1451,7 @@ function CompareVersionsPanel({
     selection.baseId !== selection.compareId;
   const canCompare = hasPair && state.kind !== "comparing";
   const canExport = hasPair && exportState.kind !== "exporting";
+  const canSave = hasPair && saveState.kind !== "saving";
   return (
     <div
       className="mt-5 rounded border border-rule bg-canvas-subtle p-3"
@@ -1471,11 +1530,41 @@ function CompareVersionsPanel({
             ? "Preparing redline…"
             : "Export redline (DOCX)"}
         </button>
+        <button
+          type="button"
+          onClick={onSaveRedline}
+          disabled={!canSave}
+          data-testid="compare-save-redline-button"
+          title="Save the comparison report to this Repository record's Document History"
+          className="inline-flex items-center justify-center rounded border border-rule bg-canvas px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saveState.kind === "saving"
+            ? "Saving…"
+            : "Save to Document History"}
+        </button>
       </div>
       <p className="mt-2 text-[11px] text-ink-subtle">
-        Export redline downloads a DOCX <em>comparison report</em>, not an
-        official Word tracked-changes file.
+        Export redline downloads a DOCX <em>comparison report</em>; save
+        attaches the same report to Document History as a non-official{" "}
+        <code>redline</code> artifact. Neither is a Word tracked-changes
+        file.
       </p>
+      {saveState.kind === "saved" && (
+        <p
+          className="mt-2 text-[11px] text-success"
+          data-testid="compare-save-redline-confirm"
+        >
+          Saved to Document History as {saveState.filename}.
+        </p>
+      )}
+      {saveState.kind === "error" && (
+        <p
+          className="mt-2 text-[11px] text-danger"
+          data-testid="compare-save-redline-error"
+        >
+          {saveState.message}
+        </p>
+      )}
       {state.kind === "error" && (
         <p
           className="mt-3 text-[11px] text-danger"
