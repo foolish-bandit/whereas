@@ -4,6 +4,9 @@ import { Link, useLocation } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import RepositoryClassificationModal, {
+  type RepositoryClassificationValues,
+} from "../components/RepositoryClassificationModal";
 import {
   ApiError,
   MissingDevUserError,
@@ -47,11 +50,6 @@ export default function InboxPage() {
   >(null);
   const [routingBusy, setRoutingBusy] = useState(false);
   const [routeNotice, setRouteNotice] = useState<string | null>(null);
-  const [repoName, setRepoName] = useState("");
-  const [repoType, setRepoType] = useState("");
-  const [repoStatus, setRepoStatus] = useState("Draft");
-  const [repoOwner, setRepoOwner] = useState("");
-  const [repoFolder, setRepoFolder] = useState("");
   const [reviewType, setReviewType] = useState("review_existing");
   const [reviewNotes, setReviewNotes] = useState("");
   const selectAllRef = useRef<HTMLInputElement | null>(null);
@@ -184,7 +182,7 @@ export default function InboxPage() {
     setSelectedIds(checked ? state.rows.map((row) => row.id) : []);
   }
 
-  async function routeToRepositoryDemo() {
+  async function routeToRepositoryDemo(values: RepositoryClassificationValues) {
     if (state.kind !== "loaded" || selectedCount === 0 || selectedHasApproval) return;
     setRoutingBusy(true);
     try {
@@ -206,8 +204,11 @@ export default function InboxPage() {
             }
           : prev,
       );
+      const classifiedAs = values.contractType
+        ? ` as ${values.contractType}`
+        : "";
       setRouteNotice(
-        `Routed ${selectedCount} inbox item${selectedCount === 1 ? "" : "s"} toward Repository in demo mode.`,
+        `Routed ${selectedCount} inbox item${selectedCount === 1 ? "" : "s"} toward Repository${classifiedAs} in demo mode.`,
       );
       clearSelection();
     } finally {
@@ -412,101 +413,23 @@ export default function InboxPage() {
         </div>
       )}
 
-      {activeRoutingPanel === "repository" && (
-        <section
-          className="rounded border border-rule bg-canvas p-4"
-          data-testid="inbox-repository-panel"
-        >
-          <h2 className="text-base font-medium text-ink">Repository settings</h2>
-          <p className="mt-1 text-sm text-ink-muted">
-            Route selected inbox items into the Repository intake flow.
-          </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-sm text-ink-muted">
-              <span>Repository name</span>
-              <input
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={repoName}
-                onChange={(e) => setRepoName(e.target.value)}
-                data-testid="inbox-repo-name"
-              />
-            </label>
-            <label className="space-y-1 text-sm text-ink-muted">
-              <span>Contract type</span>
-              <input
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={repoType}
-                onChange={(e) => setRepoType(e.target.value)}
-                data-testid="inbox-repo-type"
-              />
-            </label>
-            <label className="space-y-1 text-sm text-ink-muted">
-              <span>Status</span>
-              <select
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={repoStatus}
-                onChange={(e) => setRepoStatus(e.target.value)}
-                data-testid="inbox-repo-status"
-              >
-                <option value="Draft">Draft</option>
-                <option value="In review">In review</option>
-                <option value="Ready">Ready</option>
-              </select>
-            </label>
-            <label className="space-y-1 text-sm text-ink-muted">
-              <span>Owner</span>
-              <input
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={repoOwner}
-                onChange={(e) => setRepoOwner(e.target.value)}
-                data-testid="inbox-repo-owner"
-              />
-            </label>
-            <label className="space-y-1 text-sm text-ink-muted sm:col-span-2">
-              <span>Folder / category</span>
-              <input
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={repoFolder}
-                onChange={(e) => setRepoFolder(e.target.value)}
-                data-testid="inbox-repo-folder"
-              />
-            </label>
-          </div>
-          {!demoMode && (
-            <p className="mt-3 text-sm text-ink-muted" data-testid="inbox-repo-real-note">
-              Repository routing from Inbox will use the existing upload/classification flow.
-            </p>
-          )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {demoMode ? (
-              <button
-                type="button"
-                className="rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={routingBusy}
-                onClick={routeToRepositoryDemo}
-                data-testid="inbox-repo-route-demo"
-              >
-                {routingBusy ? "Routing…" : "Route to Repository"}
-              </button>
-            ) : (
-              <Link
-                to={mountedPath("/upload", location.pathname)}
-                className="rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas hover:opacity-90"
-                data-testid="inbox-repo-open-upload"
-              >
-                Open Repository upload
-              </Link>
-            )}
-            <button
-              type="button"
-              className="rounded border border-rule px-3 py-1 text-sm hover:bg-canvas-muted"
-              onClick={() => setActiveRoutingPanel(null)}
-            >
-              Close
-            </button>
-          </div>
-        </section>
-      )}
+      <RepositoryClassificationModal
+        open={activeRoutingPanel === "repository"}
+        selectedCount={selectedCount}
+        demoMode={demoMode}
+        busy={routingBusy}
+        onCancel={() => setActiveRoutingPanel(null)}
+        onSubmit={routeToRepositoryDemo}
+        realModeActionSlot={
+          <Link
+            to={mountedPath("/upload", location.pathname)}
+            className="rounded border border-ink bg-ink px-3 py-1 text-xs font-medium text-canvas hover:opacity-90"
+            data-testid="repo-classify-open-upload"
+          >
+            Open Repository upload
+          </Link>
+        }
+      />
 
       {activeRoutingPanel === "review" && (
         <section

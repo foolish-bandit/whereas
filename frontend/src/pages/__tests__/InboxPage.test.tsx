@@ -128,7 +128,7 @@ describe("InboxPage", () => {
     );
   });
 
-  it("opens the Move to Repository panel from bulk actions", async () => {
+  it("opens the Repository classification modal from bulk actions", async () => {
     fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
     renderPage();
     await screen.findByText("Review request: NDA with Acme");
@@ -136,7 +136,35 @@ describe("InboxPage", () => {
     fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
     fireEvent.click(screen.getByTestId("inbox-move-repository"));
 
-    expect(await screen.findByTestId("inbox-repository-panel")).toBeInTheDocument();
+    const modal = await screen.findByTestId("repository-classification-modal");
+    expect(modal).toBeInTheDocument();
+    expect(modal).toHaveAttribute("role", "dialog");
+    expect(modal).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByTestId("repo-classify-name")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-classify-contract-type")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-classify-status")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-classify-owner")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-classify-folder")).toBeInTheDocument();
+  });
+
+  it("shows honest real-mode guidance and a link to Repository upload", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-repository"));
+
+    await screen.findByTestId("repository-classification-modal");
+    expect(screen.getByTestId("repo-classify-real-note")).toHaveTextContent(
+      /existing repository upload/i,
+    );
+    expect(screen.getByTestId("repo-classify-open-upload")).toHaveAttribute(
+      "href",
+      "/upload",
+    );
+    // Demo-only submit must not be rendered in real mode — no fake mutation.
+    expect(screen.queryByTestId("repo-classify-submit")).toBeNull();
   });
 
   it("opens the Move to Review panel from bulk actions", async () => {
@@ -277,7 +305,7 @@ describe("InboxPage", () => {
     }
   });
 
-  it("routes selected intake items in demo mode", async () => {
+  it("routes selected intake items in demo mode via the classification modal", async () => {
     vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
     renderPage("/demo/inbox");
     const intakeRowTitle = await screen.findByText(/new upload intake/i);
@@ -287,13 +315,77 @@ describe("InboxPage", () => {
 
     fireEvent.click(checkbox);
     fireEvent.click(screen.getByTestId("inbox-move-repository"));
-    fireEvent.click(await screen.findByTestId("inbox-repo-route-demo"));
+
+    await screen.findByTestId("repository-classification-modal");
+    fireEvent.change(screen.getByTestId("repo-classify-name"), {
+      target: { value: "Vendor MSA — Acme" },
+    });
+    fireEvent.change(screen.getByTestId("repo-classify-contract-type"), {
+      target: { value: "MSA" },
+    });
+    fireEvent.click(screen.getByTestId("repo-classify-submit"));
 
     expect(await screen.findByTestId("inbox-route-notice")).toHaveTextContent(
-      /routed 1 inbox item/i,
+      /routed 1 inbox item.*as MSA.*demo mode/i,
     );
     expect(within(row as HTMLElement).getByTestId("inbox-status")).toHaveTextContent(
       "completed",
     );
+    // Modal closes after a successful demo route.
+    expect(
+      screen.queryByTestId("repository-classification-modal"),
+    ).toBeNull();
+  });
+
+  it("validates the Repository name field in demo mode", async () => {
+    vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+    renderPage("/demo/inbox");
+    const intakeRowTitle = await screen.findByText(/new upload intake/i);
+    const row = intakeRowTitle.closest("li");
+    const checkbox = within(row as HTMLElement).getByTestId("inbox-row-checkbox");
+
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByTestId("inbox-move-repository"));
+    await screen.findByTestId("repository-classification-modal");
+
+    fireEvent.click(screen.getByTestId("repo-classify-submit"));
+
+    expect(
+      await screen.findByTestId("repo-classify-name-error"),
+    ).toHaveTextContent(/repository name is required/i);
+    // No route notice is shown when validation blocks submission.
+    expect(screen.queryByTestId("inbox-route-notice")).toBeNull();
+  });
+
+  it("cancels out of the classification modal without routing", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-repository"));
+
+    await screen.findByTestId("repository-classification-modal");
+    fireEvent.click(screen.getByTestId("repo-classify-cancel"));
+
+    expect(
+      screen.queryByTestId("repository-classification-modal"),
+    ).toBeNull();
+    expect(screen.queryByTestId("inbox-route-notice")).toBeNull();
+  });
+
+  it("does not open the classification modal when approval tasks are selected", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_APPROVAL]));
+    renderPage();
+    await screen.findByText("Legal approval needed");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    // Move to Repository button is disabled — clicking it should not open
+    // the modal even if the user manages to trigger the handler.
+    expect(screen.getByTestId("inbox-move-repository")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("inbox-move-repository"));
+    expect(
+      screen.queryByTestId("repository-classification-modal"),
+    ).toBeNull();
   });
 });
