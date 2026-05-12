@@ -1275,6 +1275,33 @@ export async function getAgreementTemplateArtifacts(
   return scrubSecrets(data);
 }
 
+/**
+ * PR #103 — download a specific AgreementTemplateArtifact version
+ * (a historical source-file upload) from the Source file history
+ * view. Org + template + artifact scoped server-side; cross-org or
+ * cross-template requests surface as a clean 404 here. Returns the
+ * raw bytes as a Blob via the shared download helper.
+ */
+export async function downloadAgreementTemplateArtifact(
+  templateId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  if (isDemoMode()) {
+    return mockApi.downloadAgreementTemplateArtifact(
+      templateId,
+      artifactId,
+      options,
+    );
+  }
+  return downloadBlob(
+    `/api/agreement-templates/${encodeURIComponent(templateId)}/artifacts/${encodeURIComponent(
+      artifactId,
+    )}/download`,
+    options,
+  );
+}
+
 export async function getAgreementTemplateMarkdown(
   id: string,
   options: ApiOptions = {},

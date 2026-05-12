@@ -15,15 +15,18 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 
 from app.api.contracts import (
     DbSession,
     _current_dev_user,
+    _document_id_from_storage_key,
     _load_org_key_or_http,
     _load_organization,
     _safe_input_filename,
@@ -54,6 +57,7 @@ from app.schemas.agreement_templates import (
 from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import ContractListItemResponse
 from app.schemas.markdown import ContractMarkdownSnapshotResponse
+from app.security.audit_log import AuditEventType, record_event
 from app.services.document_markdown import convert_document_to_markdown
 from app.services.document_parser import (
     DocumentParseError,
@@ -306,6 +310,136 @@ async def list_agreement_template_artifacts(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return [AgreementTemplateArtifactResponse.model_validate(r) for r in rows]
+
+
+_SAFE_DOWNLOAD_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_template_download_filename(
+    artifact: AgreementTemplateArtifact,
+) -> str:
+    """Sanitize an artifact filename for ``Content-Disposition``.
+
+    Falls back to an id-derived name if the stored filename is missing
+    or scrubbing leaves it empty. The output is restricted to a
+    conservative ASCII alphabet so it cannot smuggle line breaks or
+    quotes into the header.
+    """
+    raw = artifact.filename or f"template-{artifact.id}"
+    cleaned = _SAFE_DOWNLOAD_FILENAME_RE.sub("_", raw).strip("._-")
+    return cleaned or f"template-{artifact.id}"
+
+
+@router.get("/{template_id}/artifacts/{artifact_id}/download")
+async def download_agreement_template_artifact(
+    template_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Download a specific ``AgreementTemplateArtifact`` version (PR #103).
+
+    Used by the Source file history *Download version* action so an
+    operator can pull a specific historical source-file upload.
+
+    Resolution rules:
+      * Template must belong to the caller's org (cross-org returns
+        404 via ``_get_template_for_org``).
+      * The artifact must match ``artifact_id``, belong to *this*
+        template, and belong to the same organization — any miss
+        returns 404, matching the template-not-found shape so callers
+        cannot distinguish "wrong artifact" from "wrong template".
+      * No legacy fallback: missing/unusable storage metadata returns
+        409 rather than silently serving a different file.
+
+    Decrypts via the same ``DocumentStorage`` helper used by the
+    upload path; no presigned URLs are produced, no storage internals
+    (``storage_key`` / ``wrapped_dek``) are echoed to the client, and
+    the audit event records only allowlisted identifiers.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    template = await _get_template_for_org(
+        session, template_id, user.organization_id
+    )
+    artifact = (
+        await session.execute(
+            select(AgreementTemplateArtifact).where(
+                AgreementTemplateArtifact.id == artifact_id,
+                AgreementTemplateArtifact.template_id == template.id,
+                AgreementTemplateArtifact.organization_id
+                == user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Template artifact not found.")
+
+    if not artifact.storage_key or artifact.storage_key == "pending":
+        raise HTTPException(
+            status_code=409,
+            detail="Template artifact has no retrievable storage metadata.",
+        )
+    if artifact.wrapped_dek is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Template artifact encryption metadata is missing.",
+        )
+
+    # AAD must match what was bound at upload time. The template upload
+    # path uses ``document_id=f"template-{template_id}-{uuid4}"`` and
+    # ``DocumentStorage`` writes ``documents/{document_id}.enc``, so we
+    # recover that id from the storage key. Fall back to the artifact
+    # id if the key shape is unfamiliar (defence-in-depth — older test
+    # fixtures may seed storage keys directly).
+    decrypt_document_id = (
+        _document_id_from_storage_key(artifact.storage_key) or str(artifact.id)
+    )
+
+    org = await _load_organization(session, user.organization_id)
+    org_master_key = _load_org_key_or_http(org)
+    settings = get_settings()
+    storage = DocumentStorage(settings)
+    try:
+        plaintext = await storage.retrieve_decrypted(
+            s3_key=artifact.storage_key,
+            document_id=decrypt_document_id,
+            wrapped_dek_bytes=artifact.wrapped_dek,
+            org_master_key=org_master_key,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not retrieve encrypted template artifact.",
+        ) from e
+    finally:
+        del org_master_key
+
+    safe_filename = _safe_template_download_filename(artifact)
+    mime_type = artifact.mime_type or "application/octet-stream"
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.AGREEMENT_TEMPLATE_ARTIFACT_DOWNLOADED,
+        actor_user_id=user.id,
+        target_type="agreement_template",
+        target_id=str(template.id),
+        details={
+            "agreement_template_id": str(template.id),
+            "artifact_id": str(artifact.id),
+            "artifact_type": artifact.artifact_type,
+            "filename": safe_filename,
+            "mime_type": mime_type,
+        },
+    )
+
+    return Response(
+        content=plaintext,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        },
+    )
 
 
 @router.get(

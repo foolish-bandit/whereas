@@ -1876,6 +1876,36 @@ export async function getAgreementTemplateArtifacts(
   return demoAgreementTemplateArtifacts[id] ?? [];
 }
 
+export async function downloadAgreementTemplateArtifact(
+  templateId: string,
+  artifactId: string,
+  options: ApiOptions = {},
+): Promise<DownloadResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const artifacts = demoAgreementTemplateArtifacts[templateId] ?? [];
+  const artifact = artifacts.find((a) => a.id === artifactId);
+  if (!artifact) {
+    throw new ApiError(404, "Template artifact not found.");
+  }
+  const safeName =
+    (artifact.filename ?? "template-source")
+      .replace(/[^A-Za-z0-9._-]+/g, "_") || "template-source";
+  const filename = `${safeName}.demo.txt`.slice(0, 180);
+  const body =
+    `Whereas demo mode placeholder.\n\n` +
+    `Template id: ${templateId}\n` +
+    `Artifact id: ${artifactId}\n` +
+    `Original filename: ${artifact.filename ?? "(none)"}\n\n` +
+    `No real document is stored in demo mode. To exercise the actual ` +
+    `per-version download flow, run Whereas locally with a backend ` +
+    `and clear VITE_WHEREAS_DEMO_MODE.\n`;
+  return {
+    blob: new Blob([body], { type: "text/plain" }),
+    filename,
+    mimeType: "text/plain",
+  };
+}
+
 export async function getAgreementTemplateMarkdown(
   id: string,
   options: ApiOptions = {},
