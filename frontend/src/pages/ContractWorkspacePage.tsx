@@ -121,7 +121,13 @@ type CompareSaveState =
   | { kind: "saved"; filename: string }
   | { kind: "error"; message: string };
 
-type SidebarTab = "metadata" | "clauses" | "review";
+type SidebarTab =
+  | "metadata"
+  | "clauses"
+  | "review"
+  | "lifecycle"
+  | "signers"
+  | "history";
 
 type ArtifactsState =
   | { kind: "loading" }
@@ -562,55 +568,51 @@ export default function ContractWorkspacePage() {
         artifactsState={artifactsState}
         downloadState={downloadState}
         onDownload={onDownload}
+        onOverflowAction={(action) => {
+          if (action === "send_docuseal") {
+            setActiveTab("signers");
+          }
+          // Other actions (edit / archive / move) wait for follow-up
+          // prompts. The menu items render today as discoverable affordances.
+        }}
       />
 
-      <LifecycleStatusBanner
-        contract={state.contract}
-        state={artifactsState}
-      />
-
-      <DocumentLifecycleStrip
-        contract={state.contract}
-        state={artifactsState}
-      />
-
-      <SendToDocusealPanel contractId={state.contract.id} />
-
-      <section
-        className="mt-6 rounded border border-rule p-4"
+      <div
+        className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]"
         data-testid="contract-preview-section"
       >
-        <h2 className="text-sm font-medium text-ink">Preview</h2>
-        <p className="mt-1 text-xs text-ink-subtle">
-          Text preview is a fast working representation. The current
-          official document is what the Download action returns.
-        </p>
-        <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-          <div>
-            {viewerMode === "markdown" ? (
-              <MarkdownPreview
-                contractId={state.contract.id}
-                rightSlot={
-                  <ViewerModeToggle
-                    mode={viewerMode}
-                    onChange={setViewerMode}
-                  />
-                }
-              />
-            ) : (
-              <DocumentViewer
-                fullText={state.contract.full_text}
-                selectedSpan={selectedSpan}
-                selectionToken={selectedKey}
-                rightSlot={
-                  <ViewerModeToggle
-                    mode={viewerMode}
-                    onChange={setViewerMode}
-                  />
-                }
-              />
-            )}
-          </div>
+        <div
+          className="min-w-0 lg:max-h-[calc(100vh-13rem)] lg:overflow-auto"
+          data-testid="contract-document-pane"
+        >
+          {viewerMode === "markdown" ? (
+            <MarkdownPreview
+              contractId={state.contract.id}
+              rightSlot={
+                <ViewerModeToggle
+                  mode={viewerMode}
+                  onChange={setViewerMode}
+                />
+              }
+            />
+          ) : (
+            <DocumentViewer
+              fullText={state.contract.full_text}
+              selectedSpan={selectedSpan}
+              selectionToken={selectedKey}
+              rightSlot={
+                <ViewerModeToggle
+                  mode={viewerMode}
+                  onChange={setViewerMode}
+                />
+              }
+            />
+          )}
+        </div>
+        <div
+          className="lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-auto"
+          data-testid="contract-detail-rail"
+        >
           <Sidebar
             contract={state.contract}
             activeTab={activeTab}
@@ -627,9 +629,20 @@ export default function ContractWorkspacePage() {
               if (key !== null) setViewerMode("original");
             }}
             onReviewRunChange={setActiveRun}
+            artifactsState={artifactsState}
+            artifactDownloads={artifactDownloads}
+            onDownloadArtifact={onDownloadArtifact}
+            compareSelection={compareSelection}
+            compareState={compareState}
+            onCompareSelectionChange={onCompareSelectionChange}
+            onCompare={onCompareArtifacts}
+            compareExportState={compareExportState}
+            onExportRedline={onExportRedline}
+            compareSaveState={compareSaveState}
+            onSaveRedline={onSaveRedline}
           />
         </div>
-      </section>
+      </div>
 
       <DetailsSection
         contract={state.contract}
@@ -643,21 +656,14 @@ export default function ContractWorkspacePage() {
           className="mt-6 rounded border border-rule p-4"
           data-testid="contract-duplicate-merge-section"
         >
-          <h2 className="text-sm font-medium text-ink">
-            Possible duplicates
-          </h2>
+          <h2 className="text-sm font-medium text-ink">Possible duplicates</h2>
           <p className="mt-1 text-xs text-ink-subtle">
-            Resolve a duplicate Repository record by merging it into
-            this one. Files move into Document History; nothing is
-            deleted.
+            Resolve a duplicate Repository record by merging it into this
+            one. Files move into Document History; nothing is deleted.
           </p>
           <DuplicateMergePanel
             targetContractId={state.contract.id}
             onMerged={() => {
-              // Refresh artifacts so the moved files show up in Document
-              // History. The activity timeline lazily reloads on next
-              // mount; for now keeping the rest of the page stable is
-              // less surprising than a full detail refetch.
               void reloadArtifacts();
             }}
           />
@@ -677,20 +683,6 @@ export default function ContractWorkspacePage() {
         <ActivityTimeline kind="contract" contractId={state.contract.id} />
         <ActivityExport kind="contract" contractId={state.contract.id} />
       </section>
-
-      <DocumentHistorySection
-        state={artifactsState}
-        artifactDownloads={artifactDownloads}
-        onDownloadArtifact={onDownloadArtifact}
-        compareSelection={compareSelection}
-        compareState={compareState}
-        onCompareSelectionChange={onCompareSelectionChange}
-        onCompare={onCompareArtifacts}
-        compareExportState={compareExportState}
-        onExportRedline={onExportRedline}
-        compareSaveState={compareSaveState}
-        onSaveRedline={onSaveRedline}
-      />
     </div>
   );
 }
@@ -702,6 +694,17 @@ interface SidebarProps {
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
   onReviewRunChange: (run: ReviewRunDetail | null) => void;
+  artifactsState: ArtifactsState;
+  artifactDownloads: ArtifactDownloadStateMap;
+  onDownloadArtifact: (artifact: ContractArtifact) => void;
+  compareSelection: CompareSelection;
+  compareState: CompareState;
+  onCompareSelectionChange: (next: CompareSelection) => void;
+  onCompare: () => void;
+  compareExportState: CompareExportState;
+  onExportRedline: () => void;
+  compareSaveState: CompareSaveState;
+  onSaveRedline: () => void;
 }
 
 function Sidebar({
@@ -711,6 +714,17 @@ function Sidebar({
   selectedKey,
   onSelect,
   onReviewRunChange,
+  artifactsState,
+  artifactDownloads,
+  onDownloadArtifact,
+  compareSelection,
+  compareState,
+  onCompareSelectionChange,
+  onCompare,
+  compareExportState,
+  onExportRedline,
+  compareSaveState,
+  onSaveRedline,
 }: SidebarProps) {
   const tabs = [
     {
@@ -723,37 +737,86 @@ function Sidebar({
       label: "Clauses",
       count: contract.clauses.length,
     },
-    {
-      id: "review" as const,
-      label: "Review",
-    },
+    { id: "review" as const, label: "Review" },
+    { id: "lifecycle" as const, label: "Lifecycle" },
+    { id: "signers" as const, label: "Signers" },
+    { id: "history" as const, label: "History" },
   ];
   return (
     <aside>
       <RightPanelTabs tabs={tabs} active={activeTab} onChange={onTabChange} />
-      {activeTab === "metadata" && (
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-metadata"
+        hidden={activeTab !== "metadata"}
+      >
         <MetadataPanel
           fields={contract.extracted_fields}
           selectedKey={selectedKey}
           onSelect={onSelect}
         />
-      )}
-      {activeTab === "clauses" && (
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-clauses"
+        hidden={activeTab !== "clauses"}
+      >
         <ClausesPanel
           clauses={contract.clauses}
           fullText={contract.full_text}
           selectedKey={selectedKey}
           onSelect={onSelect}
         />
-      )}
-      {activeTab === "review" && (
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-review"
+        hidden={activeTab !== "review"}
+      >
         <ReviewPanel
           contractId={contract.id}
           selectedKey={selectedKey}
           onSelect={onSelect}
           onRunChange={onReviewRunChange}
         />
-      )}
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-lifecycle"
+        hidden={activeTab !== "lifecycle"}
+        data-testid="rail-tab-lifecycle"
+      >
+        <LifecycleStatusBanner contract={contract} state={artifactsState} />
+        <DocumentLifecycleStrip contract={contract} state={artifactsState} />
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-signers"
+        hidden={activeTab !== "signers"}
+        data-testid="rail-tab-signers"
+      >
+        <SendToDocusealPanel contractId={contract.id} />
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-history"
+        hidden={activeTab !== "history"}
+        data-testid="rail-tab-history"
+      >
+        <DocumentHistorySection
+          state={artifactsState}
+          artifactDownloads={artifactDownloads}
+          onDownloadArtifact={onDownloadArtifact}
+          compareSelection={compareSelection}
+          compareState={compareState}
+          onCompareSelectionChange={onCompareSelectionChange}
+          onCompare={onCompare}
+          compareExportState={compareExportState}
+          onExportRedline={onExportRedline}
+          compareSaveState={compareSaveState}
+          onSaveRedline={onSaveRedline}
+        />
+      </div>
       <ReviewReminder
         fields={contract.extracted_fields}
         clauses={contract.clauses}
@@ -768,6 +831,7 @@ interface RepositoryHeaderProps {
   artifactsState: ArtifactsState;
   downloadState: DownloadState;
   onDownload: () => void;
+  onOverflowAction?: (action: "send_docuseal" | "edit" | "archive" | "move") => void;
 }
 
 function RepositoryHeader({
@@ -776,20 +840,22 @@ function RepositoryHeader({
   artifactsState,
   downloadState,
   onDownload,
+  onOverflowAction,
 }: RepositoryHeaderProps) {
   const artifacts =
     artifactsState.kind === "loaded" ? artifactsState.artifacts : [];
   const currentDocument = pickCurrentDocumentLabel(artifacts);
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div
       className="mt-2 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between"
       data-testid="repository-detail-header"
     >
       <div className="min-w-0 flex-1">
-        <h1 className="break-words font-serif text-xl text-ink sm:text-2xl">
+        <h1 className="break-words font-serif text-2xl font-semibold tracking-tight text-ink">
           {metadata?.title ?? contract.title}
         </h1>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-subtle">
           <StatusBadge status={contract.status} />
           {metadata?.contract_type && (
             <span data-testid="repository-detail-contract-type">
@@ -828,16 +894,62 @@ function RepositoryHeader({
         )}
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={downloadState.kind === "downloading"}
-          className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
-        >
-          {downloadState.kind === "downloading"
-            ? "Preparing…"
-            : "Download current document"}
-        </button>
+        <div className="flex w-full items-stretch gap-2 sm:w-auto">
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={downloadState.kind === "downloading"}
+            className="inline-flex flex-1 items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:py-1.5"
+          >
+            {downloadState.kind === "downloading"
+              ? "Preparing…"
+              : "Download current document"}
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="inline-flex h-full items-center justify-center rounded border border-rule bg-canvas px-2 text-ink hover:border-rule-strong"
+              data-testid="contract-header-overflow"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              aria-label="More actions"
+              title="More actions"
+            >
+              <span aria-hidden>⋯</span>
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 z-10 mt-1 w-48 rounded border border-rule bg-canvas py-1 text-sm shadow-md"
+                data-testid="contract-header-overflow-menu"
+              >
+                {(
+                  [
+                    ["send_docuseal", "Send to DocuSeal"],
+                    ["edit", "Edit details"],
+                    ["archive", "Archive"],
+                    ["move", "Move to folder"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOverflowAction?.(k);
+                    }}
+                    className="block w-full px-3 py-1.5 text-left text-ink hover:bg-canvas-subtle"
+                    data-testid={`contract-header-overflow-${k}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         {downloadState.kind === "error" && (
           <p className="max-w-xs text-xs text-danger sm:text-right">
             {downloadState.message}

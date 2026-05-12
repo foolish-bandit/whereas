@@ -363,6 +363,9 @@ describe("ContractWorkspacePage markdown integration", () => {
     });
     renderPage();
     await screen.findByTestId("docuseal-gate-blocked");
+    // Signers tab now hosts the Send-to-DocuSeal panel; activate it so
+    // accessible roles inside it (the override checkbox) are queryable.
+    fireEvent.click(screen.getByRole("tab", { name: /signers/i }));
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
@@ -542,6 +545,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     });
     renderPage();
     await screen.findByTestId("docuseal-gate-blocked");
+    fireEvent.click(screen.getByRole("tab", { name: /signers/i }));
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
@@ -982,6 +986,39 @@ describe("ContractWorkspacePage Document history (PR #69)", () => {
       await screen.findByTestId("contract-files-section"),
     ).toHaveTextContent(/document history/i);
   });
+
+  it("renders a two-pane layout with a detail rail and all six tabs", async () => {
+    setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
+    renderPage();
+    expect(
+      await screen.findByTestId("contract-detail-rail"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("contract-document-pane")).toBeInTheDocument();
+    for (const label of [
+      "Metadata",
+      "Clauses",
+      "Review",
+      "Lifecycle",
+      "Signers",
+      "History",
+    ]) {
+      expect(
+        screen.getByRole("tab", { name: new RegExp(label, "i") }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("overflow menu surfaces Send to DocuSeal and switches to the Signers tab", async () => {
+    setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
+    renderPage();
+    fireEvent.click(await screen.findByTestId("contract-header-overflow"));
+    fireEvent.click(
+      screen.getByTestId("contract-header-overflow-send_docuseal"),
+    );
+    expect(
+      screen.getByRole("tab", { name: /signers/i }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
 });
 
 describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
@@ -1172,6 +1209,9 @@ describe("ContractWorkspacePage per-artifact download (PR #70)", () => {
       }),
     );
     const { unmount } = renderPage();
+    // History tab now hosts Document History; activate it so accessible
+    // roles inside its modal are reachable.
+    fireEvent.click(await screen.findByRole("tab", { name: /history/i }));
     fireEvent.click(await screen.findByTestId("document-history-row-preview"));
     await screen.findByTestId("pdf-preview-modal");
     expect(createSpy).toHaveBeenCalled();
