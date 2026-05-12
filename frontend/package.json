@@ -14,11 +14,13 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",
+    "@tanstack/react-table": "^8.21.3",
     "cmdk": "^1.1.1",
     "react": "^18.3.1",
     "react-diff-viewer-continued": "^4.2.2",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2"
+    "react-router-dom": "^6.26.2",
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.5.0",

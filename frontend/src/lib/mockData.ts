@@ -223,6 +223,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: true,
     owner_user_id: "user-rachel",
     owner_display_name: "Rachel Vega",
+    tags: ["nda", "acme"],
+    folder: "Active",
   },
   {
     id: MOCK_MSA_ID,
@@ -240,6 +242,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: null,
     owner_user_id: "user-rachel",
     owner_display_name: "Rachel Vega",
+    tags: ["msa"],
+    folder: "Active",
   },
   {
     id: MOCK_SIGNATURE_OUT_ID,
@@ -257,6 +261,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: false,
     owner_user_id: "user-priya",
     owner_display_name: "Priya Shah",
+    tags: ["nda"],
+    folder: "Active",
   },
   {
     id: MOCK_EXECUTED_ID,
@@ -274,6 +280,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: true,
     owner_user_id: "user-mateo",
     owner_display_name: "Mateo Ruiz",
+    tags: ["nda", "stark"],
+    folder: "Active",
   },
   {
     id: MOCK_MERGED_ID,
@@ -293,6 +301,9 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: true,
     owner_user_id: "user-rachel",
     owner_display_name: "Rachel Vega",
+    tags: ["nda", "acme", "merged"],
+    folder: "Archive",
+    archived: true,
   },
   {
     id: MOCK_REDLINE_ID,
@@ -310,6 +321,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: null,
     owner_user_id: "user-priya",
     owner_display_name: "Priya Shah",
+    tags: ["nda", "wayne"],
+    folder: "Active",
   },
   {
     id: MOCK_FAILED_ID,
@@ -327,6 +340,8 @@ export const MOCK_LIST: ContractListItem[] = [
     auto_renew: null,
     owner_user_id: null,
     owner_display_name: null,
+    tags: ["sow", "vendor"],
+    folder: "Active",
   },
 ];
 

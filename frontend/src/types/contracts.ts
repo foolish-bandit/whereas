@@ -49,6 +49,22 @@ export interface ContractListItem {
   auto_renew?: boolean | null;
   owner_user_id?: string | null;
   owner_display_name?: string | null;
+  /**
+   * User-applied tags for grouping records across the Repository.
+   * Demo-only field today; persisted to localStorage rather than the
+   * backend.
+   */
+  tags?: string[];
+  /**
+   * When true the record is hidden from the default Repository view.
+   * Toggleable via the bulk-select Archive action.
+   */
+  archived?: boolean;
+  /**
+   * Folder the record currently lives in. Demo-only; folders are a
+   * hard-coded list (Active / Templates / Archive) for now.
+   */
+  folder?: "Active" | "Templates" | "Archive" | null;
 }
 
 export type ExtractedFieldValue = unknown;

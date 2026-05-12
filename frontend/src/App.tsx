@@ -9,6 +9,7 @@ import PlaybookDetailPage from "./pages/PlaybookDetailPage";
 import PlaybooksPage from "./pages/PlaybooksPage";
 import UploadPage from "./pages/UploadPage";
 import SettingsPage from "./pages/SettingsPage";
+import AnalyticsPage from "./pages/AnalyticsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
@@ -70,6 +71,7 @@ function DemoApp() {
       <Routes>
         <Route path="/" element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
 
         {/* Repository (new label) + legacy /contracts alias. */}
         <Route path="repository" element={<ContractsPage />} />

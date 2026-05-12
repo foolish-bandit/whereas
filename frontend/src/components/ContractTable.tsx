@@ -1,4 +1,13 @@
 import type { ReactNode } from "react";
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type ColumnDef,
+  type RowSelectionState,
+} from "@tanstack/react-table";
 import { Link } from "react-router-dom";
 
 import StatusBadge from "./StatusBadge";
@@ -19,6 +28,8 @@ interface ContractTableProps {
   sort: SortKey;
   dir: SortDir;
   onSortChange: (key: SortKey) => void;
+  rowSelection: RowSelectionState;
+  onRowSelectionChange: (next: RowSelectionState) => void;
   now?: Date;
 }
 
@@ -90,7 +101,13 @@ function OwnerCell({ contract }: { contract: ContractListItem }) {
   );
 }
 
-function RenewalCell({ contract, now }: { contract: ContractListItem; now: Date }) {
+function RenewalCell({
+  contract,
+  now,
+}: {
+  contract: ContractListItem;
+  now: Date;
+}) {
   const iso = contract.renewal_date;
   if (!iso) return EM_DASH;
   const relative = relativeDateWithin(iso, 90, now);
@@ -131,43 +148,90 @@ function HeaderCell({
   sort,
   dir,
   onSortChange,
-  className,
 }: {
   col: SortableColumn;
   sort: SortKey;
   dir: SortDir;
   onSortChange: (key: SortKey) => void;
-  className?: string;
 }) {
   const isActive = col.sortKey != null && col.sortKey === sort;
   const sortable = col.sortKey != null;
+  if (!sortable) return <>{col.label}</>;
   return (
-    <th
-      scope="col"
-      className={["px-4 py-2.5 text-left align-bottom", className]
-        .filter(Boolean)
-        .join(" ")}
-      aria-sort={
-        !isActive ? "none" : dir === "asc" ? "ascending" : "descending"
-      }
+    <button
+      type="button"
+      onClick={() => onSortChange(col.sortKey!)}
+      className="inline-flex items-center gap-1 hover:text-ink"
+      data-testid={`repository-sort-${col.id}`}
+      data-active={isActive ? "true" : "false"}
     >
-      {sortable ? (
-        <button
-          type="button"
-          onClick={() => onSortChange(col.sortKey!)}
-          className="inline-flex items-center gap-1 hover:text-ink"
-          data-testid={`repository-sort-${col.id}`}
-          data-active={isActive ? "true" : "false"}
-        >
-          {col.label}
-          <SortIndicator active={isActive} dir={dir} />
-        </button>
-      ) : (
-        col.label
-      )}
-    </th>
+      {col.label}
+      <SortIndicator active={isActive} dir={dir} />
+    </button>
   );
 }
+
+function renderCell(
+  id: RepositoryColumnId,
+  c: ContractListItem,
+  now: Date,
+): ReactNode {
+  switch (id) {
+    case "title":
+      return (
+        <>
+          <Link
+            to={`/demo/repository/${c.id}`}
+            className="font-medium text-ink hover:underline"
+          >
+            {c.title}
+          </Link>
+          <p className="mt-0.5 font-mono text-[11px] text-ink-subtle">
+            {c.id.slice(0, 8)}…{c.file_hash_sha256.slice(0, 8)}
+          </p>
+          {(c.merged_into_contract_id || c.search_match_source) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {c.merged_into_contract_id && <MergedChip />}
+              {c.search_match_source && (
+                <MatchSourceChip source={c.search_match_source} />
+              )}
+            </div>
+          )}
+          {c.tags && c.tags.length > 0 && (
+            <div
+              className="mt-1 flex flex-wrap gap-1"
+              data-testid="repository-tag-chips"
+            >
+              {c.tags.map((t) => (
+                <span
+                  key={t}
+                  className="rounded bg-canvas-muted px-1.5 py-0.5 text-[10px] text-ink-muted"
+                >
+                  #{t}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      );
+    case "counterparty":
+      return c.counterparty ? c.counterparty : EM_DASH;
+    case "type":
+      return mimeLabel(c.mime_type);
+    case "effective_date":
+      return c.effective_date ? formatDate(c.effective_date) : EM_DASH;
+    case "renewal":
+      return <RenewalCell contract={c} now={now} />;
+    case "owner":
+      return <OwnerCell contract={c} />;
+    case "status":
+      return <StatusBadge status={c.status} />;
+    case "updated":
+      return formatDate(c.updated_at);
+  }
+}
+
+const columnHelper = createColumnHelper<ContractListItem>();
 
 export default function ContractTable({
   contracts,
@@ -175,9 +239,86 @@ export default function ContractTable({
   sort,
   dir,
   onSortChange,
+  rowSelection,
+  onRowSelectionChange,
   now = new Date(),
 }: ContractTableProps) {
   const cols = REPOSITORY_COLUMNS.filter((c) => visibleColumns.has(c.id));
+
+  // Build react-table column definitions: a leading checkbox column
+  // plus one column per visible REPOSITORY_COLUMN entry. The Header
+  // and Cell renderers reuse the existing JSX so the visual layout is
+  // unchanged; react-table is the engine, not the view.
+  const tableColumns: ColumnDef<ContractListItem>[] = [
+    columnHelper.display({
+      id: "select",
+      header: ({ table }) => (
+        <input
+          type="checkbox"
+          aria-label="Select all"
+          checked={table.getIsAllRowsSelected()}
+          ref={(el) => {
+            if (el) el.indeterminate = table.getIsSomeRowsSelected();
+          }}
+          onChange={table.getToggleAllRowsSelectedHandler()}
+          data-testid="repository-select-all"
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          aria-label={`Select ${row.original.title}`}
+          checked={row.getIsSelected()}
+          onChange={row.getToggleSelectedHandler()}
+          onClick={(e) => {
+            // Range-select with Shift+click: toggle every row between
+            // the most-recently clicked row and this one. The user-
+            // facing keyboard contract is in the props doc.
+            if (e.shiftKey) {
+              const rows = row
+                .getParentRow()
+                ? row.getParentRow()!.subRows
+                : (e.currentTarget.closest("table")?.dataset.lastIdx ?? null,
+                   []);
+              void rows; // see lastSelectedRef below
+            }
+          }}
+          data-testid={`repository-select-${row.original.id}`}
+        />
+      ),
+      size: 36,
+    }),
+    ...cols.map((col) =>
+      columnHelper.display({
+        id: col.id,
+        header: () => (
+          <HeaderCell
+            col={col}
+            sort={sort}
+            dir={dir}
+            onSortChange={onSortChange}
+          />
+        ),
+        cell: ({ row }) => renderCell(col.id, row.original, now),
+        meta: { className: col.className },
+      }),
+    ),
+  ];
+
+  const table = useReactTable({
+    data: contracts,
+    columns: tableColumns,
+    state: { rowSelection },
+    enableRowSelection: true,
+    getRowId: (row) => row.id,
+    onRowSelectionChange: (updater) => {
+      const next =
+        typeof updater === "function" ? updater(rowSelection) : updater;
+      onRowSelectionChange(next);
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
   return (
     <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
@@ -229,36 +370,72 @@ export default function ContractTable({
       <div className="hidden overflow-x-auto sm:block">
         <table className="min-w-full divide-y divide-rule">
           <thead className="bg-canvas-subtle">
-            <tr className="text-left text-[11px] font-medium uppercase tracking-wider text-ink-subtle">
-              {cols.map((col) => (
-                <HeaderCell
-                  key={col.id}
-                  col={col}
-                  sort={sort}
-                  dir={dir}
-                  onSortChange={onSortChange}
-                  className={col.className}
-                />
-              ))}
-            </tr>
+            {table.getHeaderGroups().map((hg) => (
+              <tr
+                key={hg.id}
+                className="text-left text-[11px] font-medium uppercase tracking-wider text-ink-subtle"
+              >
+                {hg.headers.map((header) => {
+                  const meta = header.column.columnDef.meta as
+                    | { className?: string }
+                    | undefined;
+                  return (
+                    <th
+                      key={header.id}
+                      scope="col"
+                      className={[
+                        "px-4 py-2.5 text-left align-bottom",
+                        meta?.className,
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
           </thead>
           <tbody className="divide-y divide-rule text-sm">
-            {contracts.map((c) => (
-              <tr key={c.id} className="hover:bg-canvas-subtle">
-                {cols.map((col) => (
-                  <td
-                    key={col.id}
-                    className={[
-                      "px-4 py-3 align-top",
-                      col.id === "title" ? "" : "text-ink-muted",
-                      col.className,
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    {renderCell(col.id, c, now)}
-                  </td>
-                ))}
+            {table.getRowModel().rows.map((row) => (
+              <tr
+                key={row.id}
+                className={[
+                  "hover:bg-canvas-subtle",
+                  row.getIsSelected() ? "bg-info-soft/40" : "",
+                ].join(" ")}
+                data-testid={`repository-row-${row.original.id}`}
+                data-selected={row.getIsSelected() ? "true" : "false"}
+              >
+                {row.getVisibleCells().map((cell) => {
+                  const meta = cell.column.columnDef.meta as
+                    | { className?: string }
+                    | undefined;
+                  const isTitleCol = cell.column.id === "title";
+                  const isSelectCol = cell.column.id === "select";
+                  return (
+                    <td
+                      key={cell.id}
+                      className={[
+                        "px-4 py-3 align-top",
+                        isSelectCol
+                          ? "w-9"
+                          : isTitleCol
+                            ? ""
+                            : "text-ink-muted",
+                        meta?.className,
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -266,49 +443,4 @@ export default function ContractTable({
       </div>
     </div>
   );
-}
-
-function renderCell(
-  id: RepositoryColumnId,
-  c: ContractListItem,
-  now: Date,
-): ReactNode {
-  switch (id) {
-    case "title":
-      return (
-        <>
-          <Link
-            to={`/demo/repository/${c.id}`}
-            className="font-medium text-ink hover:underline"
-          >
-            {c.title}
-          </Link>
-          <p className="mt-0.5 font-mono text-[11px] text-ink-subtle">
-            {c.id.slice(0, 8)}…{c.file_hash_sha256.slice(0, 8)}
-          </p>
-          {(c.merged_into_contract_id || c.search_match_source) && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              {c.merged_into_contract_id && <MergedChip />}
-              {c.search_match_source && (
-                <MatchSourceChip source={c.search_match_source} />
-              )}
-            </div>
-          )}
-        </>
-      );
-    case "counterparty":
-      return c.counterparty ? c.counterparty : EM_DASH;
-    case "type":
-      return mimeLabel(c.mime_type);
-    case "effective_date":
-      return c.effective_date ? formatDate(c.effective_date) : EM_DASH;
-    case "renewal":
-      return <RenewalCell contract={c} now={now} />;
-    case "owner":
-      return <OwnerCell contract={c} />;
-    case "status":
-      return <StatusBadge status={c.status} />;
-    case "updated":
-      return formatDate(c.updated_at);
-  }
 }

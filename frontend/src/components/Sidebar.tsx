@@ -27,6 +27,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Work",
     items: [
       { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
+      { to: demoPath("/analytics"), label: "Analytics", Icon: AnalyticsIcon },
       { to: demoPath("/inbox"), label: "Inbox", Icon: InboxIcon },
       {
         to: demoPath("/approvals"),
@@ -89,6 +90,7 @@ function SettingsIcon({ className }: IconProps) { return <BaseIcon className={cl
 function InboxIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 11v5h14v-5l-3-6H6z" /><path d="M3 11h4l1 2h4l1-2h4" /></BaseIcon>; }
 function TemplatesIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M5 3h7l3 3v11H5z" /><path d="M12 3v3h3" /><path d="M7 9h6M7 12h6M7 15h4" /></BaseIcon>; }
 function IntegrationsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="5" cy="10" r="2" /><circle cx="15" cy="6" r="2" /><circle cx="15" cy="14" r="2" /><path d="M7 10l6-4M7 10l6 4" /></BaseIcon>; }
+function AnalyticsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 17V7M9 17V11M15 17V5M3 17h16" /></BaseIcon>; }
 
 interface SidebarProps {
   /**
