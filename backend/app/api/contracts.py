@@ -357,6 +357,19 @@ async def list_contracts(
             "is not cluttered with merged duplicates."
         ),
     ),
+    q: str | None = Query(
+        default=None,
+        max_length=200,
+        description=(
+            "Optional case-insensitive substring match against the "
+            "Repository record title (PR #95). Org-scoped; the merged "
+            "filter still applies (records merged into another record "
+            "stay hidden unless ``include_merged=true``). Title is the "
+            "only field searched in this foundation PR — extracted "
+            "text-content search is future work and intentionally not "
+            "wired here."
+        ),
+    ),
 ) -> list[ContractListItemResponse]:
     """List Repository records for the caller's organization.
 
@@ -367,11 +380,26 @@ async def list_contracts(
     clutter the merge was meant to resolve. Pass
     ``?include_merged=true`` to see them — useful for audit /
     "where did this go" queries.
+
+    PR #95 — when ``q`` is provided, results are narrowed to records
+    whose ``title`` contains ``q`` as a case-insensitive substring.
+    The query is org-scoped through the same WHERE clause that
+    enforces tenant isolation on every read in this module; there is
+    no JSON path query, no ``full_text`` scan, and no storage
+    metadata in the search predicate.
     """
     user = await _current_dev_user(session, x_whereas_dev_user)
     stmt = select(Contract).where(Contract.organization_id == user.organization_id)
     if not include_merged:
         stmt = stmt.where(Contract.merged_into_contract_id.is_(None))
+    if q is not None:
+        needle = q.strip()
+        if needle:
+            # ILIKE is fine on the title column; an explicit
+            # ``escape`` keeps stray ``%`` / ``_`` in the user input
+            # from being interpreted as wildcards.
+            escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            stmt = stmt.where(Contract.title.ilike(f"%{escaped}%", escape="\\"))
     stmt = stmt.order_by(Contract.created_at.desc(), Contract.id.desc())
     result = await session.execute(stmt)
     return [ContractListItemResponse.model_validate(row) for row in result.scalars()]

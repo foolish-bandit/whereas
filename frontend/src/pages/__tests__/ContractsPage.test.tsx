@@ -230,4 +230,244 @@ describe("ContractsPage (Repository list)", () => {
       expect(link.getAttribute("href")).toBe("/demo/repository/c-1");
     }
   });
+
+  // -------------------------------------------------------------------------
+  // PR #95 — Repository search (?q=...)
+  // -------------------------------------------------------------------------
+
+  it("renders an accessible search input", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    const input = screen.getByTestId("repository-search");
+    expect(input).toHaveAttribute("type", "search");
+    expect(input).toHaveAttribute(
+      "aria-label",
+      expect.stringMatching(/search repository/i),
+    );
+  });
+
+  it("seeds the search box from the ?q= URL param and includes q in the first fetch", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const input = await screen.findByTestId("repository-search");
+    expect(input).toHaveValue("Acme");
+    await waitFor(() => {
+      const firstCall = fetchMock.mock.calls[0]?.[0] as string;
+      expect(firstCall).toContain("q=Acme");
+    });
+  });
+
+  it("typing in the search box refetches with q after a short debounce", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse([row()]));
+      renderPage();
+      await screen.findAllByText("Acme NDA");
+      fireEvent.change(screen.getByTestId("repository-search"), {
+        target: { value: "msa" },
+      });
+      vi.advanceTimersByTime(300);
+      await waitFor(() => {
+        const lastCall = fetchMock.mock.calls.at(-1)?.[0] as string;
+        expect(lastCall).toContain("q=msa");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not send q when the input is whitespace-only", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse([row()]));
+      renderPage();
+      await screen.findAllByText("Acme NDA");
+      fireEvent.change(screen.getByTestId("repository-search"), {
+        target: { value: "   " },
+      });
+      vi.advanceTimersByTime(300);
+      await waitFor(() => {
+        const lastCall = fetchMock.mock.calls.at(-1)?.[0] as string;
+        expect(lastCall).not.toContain("q=");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders a no-matches empty state when q narrows everything out", async () => {
+    let callCount = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      callCount += 1;
+      // First (no q) returns rows so the page learns the repo is
+      // non-empty; later calls with q=zzz return [].
+      if (String(url).includes("q=zzz")) return jsonResponse([]);
+      return jsonResponse([row()]);
+    });
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=zzz"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText(/no matches/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("repository-empty-clear-search"),
+    ).toBeInTheDocument();
+    expect(callCount).toBeGreaterThan(0);
+  });
+
+  it("renders the 'repository is empty' state when there are no records AND no active filter", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    renderPage();
+    expect(
+      await screen.findByText(/repository is empty/i),
+    ).toBeInTheDocument();
+  });
+
+  it("clear search resets the input and URL and clears the no-matches state", async () => {
+    let urls: string[] = [];
+    fetchMock.mockImplementation(async (url: string) => {
+      urls.push(String(url));
+      if (String(url).includes("q=zzz")) return jsonResponse([]);
+      return jsonResponse([row()]);
+    });
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=zzz"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const clear = await screen.findByTestId("repository-empty-clear-search");
+    fireEvent.click(clear);
+    await waitFor(() => {
+      const lastCall = urls.at(-1) ?? "";
+      expect(lastCall).not.toContain("q=zzz");
+    });
+    // Once cleared the seeded row shows up.
+    await screen.findAllByText("Acme NDA");
+    expect(
+      (screen.getByTestId("repository-search") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
+  it("clear button inside the search box clears the URL", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse([row()]));
+      render(
+        <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+          <ContractsPage />
+        </MemoryRouter>,
+      );
+      await screen.findAllByText("Acme NDA");
+      const clear = await screen.findByTestId("repository-search-clear");
+      fireEvent.click(clear);
+      vi.advanceTimersByTime(300);
+      await waitFor(() => {
+        expect(
+          (screen.getByTestId("repository-search") as HTMLInputElement).value,
+        ).toBe("");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves status filter client-side while q hits the API", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fetchMock.mockImplementation(async () =>
+        jsonResponse([
+          row({ id: "c-1", title: "Acme NDA", status: "ready" }),
+          row({
+            id: "c-2",
+            title: "Acme MSA executed",
+            status: "executed",
+          }),
+        ]),
+      );
+      renderPage();
+      await screen.findAllByText("Acme NDA");
+      // Apply status filter — purely client-side, no refetch needed.
+      fireEvent.change(screen.getByTestId("repository-filter-status"), {
+        target: { value: "executed" },
+      });
+      // Type a search; q reaches the server.
+      fireEvent.change(screen.getByTestId("repository-search"), {
+        target: { value: "Acme" },
+      });
+      vi.advanceTimersByTime(300);
+      await waitFor(() => {
+        const lastCall = fetchMock.mock.calls.at(-1)?.[0] as string;
+        expect(lastCall).toContain("q=Acme");
+      });
+      // Status filter narrows the on-screen rows to the executed row.
+      // The other row's title is no longer present in the DOM.
+      await waitFor(() => {
+        expect(screen.queryAllByText("Acme NDA")).toHaveLength(0);
+      });
+      expect(screen.getAllByText("Acme MSA executed").length).toBeGreaterThan(
+        0,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Show merged stacks with search — both params reach the request URL", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fetchMock.mockResolvedValue(jsonResponse([row()]));
+      render(
+        <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+          <ContractsPage />
+        </MemoryRouter>,
+      );
+      await screen.findAllByText("Acme NDA");
+      fireEvent.click(screen.getByTestId("repository-include-merged"));
+      vi.advanceTimersByTime(300);
+      await waitFor(() => {
+        const lastCall = fetchMock.mock.calls.at(-1)?.[0] as string;
+        expect(lastCall).toContain("q=Acme");
+        expect(lastCall).toContain("include_merged=true");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not surface storage_key / wrapped_dek / metadata_json in search results", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({
+          storage_key: "should-not-appear",
+          wrapped_dek: "should-not-appear",
+        } as Record<string, unknown>),
+      ]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findAllByText("Acme NDA");
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+      "should-not-appear",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
 });

@@ -242,6 +242,46 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Repository search foundation (PR #95)
+
+The Repository list at `/demo/repository` now supports an org-scoped
+title search via `?q=…`.
+
+- **Backend**: `GET /api/contracts` gained an optional
+  `q: str` query param. Match is a case-insensitive substring against
+  `Contract.title` only — no JSON-path queries, no `full_text` scan,
+  no storage metadata in the predicate. The merged-record filter is
+  unchanged: rows merged into another record stay hidden by default
+  unless `include_merged=true`. Cross-org isolation is preserved by
+  the same `WHERE organization_id = …` clause that gates every read
+  in this module. `%` / `_` characters in the user query are
+  escaped so they're matched literally rather than as SQL LIKE
+  wildcards.
+
+- **Frontend**: the existing search input on the Repository list is
+  now wired to the backend `q` param and to the URL — typing
+  debounces 250 ms, then commits to `?q=…` (replace-state, so the
+  back button skips keystrokes). A deep link like
+  `/demo/repository?q=acme` initializes the box with that query and
+  the first fetch already includes it. A small *clear* affordance
+  inside the input and a *Clear search* CTA in the empty state both
+  reset to the unfiltered list. The page distinguishes two empty
+  states: *"The repository is empty"* when no records exist AND
+  no filter is active; *"No matches"* (with *Clear search*) when a
+  filter is active.
+
+- Status / type / sort / *Show merged* filters keep their existing
+  client-side or query-param behavior and stack with `q`.
+
+- **Future work**: extracted Text-preview / full-text search is
+  deliberately not wired in this PR — adding it requires either a
+  Postgres full-text-search index or careful ILIKE-on-`full_text`
+  semantics, and the foundation here is title-only by design.
+
+No backend semantic changes elsewhere — artifact priority, download
+preview, DocuSeal flow, approval gate, request/workflow state
+machine, and duplicate-merge behavior are untouched.
+
 ## Agreement Template builder polish (PR #94)
 
 The Agreement Template detail page (`/demo/requests/templates/:id`,
