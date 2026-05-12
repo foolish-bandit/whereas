@@ -49,6 +49,7 @@ from app.schemas.agreement_templates import (
     AgreementTemplateVariableCreateRequest,
     AgreementTemplateVariableResponse,
     AgreementTemplateVariableUpdateRequest,
+    TemplateVariableSuggestionResponse,
 )
 from app.schemas.artifacts import ContractArtifactResponse
 from app.schemas.contracts import ContractListItemResponse
@@ -64,6 +65,7 @@ from app.services.template_generation import (
     TemplateGenerationError,
     generate_docx_from_template,
 )
+from app.services.template_variable_detection import detect_variable_suggestions
 
 log = logging.getLogger(__name__)
 
@@ -469,6 +471,68 @@ async def list_agreement_template_variables(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return [AgreementTemplateVariableResponse.model_validate(r) for r in rows]
+
+
+@router.get(
+    "/{template_id}/variable-suggestions",
+    response_model=list[TemplateVariableSuggestionResponse],
+)
+async def list_agreement_template_variable_suggestions(
+    template_id: uuid.UUID,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> list[TemplateVariableSuggestionResponse]:
+    """Deterministic ``{{placeholder}}`` detection on the Text preview (PR #96).
+
+    Reads the latest *ready* ``AgreementTemplateMarkdownSnapshot`` for
+    the template and runs a small regex extractor (see
+    ``app.services.template_variable_detection``) to surface the bare
+    identifiers between Jinja-style ``{{ … }}`` braces. Keys that
+    already exist as ``AgreementTemplateVariable`` rows are filtered
+    out server-side so the UI only renders *new* suggestions.
+
+    Org-scoped: a template id from another org returns 404 via the
+    same ``_get_template_for_org`` helper every other route here
+    uses. If there is no markdown snapshot yet, the response is an
+    empty list (a "no preview yet" state on the detail page —
+    nothing to suggest, and not an error).
+
+    The response carries only ``key`` / ``label`` / ``occurrences`` —
+    no document bytes, no extracted-text snippets, no storage
+    metadata. No LLM, no OCR, no remote service.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    await _get_template_for_org(session, template_id, user.organization_id)
+
+    snapshot_stmt = (
+        select(AgreementTemplateMarkdownSnapshot.markdown_text)
+        .where(
+            AgreementTemplateMarkdownSnapshot.template_id == template_id,
+            AgreementTemplateMarkdownSnapshot.organization_id == user.organization_id,
+            AgreementTemplateMarkdownSnapshot.conversion_status == "ready",
+        )
+        .order_by(AgreementTemplateMarkdownSnapshot.created_at.desc())
+        .limit(1)
+    )
+    markdown_text = (await session.execute(snapshot_stmt)).scalar_one_or_none()
+    if not markdown_text:
+        return []
+
+    existing_keys_stmt = select(AgreementTemplateVariable.key).where(
+        AgreementTemplateVariable.template_id == template_id,
+        AgreementTemplateVariable.organization_id == user.organization_id,
+    )
+    existing_keys = list((await session.execute(existing_keys_stmt)).scalars())
+
+    suggestions = detect_variable_suggestions(
+        markdown_text, exclude_keys=existing_keys
+    )
+    return [
+        TemplateVariableSuggestionResponse(
+            key=s.key, label=s.label, occurrences=s.occurrences
+        )
+        for s in suggestions
+    ]
 
 
 @router.patch(

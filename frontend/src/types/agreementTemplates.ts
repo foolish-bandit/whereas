@@ -78,6 +78,19 @@ export interface AgreementTemplateVariableCreateRequest {
   metadata_json?: Record<string, unknown> | null;
 }
 
+/**
+ * One placeholder detected in the template's Text preview (PR #96).
+ *
+ * Returned by ``GET /api/agreement-templates/{id}/variable-suggestions``.
+ * Keys that already exist as ``AgreementTemplateVariable`` rows are
+ * filtered out server-side, so this list is just *new* suggestions.
+ */
+export interface TemplateVariableSuggestion {
+  key: string;
+  label: string;
+  occurrences: number;
+}
+
 export interface AgreementTemplateVariableUpdateRequest {
   key?: string;
   label?: string;

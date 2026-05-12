@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   afterEach,
@@ -139,9 +145,15 @@ function setupListFetch(fetchMock: Mock) {
 
 function setupDetailFetch(
   fetchMock: Mock,
-  opts: { markdown?: object | null } = {},
+  opts: {
+    markdown?: object | null;
+    suggestions?: unknown[];
+    suggestionsStatus?: number;
+  } = {},
 ) {
   const markdown = "markdown" in opts ? opts.markdown : NDA_MARKDOWN;
+  const suggestions = opts.suggestions ?? [];
+  const suggestionsStatus = opts.suggestionsStatus ?? 200;
   fetchMock.mockImplementation(async (url: string) => {
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
       return markdown
@@ -153,6 +165,15 @@ function setupDetailFetch(
     }
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
       return jsonResponse(NDA_VARIABLES);
+    }
+    if (
+      url.endsWith(
+        `/api/agreement-templates/${NDA_ID}/variable-suggestions`,
+      )
+    ) {
+      return suggestionsStatus === 200
+        ? jsonResponse(suggestions)
+        : jsonResponse({ detail: "boom" }, suggestionsStatus);
     }
     if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
       return jsonResponse(NDA);
@@ -619,6 +640,156 @@ describe("AgreementTemplateDetailPage", () => {
       screen.getByTestId("agreement-template-status-pill"),
     ).toHaveTextContent(/archived/i);
     expect(screen.queryByTestId("agreement-template-archive")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #96 — variable suggestion detection
+  // -------------------------------------------------------------------------
+
+  it("renders an empty-state message when no placeholders are detected (PR #96)", async () => {
+    setupDetailFetch(fetchMock, { suggestions: [] });
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.getByTestId("agreement-template-suggestions-empty"),
+    ).toHaveTextContent(/no placeholders detected/i);
+    expect(
+      screen.queryByTestId("agreement-template-suggestions-list"),
+    ).toBeNull();
+  });
+
+  it("renders suggestion rows with label, key, and occurrence count (PR #96)", async () => {
+    setupDetailFetch(fetchMock, {
+      suggestions: [
+        { key: "term_years", label: "Term Years", occurrences: 3 },
+        { key: "governing_law", label: "Governing Law", occurrences: 1 },
+      ],
+    });
+    renderDetail();
+    const list = await screen.findByTestId(
+      "agreement-template-suggestions-list",
+    );
+    const rows = within(list).getAllByTestId(
+      "agreement-template-suggestion-row",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].getAttribute("data-suggestion-key")).toBe("term_years");
+    expect(rows[0]).toHaveTextContent("Term Years");
+    expect(rows[0]).toHaveTextContent("term_years");
+    expect(rows[0]).toHaveTextContent("3×");
+    expect(rows[1]).toHaveTextContent("Governing Law");
+    expect(rows[1]).toHaveTextContent("1×");
+  });
+
+  it("Add as variable creates the variable and removes the suggestion (PR #96)", async () => {
+    let created = false;
+    fetchMock.mockImplementation(
+      async (url: string, init?: RequestInit) => {
+        if (
+          url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`) &&
+          init?.method === "POST"
+        ) {
+          created = true;
+          const body = JSON.parse(init.body as string);
+          expect(body.key).toBe("term_years");
+          expect(body.required).toBe(true);
+          return jsonResponse(
+            {
+              id: "v-new",
+              template_id: NDA_ID,
+              key: body.key,
+              label: body.label,
+              variable_type: body.variable_type,
+              required: body.required,
+              default_value: null,
+              help_text: null,
+              sort_order: body.sort_order ?? 0,
+              metadata_json: null,
+              created_at: "2026-05-12T00:00:00Z",
+              updated_at: "2026-05-12T00:00:00Z",
+            },
+            201,
+          );
+        }
+        if (
+          url.endsWith(`/api/agreement-templates/${NDA_ID}/variable-suggestions`)
+        ) {
+          return jsonResponse([
+            { key: "term_years", label: "Term Years", occurrences: 3 },
+          ]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/markdown`)) {
+          return jsonResponse(NDA_MARKDOWN);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/artifacts`)) {
+          return jsonResponse([NDA_ARTIFACT]);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}/variables`)) {
+          return jsonResponse(NDA_VARIABLES);
+        }
+        if (url.endsWith(`/api/agreement-templates/${NDA_ID}`)) {
+          return jsonResponse(NDA);
+        }
+        return jsonResponse({ detail: "unexpected " + url }, 500);
+      },
+    );
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    // Toggle required ON for term_years before adding.
+    fireEvent.click(
+      screen.getByTestId("agreement-template-suggestion-required-term_years"),
+    );
+    fireEvent.click(
+      screen.getByTestId("agreement-template-suggestion-add-term_years"),
+    );
+    await waitFor(() => expect(created).toBe(true));
+    // The suggestion disappears (the just-added variable is filtered
+    // out of the suggestions list).
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId(
+          "agreement-template-suggestion-row",
+        ),
+      ).toBeNull();
+    });
+    expect(
+      screen.getByTestId("agreement-template-suggestions-empty"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not duplicate suggestions that already exist as variables (PR #96)", async () => {
+    // counterparty_name is already a variable in NDA_VARIABLES (PR #94
+    // fixture). The backend filters duplicates server-side; this test
+    // pins the contract that the page renders only the suggestions
+    // the server returned (does NOT re-merge anything client-side).
+    setupDetailFetch(fetchMock, {
+      suggestions: [
+        // Only the non-existing key is in the response.
+        { key: "term_years", label: "Term Years", occurrences: 2 },
+      ],
+    });
+    renderDetail();
+    const list = await screen.findByTestId(
+      "agreement-template-suggestions-list",
+    );
+    expect(
+      within(list).queryAllByTestId(
+        "agreement-template-suggestion-row",
+      ),
+    ).toHaveLength(1);
+    expect(list).not.toHaveTextContent(/counterparty_name/);
+  });
+
+  it("survives a failing suggestion endpoint (renders empty section)", async () => {
+    setupDetailFetch(fetchMock, { suggestionsStatus: 500 });
+    renderDetail();
+    await screen.findByTestId("agreement-template-markdown-body");
+    expect(
+      screen.getByTestId("agreement-template-suggestions"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("agreement-template-suggestions-empty"),
+    ).toBeInTheDocument();
   });
 
   it("does not surface forbidden strings in the rendered DOM (PR #94)", async () => {

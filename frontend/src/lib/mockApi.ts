@@ -42,6 +42,7 @@ import type {
   AgreementTemplateVariable,
   AgreementTemplateVariableCreateRequest,
   AgreementTemplateVariableUpdateRequest,
+  TemplateVariableSuggestion,
 } from "../types/agreementTemplates";
 import type {
   DeviationFinding,
@@ -1850,6 +1851,47 @@ export async function listAgreementTemplateVariables(
   const rows = (demoAgreementTemplateVariables[id] ?? []).slice();
   rows.sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
   return rows;
+}
+
+/**
+ * Demo-mode counterpart for PR #96 placeholder detection. Mirrors the
+ * backend's deterministic regex extractor closely enough for the
+ * hosted demo: matches ``{{ identifier }}``, normalizes keys, dedupes
+ * with occurrence counts, and filters out keys that already have an
+ * ``AgreementTemplateVariable`` row.
+ */
+const _DEMO_PLACEHOLDER_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+export async function listAgreementTemplateVariableSuggestions(
+  id: string,
+  options: ApiOptions = {},
+): Promise<TemplateVariableSuggestion[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const snapshot = demoAgreementTemplateMarkdown[id];
+  if (!snapshot) return [];
+  const existing = new Set(
+    (demoAgreementTemplateVariables[id] ?? []).map((v) => v.key.toLowerCase()),
+  );
+  const counts = new Map<string, number>();
+  for (const match of snapshot.markdown_text.matchAll(_DEMO_PLACEHOLDER_RE)) {
+    const key = match[1].toLowerCase();
+    if (existing.has(key)) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const suggestions: TemplateVariableSuggestion[] = [];
+  for (const [key, occurrences] of counts) {
+    const label = key
+      .split("_")
+      .filter(Boolean)
+      .map((w) => w[0].toUpperCase() + w.slice(1))
+      .join(" ");
+    suggestions.push({ key, label, occurrences });
+  }
+  suggestions.sort((a, b) => {
+    if (a.occurrences !== b.occurrences) return b.occurrences - a.occurrences;
+    return a.key.localeCompare(b.key);
+  });
+  return suggestions;
 }
 
 export async function createAgreementTemplateVariable(

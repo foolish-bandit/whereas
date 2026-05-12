@@ -147,6 +147,22 @@ class AgreementTemplateVariableResponse(BaseModel):
     updated_at: datetime
 
 
+class TemplateVariableSuggestionResponse(BaseModel):
+    """One placeholder detected in the template's Text preview (PR #96).
+
+    Returned by ``GET /api/agreement-templates/{id}/variable-suggestions``.
+    The shape is intentionally tiny — only what the UI needs to
+    pre-fill the variable builder. No storage internals, no document
+    bytes, no extracted text snippets.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    occurrences: int
+
+
 # ---------------------------------------------------------------------------
 # Generation
 #
