@@ -211,11 +211,43 @@ export interface ArtifactHistoryItem {
   sourceChip: string | null;
   isCurrent: boolean;
   metadataChips: readonly ArtifactMetadataChip[];
+  /**
+   * For ``redline`` rows persisted by PR #91, the resolved labels of
+   * the two source artifacts the redline was derived from. The
+   * metadata that backs this is the allowlisted
+   * ``base_artifact_id`` / ``compare_artifact_id`` / type fields the
+   * save endpoint writes — no extracted text, no diff content.
+   * ``null`` for non-redline rows or when neither id is recoverable.
+   */
+  redlineLinkage: RedlineLinkage | null;
 }
 
 export interface ArtifactMetadataChip {
   key: string;
   label: string;
+}
+
+/**
+ * Resolved view of a saved redline's source artifacts. Each side may
+ * be ``present`` (the source artifact is still in the contract's
+ * artifact list) or absent (deleted, archived, or simply not on the
+ * loaded slice) — in the absent case ``label`` falls back to the
+ * artifact-type label from metadata so the row still reads as
+ * "Redline of: Source file ↔ Signed PDF" instead of carrying raw
+ * ids.
+ */
+export interface RedlineLinkage {
+  base: RedlineLinkageSide;
+  compare: RedlineLinkageSide;
+}
+
+export interface RedlineLinkageSide {
+  /** User-facing label, resolved from the artifact if present. */
+  label: string;
+  /** Source artifact filename when known. */
+  filename: string | null;
+  /** Whether the source artifact was found in the current list. */
+  present: boolean;
 }
 
 // Allowlist of ``metadata_json`` keys safe to surface in the UI:
@@ -271,6 +303,61 @@ export function safeArtifactMetadataChips(
   return chips;
 }
 
+/**
+ * Resolve the two source artifacts of a saved ``redline`` row from
+ * the contract's current artifact list (PR #92).
+ *
+ * Reads only the allowlisted metadata keys the save endpoint writes
+ * (``base_artifact_id``, ``compare_artifact_id``, ``base_artifact_type``,
+ * ``compare_artifact_type``). Falls back to the artifact-type label
+ * when a source artifact is no longer in the list, marking that side
+ * ``present=false`` so the renderer can hint that it's missing.
+ *
+ * Returns ``null`` when the artifact is not a redline, when
+ * ``metadata_json`` is missing, or when neither id is recoverable —
+ * in those cases the row simply skips the linkage line.
+ */
+export function resolveRedlineLinkage(
+  artifact: ContractArtifact,
+  allArtifacts: readonly ContractArtifact[],
+): RedlineLinkage | null {
+  if (artifact.artifact_type !== "redline") return null;
+  const meta = (artifact.metadata_json ?? {}) as Record<string, unknown>;
+  const baseId = pickString(meta, "base_artifact_id");
+  const compareId = pickString(meta, "compare_artifact_id");
+  if (!baseId && !compareId) return null;
+  const baseTypeFallback = pickString(meta, "base_artifact_type");
+  const compareTypeFallback = pickString(meta, "compare_artifact_type");
+  return {
+    base: _resolveSide(allArtifacts, baseId, baseTypeFallback),
+    compare: _resolveSide(allArtifacts, compareId, compareTypeFallback),
+  };
+}
+
+function _resolveSide(
+  allArtifacts: readonly ContractArtifact[],
+  artifactId: string | null,
+  typeFallback: string | null,
+): RedlineLinkageSide {
+  const found = artifactId
+    ? allArtifacts.find((a) => a.id === artifactId)
+    : undefined;
+  if (found) {
+    return {
+      label: artifactDisplayLabel(found.artifact_type, found.source),
+      filename: found.filename,
+      present: true,
+    };
+  }
+  return {
+    label: typeFallback
+      ? artifactDisplayLabel(typeFallback, null)
+      : "File",
+    filename: null,
+    present: false,
+  };
+}
+
 function createdAtMs(artifact: ContractArtifact): number {
   const t = Date.parse(artifact.created_at);
   // Anything unparseable sorts last; matches "no timestamp" being the
@@ -302,6 +389,7 @@ export function getArtifactHistoryItems(
       sourceChip: artifactSourceChip(artifact),
       isCurrent: winner != null && winner.id === artifact.id,
       metadataChips: safeArtifactMetadataChips(artifact),
+      redlineLinkage: resolveRedlineLinkage(artifact, artifacts),
     }));
 }
 

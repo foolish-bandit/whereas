@@ -1356,6 +1356,25 @@ function DocumentHistoryRow({
             </span>
           ))}
         </div>
+        {item.redlineLinkage && (
+          <p
+            className="mt-1 text-[11px] text-ink-subtle"
+            data-testid="document-history-redline-linkage"
+          >
+            Redline of:{" "}
+            <RedlineLinkageSideLabel
+              side={item.redlineLinkage.base}
+              testId="document-history-redline-base"
+            />
+            <span aria-hidden className="mx-1">
+              ↔
+            </span>
+            <RedlineLinkageSideLabel
+              side={item.redlineLinkage.compare}
+              testId="document-history-redline-compare"
+            />
+          </p>
+        )}
       </div>
       <div className="flex flex-col items-start gap-1 text-ink-subtle sm:items-end sm:text-right">
         {item.originCopy && <span>{item.originCopy}</span>}
@@ -1732,6 +1751,27 @@ function compareWarningCopy(warning: string): string {
     default:
       return "Some portions of the comparison were truncated.";
   }
+}
+
+function RedlineLinkageSideLabel({
+  side,
+  testId,
+}: {
+  side: { label: string; filename: string | null; present: boolean };
+  testId: string;
+}) {
+  return (
+    <span
+      data-testid={testId}
+      data-present={side.present ? "true" : "false"}
+      title={side.filename ?? undefined}
+    >
+      <span className="text-ink">{side.label}</span>
+      {!side.present && (
+        <span className="ml-1 text-ink-subtle">(removed)</span>
+      )}
+    </span>
+  );
 }
 
 function LegacyFallbackRow() {

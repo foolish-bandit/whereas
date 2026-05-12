@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   afterEach,
@@ -2010,6 +2010,171 @@ describe("ContractWorkspacePage compare versions (PR #71)", () => {
     expect(
       screen.queryByTestId("compare-save-redline-confirm"),
     ).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #92 — saved redline linkage in Document History
+  // -------------------------------------------------------------------------
+
+  it("renders 'Redline of: [base] ↔ [compare]' on a saved redline row", async () => {
+    const REDLINE_ID = "art-redline-1";
+    const SAVED_REDLINE = {
+      id: REDLINE_ID,
+      contract_id: CONTRACT_ID,
+      artifact_type: "redline",
+      storage_backend: "s3",
+      filename: "Test-MSA-comparison-report.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 4096,
+      source: "comparison_report",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: {
+        base_artifact_id: SOURCE_ARTIFACT.id,
+        compare_artifact_id: SIGNED_ARTIFACT.id,
+        base_artifact_type: "original_upload",
+        compare_artifact_type: "signed_pdf",
+        added_lines: 3,
+        removed_lines: 2,
+        changed_blocks: 1,
+        unchanged_lines: 12,
+        format: "docx",
+        source_kind: "comparison_report",
+      },
+    };
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([SAVED_REDLINE, SIGNED_ARTIFACT, SOURCE_ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+
+    renderPage();
+    const linkage = await screen.findByTestId(
+      "document-history-redline-linkage",
+    );
+    expect(linkage.textContent ?? "").toMatch(/Redline of:/i);
+    const baseLabel = within(linkage).getByTestId(
+      "document-history-redline-base",
+    );
+    const compareLabel = within(linkage).getByTestId(
+      "document-history-redline-compare",
+    );
+    expect(baseLabel.textContent ?? "").toMatch(/source file/i);
+    expect(compareLabel.textContent ?? "").toMatch(/signed pdf/i);
+    expect(baseLabel.getAttribute("data-present")).toBe("true");
+    expect(compareLabel.getAttribute("data-present")).toBe("true");
+    // Other rows must not carry the linkage line.
+    const allLinkages = screen.queryAllByTestId(
+      "document-history-redline-linkage",
+    );
+    expect(allLinkages).toHaveLength(1);
+  });
+
+  it("marks a missing source artifact as removed in the linkage line", async () => {
+    const REDLINE_ID = "art-redline-2";
+    // Compare artifact id no longer exists in the list — the linkage
+    // should still render with a "(removed)" hint and the type-label
+    // fallback, so the user can still read the row.
+    const SAVED_REDLINE = {
+      id: REDLINE_ID,
+      contract_id: CONTRACT_ID,
+      artifact_type: "redline",
+      storage_backend: "s3",
+      filename: "Test-MSA-comparison-report.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 1024,
+      source: "comparison_report",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: {
+        base_artifact_id: SOURCE_ARTIFACT.id,
+        compare_artifact_id: "art-deleted",
+        base_artifact_type: "original_upload",
+        compare_artifact_type: "generated_docx",
+      },
+    };
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([SAVED_REDLINE, SOURCE_ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+
+    renderPage();
+    const linkage = await screen.findByTestId(
+      "document-history-redline-linkage",
+    );
+    const compareLabel = within(linkage).getByTestId(
+      "document-history-redline-compare",
+    );
+    expect(compareLabel.getAttribute("data-present")).toBe("false");
+    expect(compareLabel.textContent ?? "").toMatch(/generated word document/i);
+    expect(compareLabel.textContent ?? "").toMatch(/\(removed\)/i);
+  });
+
+  it("omits the linkage line when metadata is missing entirely", async () => {
+    const SAVED_REDLINE_NO_META = {
+      id: "art-redline-bare",
+      contract_id: CONTRACT_ID,
+      artifact_type: "redline",
+      storage_backend: "s3",
+      filename: "x.docx",
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 1,
+      source: "comparison_report",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: null,
+    };
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/markdown`)) {
+        return jsonResponse(SNAPSHOT);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)) {
+        return jsonResponse([SAVED_REDLINE_NO_META, SOURCE_ARTIFACT]);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}/metadata`)) {
+        return jsonResponse(METADATA_VIEW);
+      }
+      if (url.endsWith(`/api/contracts/${CONTRACT_ID}`)) {
+        return jsonResponse(CONTRACT_DETAIL);
+      }
+      return jsonResponse({ detail: "unexpected" }, 500);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-list");
+    expect(
+      screen.queryByTestId("document-history-redline-linkage"),
+    ).toBeNull();
   });
 
   it("does not surface storage internals returned by a regressed save endpoint", async () => {
