@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -187,27 +188,47 @@ def compute_text_diff(
     max_blocks: int | None = None,
     max_lines: int = DEFAULT_MAX_LINES,
 ) -> DiffResult:
-    """Compute a structured diff between two plain-text documents.
+    """Compute a structured paragraph-level diff between two documents.
 
-    Built on :mod:`difflib`. Two complementary views:
+    The "unit" here is a **paragraph-shaped text block** (see
+    :func:`_split_paragraphs`), not a raw line. Contracts are almost
+    always wrapped differently in the source (`.docx` flow vs PDF
+    flow vs Markdown), and raw line diff produces noisy redlines just
+    because the same prose wraps at a different column. PR #93 switches
+    this function to paragraph mode so the resulting redline reads
+    more like a legal-summary view: unchanged paragraphs collapse,
+    added / removed paragraphs are clear, and changed paragraphs show
+    "before" vs "after" as discrete blocks.
+
+    Wire shape unchanged. ``DiffLine.text`` carries a whole paragraph
+    now; the existing frontend renders one cell per paragraph and the
+    DOCX renderer (``compare_report_docx``) emits one body paragraph
+    per :class:`DiffLine`. Field names that still read "lines" in the
+    summary (``added_lines``, ``removed_lines``, …) keep their names
+    for back-compat with persisted ``metadata_json`` on saved redlines
+    (PR #91/#92); the unit they count is now paragraphs.
+
+    Built on :mod:`difflib.SequenceMatcher` over the paragraph list,
+    so ordering is preserved and the output is deterministic.
 
     * ``summary`` is computed against the FULL opcode stream so users
-      always see accurate add/remove/context totals.
+      always see accurate add/remove/context totals even when the
+      preview is truncated.
     * ``diff_blocks`` mirror those opcodes but stop emitting lines
       once the total reaches ``max_lines`` (or once we exceed
       ``max_blocks`` if supplied). A truncation warning is appended
       so the UI can disclose that the preview is partial.
 
     Block taxonomy:
-      * ``context`` — a run of equal lines.
+      * ``context`` — a run of equal paragraphs.
       * ``added`` — pure insertion.
       * ``removed`` — pure deletion.
       * ``changed`` — a ``replace`` opcode (both sides differ). The
         inner ``lines`` are a sequence of ``removed`` followed by
         ``added``, matching the order difflib reports.
     """
-    base_lines = _split_lines(base_text)
-    compare_lines = _split_lines(compare_text)
+    base_lines = _split_paragraphs(base_text)
+    compare_lines = _split_paragraphs(compare_text)
 
     matcher = difflib.SequenceMatcher(a=base_lines, b=compare_lines, autojunk=False)
 
@@ -328,6 +349,10 @@ def artifact_compare_label(artifact_type: str, source: str | None) -> str:
 def _split_lines(text: str) -> list[str]:
     """Split ``text`` into lines with normalized line endings.
 
+    Kept for callers that explicitly want line-granularity diffs and
+    for tests of the pre-PR-#93 splitter. The primary diff in this
+    module is paragraph-aware — see :func:`_split_paragraphs`.
+
     Difflib operates on equal-length sequences, so we normalize
     Windows / classic-Mac line endings up-front and strip the trailing
     newline so the user-visible block doesn't render a stray empty
@@ -337,3 +362,49 @@ def _split_lines(text: str) -> list[str]:
     if normalized.endswith("\n"):
         normalized = normalized[:-1]
     return normalized.split("\n")
+
+
+# Two or more newlines (possibly separated by horizontal whitespace
+# only) delimit one paragraph from the next. Anything narrower —
+# including hard-wrapped prose with single newlines mid-paragraph —
+# is collapsed into a single paragraph so a wrapping difference does
+# not surface as a content change.
+_PARAGRAPH_SEPARATOR_RE = re.compile(r"\n[ \t]*\n[\s]*")
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Split ``text`` into paragraph-shaped blocks.
+
+    Heuristic (deliberately conservative, deterministic, no LLM):
+
+    1. Normalize line endings to ``\\n``.
+    2. Split on runs of one-or-more blank lines (whitespace-only lines
+       count). Anything between two blank-line markers is one
+       paragraph.
+    3. Within a paragraph, collapse any internal whitespace run
+       (including embedded single newlines and tabs) to a single
+       space. This is the key step: it makes paragraph identity
+       independent of how the source happened to hard-wrap, which is
+       what causes the noise in line-mode redlines.
+    4. Trim leading / trailing whitespace.
+    5. Drop empty paragraphs.
+
+    A document with no blank-line separators collapses to a single
+    paragraph — which is the right behavior for a redline (everything
+    is "one paragraph that may have changed") and matches what
+    MarkItDown emits for contracts that genuinely contain no
+    paragraph breaks.
+    """
+    if not text:
+        return []
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    chunks = _PARAGRAPH_SEPARATOR_RE.split(normalized)
+    paragraphs: list[str] = []
+    for chunk in chunks:
+        # Collapse all runs of whitespace (incl. internal newlines and
+        # tabs) inside one paragraph to a single space, then strip
+        # leading / trailing whitespace.
+        collapsed = re.sub(r"\s+", " ", chunk).strip()
+        if collapsed:
+            paragraphs.append(collapsed)
+    return paragraphs

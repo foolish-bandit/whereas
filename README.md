@@ -242,6 +242,45 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Paragraph-aware redline diff (PR #93)
+
+The comparison engine that powers the on-screen compare, the
+*Export redline (DOCX)* download, and the *Save to Document History*
+artifact now diffs at the **paragraph** level instead of raw lines.
+
+Why: contracts get wrapped differently when they round-trip through
+DOCX, PDF, and markdown converters — even when the prose is
+identical. A line-based diff treats every wrap-column shift as a
+change and produces noisy redlines. The new splitter (in
+`app.services.artifact_compare._split_paragraphs`) splits on
+blank-line boundaries, collapses internal whitespace runs (including
+embedded single newlines) to single spaces, and drops empty
+paragraphs. The result is a redline that reads like a legal summary:
+unchanged paragraphs collapse to a muted "… N unchanged paragraphs
+…" indicator; added / removed paragraphs are clearly marked; and a
+changed paragraph renders with explicit *Before:* and *After:*
+sub-labels in the DOCX so a reviewer can scan the swap.
+
+Wire shape stays compatible. The existing
+`ArtifactCompareResponse.diff_blocks[].lines[].text` field now
+carries a whole paragraph; the rest of the schema, the field names
+in `DiffSummary`, and the saved-redline `metadata_json` written by
+PR #91 are unchanged. The DOCX renderer (`compare_report_docx`)
+swapped the user-facing labels from *"Added lines"* to *"Added
+paragraphs"*, gained per-block section headings, and uses *Before /
+After* for changed paragraphs.
+
+Still:
+
+- No LLM, no OCR / Docling, no remote service. Deterministic diff
+  on top of `difflib.SequenceMatcher`.
+- Still **not** a Word tracked-changes file. The disclaimer in the
+  DOCX and the compare panel still says so.
+- No backend semantic changes beyond the diff granularity: the
+  artifact-priority chain, DocuSeal flow, approval gate, request
+  state machine, and the redline persistence + lineage from
+  PRs #91 / #92 are untouched.
+
 ## Redline linkage in Document History (PR #92)
 
 When a saved redline (PR #91) appears in Document History, the row
