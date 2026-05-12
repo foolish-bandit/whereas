@@ -277,6 +277,114 @@ describe("RequestDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders a plain description unchanged when no supporting-questions block is present", async () => {
+    mockDetail({
+      ...BASE_REQUEST,
+      description: "Please review counterparty paper and flag liability.",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.getByTestId("request-description")).toHaveTextContent(
+      "Please review counterparty paper and flag liability.",
+    );
+    expect(screen.queryByTestId("request-supporting-questions")).toBeNull();
+  });
+
+  it("pretty-prints a supporting-questions block with label, questions, and answers", async () => {
+    mockDetail({
+      ...BASE_REQUEST,
+      description:
+        "Supporting questions (NDA review):\n• Is this mutual or one-way? Mutual\n• Who is disclosing confidential information? Both parties",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.getByTestId("request-supporting-questions")).toBeInTheDocument();
+    expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent(
+      "NDA review",
+    );
+    expect(screen.queryByTestId("request-description")).toBeNull();
+    const rows = screen.getAllByTestId("request-supporting-question-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Is this mutual or one-way?");
+    expect(rows[0]).toHaveTextContent("Mutual");
+    expect(rows[1]).toHaveTextContent("Who is disclosing confidential information?");
+    expect(rows[1]).toHaveTextContent("Both parties");
+    expect(screen.queryByTestId("request-additional-context")).toBeNull();
+  });
+
+  it("renders additional free-text context separately after the supporting-questions block", async () => {
+    mockDetail({
+      ...BASE_REQUEST,
+      description:
+        "Supporting questions (Vendor agreement):\n• What product or service is being purchased? Cloud hosting\n• Is this a new vendor or renewal? New vendor\n\nPlease also review the data security addendum and liability cap.",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.getByTestId("request-supporting-questions")).toBeInTheDocument();
+    const ctx = screen.getByTestId("request-additional-context");
+    expect(ctx).toHaveTextContent(
+      "Please also review the data security addendum and liability cap.",
+    );
+  });
+
+  it("fails safe and shows raw description for a malformed supporting-questions block", async () => {
+    const malformed =
+      "Supporting questions (NDA review):\nNot a bullet line\n• Is this mutual? Mutual";
+    mockDetail({ ...BASE_REQUEST, description: malformed });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.getByTestId("request-description")).toHaveTextContent(
+      "Supporting questions (NDA review):",
+    );
+    expect(screen.getByTestId("request-description")).toHaveTextContent(
+      "Not a bullet line",
+    );
+    expect(screen.getByTestId("request-description")).toHaveTextContent(
+      "Is this mutual? Mutual",
+    );
+    expect(screen.queryByTestId("request-supporting-questions")).toBeNull();
+  });
+
+  it("renders nothing for a null description without errors", async () => {
+    mockDetail({ ...BASE_REQUEST, description: null });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("request-description")).toBeNull();
+    expect(screen.queryByTestId("request-supporting-questions")).toBeNull();
+  });
+
+  it("does not expose forbidden tokens in the description section", async () => {
+    mockDetail({
+      ...BASE_REQUEST,
+      description:
+        "Supporting questions (NDA review):\n• Is this mutual or one-way? Mutual",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+    const body = document.body.textContent ?? "";
+    for (const forbidden of [
+      "storage_key",
+      "wrapped_dek",
+      "wrapped_master_key",
+      "s3_key",
+      "metadata_json",
+      "private_url",
+      "presigned",
+      "presigned_url",
+      "presigned_uri",
+      "docuseal_webhook_secret",
+      "docuseal_api_token",
+    ]) {
+      expect(body).not.toContain(forbidden);
+    }
+  });
+
   it("renders safe not-found and approval empty states", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith("/api/requests/req-1/approval-status")) {
