@@ -135,13 +135,25 @@ there is sent anywhere.
 ## Project status
 
 - [x] Repo scaffold
-- [ ] Document upload + storage
-- [ ] Metadata extraction with span citations
-- [x] Clause segmentation (v1: heuristic, exact-span grounded — see note below)
-- [ ] Playbook YAML schema and deviation engine (schema + loader landed; deviation engine pending)
-- [ ] DocuSeal integration (embedded + auth bridge)
-- [ ] RAG Q&A
-- [ ] Permissioning model
+- [x] Document upload + storage (PDF / DOCX → S3-compatible store)
+- [x] Metadata extraction with span citations (jump-to-source on every field)
+- [x] Clause segmentation (v1: heuristic, CUAD-inspired taxonomy, exact-span grounded — see note below)
+- [x] Agreement Templates with `{{variables}}` generation, history, rollback
+- [x] Approval workflows + per-contract-type policies + signature gates
+- [x] DocuSeal integration (embedded + signed-PDF artifact on completion webhook)
+- [x] Document History with word-level version diff + redline export
+- [x] Analytics surface (throughput, cycle time, deviation rollups, bottlenecks)
+- [x] Repository bulk-select (tag, archive, move, CSV export)
+- [x] Global ⌘K command palette across contracts / requests / clauses / rules
+- [ ] Playbook deviation **engine** (schema + UI ship; LLM-driven matcher pending — demo findings are hand-tagged)
+- [ ] In-app playbook authoring (today: read-only; rules live in YAML)
+- [ ] Paragraph-aware diff (today: word-level)
+- [ ] Redline accept / reject (today: diff is read-only)
+- [ ] RAG Q&A over the corpus
+- [ ] External integrations (Nango, Outlook, Slack, Salesforce, HubSpot — listed, not wired)
+- [ ] Real authentication / SSO (dev-user header is the current bridge)
+- [ ] User-level RBAC (org-scoping is the only boundary today)
+- [ ] Production deployment guide (TLS, reverse-proxy, secret rotation)
 - [ ] First tagged release (v0.1)
 
 ## Navigation (UI)

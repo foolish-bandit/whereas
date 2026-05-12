@@ -499,11 +499,11 @@ function AudienceCard({
 const FEATURES: Array<{ title: string; body: string }> = [
   {
     title: "Span-cited metadata extraction",
-    body: "LLM-driven extraction with mandatory span citations and a confidence score. If a value can't be cited back to the source, it isn't surfaced.",
+    body: "LLM-driven extraction with mandatory span citations and a confidence score. The contract detail surfaces a jump-to-source button on every field. If a value can't be cited back to the source, it isn't surfaced.",
   },
   {
-    title: "CUAD-based clause segmentation",
-    body: "Heuristic + model-driven segmentation breaks each contract into typed clauses you can filter, search, and link to.",
+    title: "Heuristic clause segmentation (CUAD-inspired taxonomy)",
+    body: "Heuristic segmentation with exact-span grounding. The clause-type taxonomy is CUAD-inspired; the segmenter itself is a pattern-based pass, not a fine-tuned CUAD model.",
   },
   {
     title: "Agreement templates with generation",
@@ -678,11 +678,15 @@ function HonestStatusSection() {
             </h3>
             <ul className="mt-3 space-y-2 text-sm text-ink-muted">
               <li>· Repository upload, extraction, search, filters, quick views</li>
+              <li>· Repository bulk-select: tag, archive, move to folder, CSV export</li>
+              <li>· Span-cited extraction with jump-to-source on every field</li>
               <li>· Agreement Templates: upload, variables, generation, history, rollback</li>
               <li>· Requests workspace with template-to-contract conversion</li>
               <li>· Approval policies, workflow templates, runs, tasks, gates</li>
               <li>· DocuSeal send + completion webhook → signed-PDF artifact</li>
-              <li>· Document History: download, preview, version diff, redline export</li>
+              <li>· Document History: download, preview, word-level diff, redline export</li>
+              <li>· Analytics: throughput, cycle time, deviation rollups, bottlenecks</li>
+              <li>· Global ⌘K command palette across contracts / requests / clauses / rules</li>
               <li>· Audit log with allowlisted detail fields, org-scoped</li>
               <li>· PWA shell, no <code className="font-mono text-xs">/api/*</code> caching</li>
             </ul>
@@ -694,9 +698,15 @@ function HonestStatusSection() {
             <ul className="mt-3 space-y-2 text-sm text-ink-muted">
               <li>· Real authentication / SSO (dev-user header is the current bridge)</li>
               <li>· User-level RBAC (org-scoping is the only boundary today)</li>
-              <li>· Playbook deviation engine (schema landed, evaluator pending)</li>
+              <li>
+                · Playbook deviation evaluator (schema + Review tab UI ship; the
+                LLM-driven matcher does not — demo findings are hand-tagged)
+              </li>
+              <li>· In-app playbook authoring (today: read-only; rules live in YAML)</li>
+              <li>· Paragraph-aware diff (today: word-level)</li>
+              <li>· Redline accept / reject (today: diff is read-only)</li>
               <li>· RAG Q&amp;A over the corpus</li>
-              <li>· Email / calendar / notification integrations</li>
+              <li>· External integrations (Nango, Outlook, Slack, Salesforce, HubSpot — listed)</li>
               <li>· Real-time collaboration / PowerSync sync</li>
               <li>· Production deployment guide (TLS, reverse-proxy, secret rotation)</li>
               <li>· Marketplace of playbooks / templates / clause libraries</li>
