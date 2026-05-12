@@ -20,6 +20,27 @@ function MergedChip() {
   );
 }
 
+const MATCH_SOURCE_LABEL: Record<string, string> = {
+  title: "Matched title",
+  text_preview: "Matched Text preview",
+  title_and_text_preview: "Matched title + Text preview",
+};
+
+function MatchSourceChip({ source }: { source: string }) {
+  const label = MATCH_SOURCE_LABEL[source];
+  if (!label) return null;
+  return (
+    <span
+      className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info"
+      data-testid="repository-match-source-chip"
+      data-source={source}
+      title="Why this record matched the current search"
+    >
+      {label}
+    </span>
+  );
+}
+
 export default function ContractTable({ contracts }: ContractTableProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
@@ -40,6 +61,9 @@ export default function ContractTable({ contracts }: ContractTableProps) {
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
               <StatusBadge status={c.status} />
               {c.merged_into_contract_id && <MergedChip />}
+              {c.search_match_source && (
+                <MatchSourceChip source={c.search_match_source} />
+              )}
               <span>{mimeLabel(c.mime_type)}</span>
               {c.page_count != null && <span>{c.page_count} pages</span>}
             </div>
@@ -84,6 +108,9 @@ export default function ContractTable({ contracts }: ContractTableProps) {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <StatusBadge status={c.status} />
                     {c.merged_into_contract_id && <MergedChip />}
+                    {c.search_match_source && (
+                      <MatchSourceChip source={c.search_match_source} />
+                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3 align-top text-ink-muted">

@@ -141,6 +141,32 @@ describe("mockApi", () => {
     expect(titleList.some((row) => row.id === MOCK_NDA_ID)).toBe(true);
   });
 
+  it("getContracts annotates search_match_source per row (PR #101)", async () => {
+    // Title-only: "NDA" appears in the seeded title
+    // ("Mutual NDA — Acme & Globex (sample)") but not in the
+    // Markdown body ("Mutual Non-Disclosure Agreement").
+    const titleList = await getContracts({ q: "NDA" });
+    const ndaTitle = titleList.find((r) => r.id === MOCK_NDA_ID);
+    expect(ndaTitle?.search_match_source).toBe("title");
+
+    // Text-preview-only: "Confidentiality" appears in the body but
+    // not in the title.
+    const textList = await getContracts({ q: "Confidentiality" });
+    const ndaText = textList.find((r) => r.id === MOCK_NDA_ID);
+    expect(ndaText?.search_match_source).toBe("text_preview");
+
+    // Both: "Mutual" appears in both the title and the body.
+    const bothList = await getContracts({ q: "mutual" });
+    const ndaBoth = bothList.find((r) => r.id === MOCK_NDA_ID);
+    expect(ndaBoth?.search_match_source).toBe("title_and_text_preview");
+
+    // No q: field is null on every row.
+    const all = await getContracts();
+    for (const r of all) {
+      expect(r.search_match_source).toBeNull();
+    }
+  });
+
   it("upload makes the new contract visible in the list and detail endpoints", async () => {
     const file = new File(["x"], "session-upload.pdf", {
       type: "application/pdf",

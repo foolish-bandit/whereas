@@ -1190,6 +1190,219 @@ async def test_list_q_whitespace_only_remains_no_filter_with_snapshots(
     assert sorted(row["id"] for row in response.json()) == sorted([a, b])
 
 
+# --------------------------------------------------------------------------
+# PR #101 — search_match_source hint on Repository list rows
+# --------------------------------------------------------------------------
+
+
+async def test_list_q_match_source_title_only(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-source-1@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="AlphaTitle agreement",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    # No snapshot attached, so a title-only match is the only path.
+    response = await client.get(
+        "/api/contracts?q=AlphaTitle",
+        headers=_headers(user_org.user),
+    )
+    rows = response.json()
+    assert [row["id"] for row in rows] == [a]
+    assert rows[0]["search_match_source"] == "title"
+
+
+async def test_list_q_match_source_text_preview_only(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-source-2@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="Generic title",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="The BravoNeedle clause is here in the body only.",
+    )
+    response = await client.get(
+        "/api/contracts?q=BravoNeedle",
+        headers=_headers(user_org.user),
+    )
+    rows = response.json()
+    assert [row["id"] for row in rows] == [a]
+    assert rows[0]["search_match_source"] == "text_preview"
+
+
+async def test_list_q_match_source_title_and_text_preview(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-source-3@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="CharlieMatch agreement",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="CharlieMatch also appears in the body of the snapshot.",
+    )
+    response = await client.get(
+        "/api/contracts?q=CharlieMatch",
+        headers=_headers(user_org.user),
+    )
+    rows = response.json()
+    assert [row["id"] for row in rows] == [a]
+    assert rows[0]["search_match_source"] == "title_and_text_preview"
+
+
+async def test_list_q_match_source_absent_when_no_query(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Without ``?q=…`` the field is null on every row (no misleading
+    match-source label for the unfiltered list)."""
+    user_org = await _create_user_org(
+        db_session, email="q-source-noq@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="Plain",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text="anything goes here",
+    )
+    response = await client.get(
+        "/api/contracts",
+        headers=_headers(user_org.user),
+    )
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["search_match_source"] is None
+
+
+async def test_list_q_match_source_absent_when_q_is_whitespace(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-source-ws@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="Plain",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    response = await client.get(
+        "/api/contracts?q=%20%20",
+        headers=_headers(user_org.user),
+    )
+    rows = response.json()
+    assert [row["id"] for row in rows] == [a]
+    assert rows[0]["search_match_source"] is None
+
+
+async def test_list_q_match_source_ignores_cross_org_snapshot(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A cross-org snapshot row must not flip the match source to
+    ``title_and_text_preview`` for the caller's org."""
+    first = await _create_user_org(
+        db_session, email="q-source-x@example.com"
+    )
+    second = await _create_user_org(
+        db_session, email="q-source-y@example.com"
+    )
+    a = await _upload_with_title(
+        client, first,
+        title="DeltaTitle agreement",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    # Snapshot belongs to org B, contains the needle — must not
+    # influence org A's match source.
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=second.org.id,
+        markdown_text="DeltaTitle in body (cross-org snapshot)",
+    )
+    response = await client.get(
+        "/api/contracts?q=DeltaTitle",
+        headers=_headers(first.user),
+    )
+    rows = response.json()
+    assert [row["id"] for row in rows] == [a]
+    assert rows[0]["search_match_source"] == "title"
+
+
+async def test_list_q_match_source_does_not_leak_snapshot_body(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user_org = await _create_user_org(
+        db_session, email="q-source-leak@example.com"
+    )
+    a = await _upload_with_title(
+        client, user_org,
+        title="LeakSrc",
+        filename="a.pdf", content=b"%PDF-1.4\nA",
+    )
+    await _add_snapshot(
+        db_session,
+        contract_id=a,
+        organization_id=user_org.org.id,
+        markdown_text=(
+            "PII: Jane Doe, jane.doe@example.com; "
+            "storage_key=should-not-appear; "
+            "wrapped_dek=should-not-appear; "
+            "s3_key=should-not-appear; "
+            "private_url=https://x; presigned=https://y"
+        ),
+    )
+    response = await client.get(
+        "/api/contracts?q=LeakSrc",
+        headers=_headers(user_org.user),
+    )
+    body_text = response.text
+    for forbidden in (
+        "Jane Doe",
+        "jane.doe@example.com",
+        "should-not-appear",
+        "markdown_text",
+        "private_url",
+        "presigned",
+        "metadata_json",
+        "wrapped_dek",
+        "s3_key",
+    ):
+        assert forbidden not in body_text
+    rows = response.json()
+    assert rows[0]["search_match_source"] == "title_and_text_preview" or (
+        rows[0]["search_match_source"] == "title"
+    )
+    _assert_no_secrets(rows)
+
+
 async def test_detail_endpoint_scopes_to_user_org(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

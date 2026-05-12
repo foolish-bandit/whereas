@@ -176,18 +176,30 @@ export async function getContracts(
   // backend EXISTS subquery against ContractMarkdownSnapshot). The
   // raw Text preview body is not returned in the list response;
   // matching is purely a filter.
+  // PR #101 — when q is active we also compute the closed
+  // ``search_match_source`` hint per row (title / text_preview /
+  // both) so the UI can render a small chip. When q is absent or
+  // whitespace-only the field stays null on every row.
   const needle = (options.q ?? "").trim().toLowerCase();
   if (needle) {
-    rows = rows.filter((row) => {
-      if (row.title.toLowerCase().includes(needle)) return true;
+    const annotated: ContractListItem[] = [];
+    for (const row of rows) {
+      const titleHit = row.title.toLowerCase().includes(needle);
       const snapshot = MOCK_MARKDOWN_BY_CONTRACT_ID[row.id];
-      if (snapshot && snapshot.markdown_text.toLowerCase().includes(needle)) {
-        return true;
-      }
-      return false;
-    });
+      const textHit =
+        snapshot != null
+          ? snapshot.markdown_text.toLowerCase().includes(needle)
+          : false;
+      if (!titleHit && !textHit) continue;
+      let source: ContractListItem["search_match_source"];
+      if (titleHit && textHit) source = "title_and_text_preview";
+      else if (titleHit) source = "title";
+      else source = "text_preview";
+      annotated.push({ ...row, search_match_source: source });
+    }
+    return annotated;
   }
-  return rows;
+  return rows.map((row) => ({ ...row, search_match_source: null }));
 }
 
 export async function getContract(

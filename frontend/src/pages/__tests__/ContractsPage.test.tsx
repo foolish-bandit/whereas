@@ -247,6 +247,97 @@ describe("ContractsPage (Repository list)", () => {
     );
   });
 
+  it("renders 'Matched title' chip when search_match_source=title (PR #101)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ search_match_source: "title" })]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    // ContractTable renders both the mobile card list and the
+    // desktop table (CSS media queries don't apply in jsdom). Both
+    // chips carry the same data-source value, so test the first.
+    const chips = await screen.findAllByTestId(
+      "repository-match-source-chip",
+    );
+    expect(chips[0]).toHaveTextContent(/matched title/i);
+    expect(chips[0]).not.toHaveTextContent(/text preview/i);
+    expect(chips[0]).toHaveAttribute("data-source", "title");
+  });
+
+  it("renders 'Matched Text preview' chip when search_match_source=text_preview", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ search_match_source: "text_preview" })]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=indem"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const chips = await screen.findAllByTestId(
+      "repository-match-source-chip",
+    );
+    expect(chips[0]).toHaveTextContent(/matched text preview/i);
+    expect(chips[0]).toHaveAttribute("data-source", "text_preview");
+  });
+
+  it("renders 'Matched title + Text preview' chip when both matched", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ search_match_source: "title_and_text_preview" })]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const chips = await screen.findAllByTestId(
+      "repository-match-source-chip",
+    );
+    expect(chips[0]).toHaveTextContent(/matched title \+ text preview/i);
+    expect(chips[0]).toHaveAttribute(
+      "data-source",
+      "title_and_text_preview",
+    );
+  });
+
+  it("does NOT render any match-source chip when q is absent", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ search_match_source: null })]),
+    );
+    renderPage();
+    await screen.findAllByText("Acme NDA");
+    expect(
+      screen.queryAllByTestId("repository-match-source-chip"),
+    ).toHaveLength(0);
+  });
+
+  it("does not surface raw text or storage internals when chip is rendered", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([row({ search_match_source: "text_preview" })]),
+    );
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=indem"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findAllByTestId("repository-match-source-chip");
+    const text = document.body.textContent ?? "";
+    for (const needle of [
+      "storage_key",
+      "wrapped_dek",
+      "s3_key",
+      "metadata_json",
+      "markdown_text",
+      "private_url",
+      "presigned",
+      "docuseal_secret",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
+
   it("placeholder + no-matches copy mention Text preview content (PR #100)", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (String(url).includes("q=zzz")) return jsonResponse([]);
