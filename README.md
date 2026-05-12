@@ -499,6 +499,58 @@ Frontend-only. No backend changes. No Repository API, search,
 artifact-priority, DocuSeal, approval, request, or duplicate-merge
 semantics changed.
 
+## Backend API response leak audit (PR #109)
+
+Backend-side companion to the frontend MVP readiness audit (PR #107).
+Adds a single source of truth for the substrings that must never
+appear in any API response or audit-event detail, plus a
+cross-cutting test that exercises every major resource group.
+
+- **New `backend/tests/_response_audit.py`** —
+  `FORBIDDEN_RESPONSE_TOKENS` canonical tuple (storage / encryption
+  internals, signed-URL shapes, DocuSeal secret-shaped fields, and the
+  `"embedding":` clause-vector spillover), plus
+  `assert_no_forbidden_tokens(payload)` / `assert_audit_details_clean(details)`
+  / `assert_safe_binary_headers(response)` helpers. The
+  module docstring explains why `metadata_json` is deliberately *not*
+  on the strict list (it is a labeled API field with allowlisted
+  contents) — the scanner still catches anything sensitive that ends
+  up nested inside it.
+- **New `backend/tests/test_api_response_leak_audit.py`** —
+  cross-cutting audit. Bootstraps a dev workspace via
+  `POST /api/setup/dev`, then exercises:
+  Repository list + detail/404 + artifacts/clauses/activity/export/duplicate-candidates;
+  Agreement Templates list + detail/404 + artifacts + variables;
+  Requests list + detail/404 + approval-status + activity;
+  Approval Policies / Workflow Templates / Workflows list + detail/404;
+  Inbox / Clause Templates / Playbooks lists; Dashboard summary;
+  Setup status; an unauthenticated 401 envelope; and every
+  `AuditEvent.details` row written during the bootstrap path.
+  All response payloads and audit details are scanned against the
+  canonical token list.
+- **Binary endpoints kept separate.** Download / preview endpoints
+  return raw bytes by design and have their own targeted tests; the
+  helper `assert_safe_binary_headers` codifies the headers-level
+  check (no `application/json` content-type, no forbidden tokens in
+  any header) for those tests to opt into.
+- **No leaks found.** Existing schemas already exclude storage /
+  encryption internals and signed-URL fields by construction; the
+  cross-cutting scan adds defense-in-depth rather than fixing a
+  concrete leak.
+- **No product semantics changed.** No backend code touched outside
+  the tests directory. No schema renames, no API behavior changes,
+  no approval / DocuSeal / artifact / request / template flow
+  changes.
+
+### Tests / results
+
+- `ruff check backend/` — clean.
+- `pytest tests/test_api_response_leak_audit.py` — **15 / 15** passing.
+- `pytest` (full backend suite) — **787 passing, 14 skipped**. The 6
+  pre-existing failures in `test_artifact_compare_service.py` and
+  `test_artifact_compare_api.py` exist on `main` independently of this
+  PR (verified by checking out main and rerunning).
+
 ## Self-host / local demo setup polish (PR #108)
 
 Docs-only pass to make local setup and evaluation easier. No product
