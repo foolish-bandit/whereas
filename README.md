@@ -224,9 +224,29 @@ than the top-level nav:
   remain governed by the approval-task workflow and are not generically
   routable from this queue.
 
-Current Inbox routing is a workflow foundation only: full Repository
-settings capture and template-specific supporting-question flows are
-planned follow-up work.
+  - **Move to Repository** opens a Summize-style classification modal
+    (PR #116) that captures a Repository name + contract type plus
+    workflow-convenience fields (status, owner, folder). In demo mode
+    the modal routes the item into a mock Repository record; in
+    real/API mode it shows honest guidance and links to the existing
+    Repository upload / metadata-confirmation flow without faking a
+    server mutation.
+  - **Move to Review / Send for Review** opens a supporting-information
+    modal (PR #117) that asks for a Request name, request type,
+    optional Agreement template, priority, and supporting context
+    before the item enters the Requests workflow. The modal supports
+    one intake item at a time; if multiple items are selected the
+    action is disabled with honest copy. In both demo and real/API
+    modes it creates a Request via the existing `POST /api/requests`
+    endpoint using only the fields that endpoint already accepts —
+    workflow-only fields (owner, department) are surfaced in the route
+    notice but never sent to the server. The success notice deep-links
+    into `/requests/:id` (or `/demo/requests/:id`).
+
+Current Inbox routing is still narrow: no per-template follow-up
+questions, no automatic resolution of multiple intake items in one
+shot, and no backend intake-routing engine. Those remain follow-up
+work.
 
 Nothing about the backend `Contract` / `Approval` / `Template` models
 or their HTTP endpoints changed in the recent UI polish work; the

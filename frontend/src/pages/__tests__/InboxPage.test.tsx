@@ -182,7 +182,7 @@ describe("InboxPage", () => {
     );
   });
 
-  it("opens the Move to Review panel from bulk actions", async () => {
+  it("opens the Move to Review modal from bulk actions", async () => {
     fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
     renderPage();
     await screen.findByText("Review request: NDA with Acme");
@@ -190,7 +190,179 @@ describe("InboxPage", () => {
     fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
     fireEvent.click(screen.getByTestId("inbox-move-review"));
 
-    expect(await screen.findByTestId("inbox-review-panel")).toBeInTheDocument();
+    const modal = await screen.findByTestId("move-to-review-modal");
+    expect(modal).toHaveAttribute("role", "dialog");
+    expect(modal).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByTestId("move-to-review-modal-title")).toHaveTextContent(
+      /move to review/i,
+    );
+    // The name is pre-filled from the single selected item's title.
+    expect(screen.getByTestId("move-to-review-name")).toHaveValue(
+      "Review request: NDA with Acme",
+    );
+    expect(screen.getByTestId("move-to-review-request-type")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-template")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-priority")).toBeInTheDocument();
+    expect(screen.getByTestId("move-to-review-supporting-info")).toBeInTheDocument();
+  });
+
+  it("disables the Move-to-Review action and shows honest copy when 2+ items are selected", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        SAMPLE_ITEM,
+        { ...SAMPLE_ITEM, id: "inbox-2", title: "Second intake item" },
+      ]),
+    );
+    renderPage();
+    await screen.findByText("Second intake item");
+
+    fireEvent.click(screen.getByTestId("inbox-select-all"));
+    expect(screen.getByTestId("inbox-move-review")).toBeDisabled();
+    expect(screen.getByTestId("inbox-multi-review-help")).toHaveTextContent(
+      /one intake item at a time/i,
+    );
+    // Move to Repository remains multi-item friendly.
+    expect(screen.getByTestId("inbox-move-repository")).not.toBeDisabled();
+  });
+
+  it("shows the honest real-mode note inside the Move to Review modal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+
+    await screen.findByTestId("move-to-review-modal");
+    expect(screen.getByTestId("move-to-review-real-note")).toHaveTextContent(
+      /existing requests api/i,
+    );
+  });
+
+  it("creates a Request via the existing API on submit and shows a mount-aware route notice", async () => {
+    // Use a fresh-intake row (no linked request yet) so the modal
+    // actually POSTs to /api/requests instead of reusing an existing
+    // request_id.
+    const FRESH_ITEM = { ...SAMPLE_ITEM, id: "inbox-fresh", request_id: null };
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (
+        url.includes("/api/agreement-templates") &&
+        (!init?.method || init.method === "GET")
+      ) {
+        return jsonResponse([]);
+      }
+      if (url.includes("/api/inbox-items") && (!init?.method || init.method === "GET")) {
+        return jsonResponse([FRESH_ITEM]);
+      }
+      if (url.endsWith("/api/requests") && init?.method === "POST") {
+        return jsonResponse({
+          ...SAMPLE_ITEM,
+          id: "req-new-1",
+          title: "Custom name",
+          description: null,
+          request_type: "vendor_agreement",
+          contract_type: null,
+          status: "open",
+          priority: "high",
+          requester_name: null,
+          requester_email: null,
+          counterparty_name: null,
+          due_date: null,
+          assigned_to: null,
+          linked_contract_id: null,
+          linked_template_id: null,
+        });
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    await screen.findByTestId("move-to-review-modal");
+
+    fireEvent.change(screen.getByTestId("move-to-review-name"), {
+      target: { value: "Custom name" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "vendor_agreement" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-priority"), {
+      target: { value: "high" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-owner"), {
+      target: { value: "should-not-be-sent@example.com" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-department"), {
+      target: { value: "Should-Not-Be-Sent Dept" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-supporting-info"), {
+      target: { value: "deal value 50k, urgency: this week" },
+    });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+
+    const notice = await screen.findByTestId("inbox-route-notice");
+    expect(notice).toHaveTextContent(/routed "Custom name"/i);
+    expect(notice).toHaveTextContent(/as vendor agreement/i);
+    expect(screen.getByTestId("inbox-route-notice-link")).toHaveAttribute(
+      "href",
+      "/requests/req-new-1",
+    );
+
+    const postCall = calls.find(
+      (c) => c.url.endsWith("/api/requests") && c.init?.method === "POST",
+    );
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse((postCall!.init!.body as string) ?? "{}");
+    expect(body.title).toBe("Custom name");
+    expect(body.request_type).toBe("vendor_agreement");
+    expect(body.priority).toBe("high");
+    expect(body.description).toBe("deal value 50k, urgency: this week");
+    // Demo-only fields must NOT be sent to the server.
+    expect(body).not.toHaveProperty("owner");
+    expect(body).not.toHaveProperty("department");
+    expect(body).not.toHaveProperty("requester_email");
+    // The body should also not echo the workflow-convenience values.
+    const bodyText = JSON.stringify(body);
+    expect(bodyText).not.toContain("should-not-be-sent");
+    expect(bodyText).not.toContain("Should-Not-Be-Sent");
+  });
+
+  it("requires Request name before submit", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    await screen.findByTestId("move-to-review-modal");
+
+    fireEvent.change(screen.getByTestId("move-to-review-name"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+
+    expect(
+      await screen.findByTestId("move-to-review-name-error"),
+    ).toHaveTextContent(/required/i);
+    expect(screen.queryByTestId("inbox-route-notice")).toBeNull();
+  });
+
+  it("cancels the Move to Review modal without creating a Request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    await screen.findByTestId("move-to-review-modal");
+    fireEvent.click(screen.getByTestId("move-to-review-cancel"));
+
+    expect(screen.queryByTestId("move-to-review-modal")).toBeNull();
+    expect(screen.queryByTestId("inbox-route-notice")).toBeNull();
   });
 
   it("disables generic routing actions when approval tasks are selected", async () => {
@@ -402,5 +574,72 @@ describe("InboxPage", () => {
     expect(
       screen.queryByTestId("repository-classification-modal"),
     ).toBeNull();
+  });
+
+  it("does not open the Move-to-Review modal when approval tasks are selected", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_APPROVAL]));
+    renderPage();
+    await screen.findByText("Legal approval needed");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    expect(screen.getByTestId("inbox-move-review")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    expect(screen.queryByTestId("move-to-review-modal")).toBeNull();
+    // The approval helper still surfaces the open-task link path.
+    expect(screen.getByTestId("inbox-open-approval-task")).toHaveAttribute(
+      "href",
+      "/approvals/tasks/inbox-approval-1",
+    );
+  });
+
+  it("routes a single intake item through Move to Review in demo mode with a mount-aware link", async () => {
+    vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+    renderPage("/demo/inbox");
+    const intakeRowTitle = await screen.findByText(/new upload intake/i);
+    const row = intakeRowTitle.closest("li");
+    expect(row).not.toBeNull();
+    const checkbox = within(row as HTMLElement).getByTestId("inbox-row-checkbox");
+
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    await screen.findByTestId("move-to-review-modal");
+
+    fireEvent.change(screen.getByTestId("move-to-review-name"), {
+      target: { value: "Acme MSA review" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "vendor_agreement" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-supporting-info"), {
+      target: { value: "deal value 50k, jurisdiction CA" },
+    });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+
+    const notice = await screen.findByTestId("inbox-route-notice");
+    expect(notice).toHaveTextContent(/routed "Acme MSA review"/i);
+    expect(notice).toHaveTextContent(/as vendor agreement/i);
+    expect(notice).toHaveTextContent(/in demo mode/i);
+    const noticeLink = screen.getByTestId("inbox-route-notice-link");
+    expect(noticeLink.getAttribute("href")).toMatch(/^\/demo\/requests\//);
+
+    // The routed inbox row becomes completed.
+    expect(within(row as HTMLElement).getByTestId("inbox-status")).toHaveTextContent(
+      "completed",
+    );
+    // Modal closes after success.
+    expect(screen.queryByTestId("move-to-review-modal")).toBeNull();
+  });
+
+  it("Escape closes the Move to Review modal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_ITEM]));
+    renderPage();
+    await screen.findByText("Review request: NDA with Acme");
+
+    fireEvent.click(screen.getByTestId("inbox-row-checkbox"));
+    fireEvent.click(screen.getByTestId("inbox-move-review"));
+    await screen.findByTestId("move-to-review-modal");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("move-to-review-modal")).toBeNull();
   });
 });

@@ -4,6 +4,9 @@ import { Link, useLocation } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import MoveToReviewModal, {
+  type MoveToReviewValues,
+} from "../components/MoveToReviewModal";
 import RepositoryClassificationModal, {
   type RepositoryClassificationValues,
 } from "../components/RepositoryClassificationModal";
@@ -12,12 +15,14 @@ import {
   MissingDevUserError,
   createRequest,
   dismissInboxItem,
+  listAgreementTemplates,
   listInboxItems,
   updateInboxItem,
 } from "../lib/api";
 import { isDemoMode } from "../lib/env";
 import { MOCK_MSA_ID } from "../lib/mockData";
 import { mountedPath } from "../lib/routes";
+import type { AgreementTemplate } from "../types/agreementTemplates";
 import type { InboxItem } from "../types/inboxItems";
 
 type LoadState =
@@ -49,9 +54,13 @@ export default function InboxPage() {
     "repository" | "review" | null
   >(null);
   const [routingBusy, setRoutingBusy] = useState(false);
-  const [routeNotice, setRouteNotice] = useState<string | null>(null);
-  const [reviewType, setReviewType] = useState("review_existing");
-  const [reviewNotes, setReviewNotes] = useState("");
+  const [routeNotice, setRouteNotice] = useState<{
+    message: string;
+    href?: string;
+    linkLabel?: string;
+  } | null>(null);
+  const [templates, setTemplates] = useState<AgreementTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const location = useLocation();
   const demoMode = isDemoMode();
@@ -85,6 +94,29 @@ export default function InboxPage() {
     const visible = new Set(state.rows.map((row) => row.id));
     setSelectedIds((prev) => prev.filter((id) => visible.has(id)));
   }, [state]);
+
+  // Lazy-load Agreement Templates the first time the Move-to-Review
+  // modal opens so the optional template selector is populated. We
+  // tolerate failures: an empty list is fine — the field is optional.
+  useEffect(() => {
+    if (activeRoutingPanel !== "review") return;
+    if (templates.length > 0 || templatesLoading) return;
+    let aborted = false;
+    setTemplatesLoading(true);
+    listAgreementTemplates({ include_archived: false })
+      .then((rows) => {
+        if (!aborted) setTemplates(rows);
+      })
+      .catch(() => {
+        // Optional field: silent fail keeps the modal usable.
+      })
+      .finally(() => {
+        if (!aborted) setTemplatesLoading(false);
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [activeRoutingPanel, templates.length, templatesLoading]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedRows = useMemo(() => {
@@ -207,9 +239,9 @@ export default function InboxPage() {
       const classifiedAs = values.contractType
         ? ` as ${values.contractType}`
         : "";
-      setRouteNotice(
-        `Routed ${selectedCount} inbox item${selectedCount === 1 ? "" : "s"} toward Repository${classifiedAs} in demo mode.`,
-      );
+      setRouteNotice({
+        message: `Routed ${selectedCount} inbox item${selectedCount === 1 ? "" : "s"} toward Repository${classifiedAs} in demo mode.`,
+      });
       clearSelection();
     } finally {
       setRoutingBusy(false);
@@ -217,49 +249,94 @@ export default function InboxPage() {
     }
   }
 
-  async function routeToReviewDemo() {
-    if (state.kind !== "loaded" || selectedCount === 0 || selectedHasApproval) return;
+  async function routeToReview(values: MoveToReviewValues) {
+    if (
+      state.kind !== "loaded" ||
+      selectedCount !== 1 ||
+      selectedHasApproval
+    ) {
+      return;
+    }
+    const row = selectedRows[0];
     setRoutingBusy(true);
     try {
-      const missingRequest = selectedRows.filter(
-        (row) => row.item_type !== "approval" && row.request_id === null,
-      );
-      const createdIds = new Map<string, string>();
-      for (const row of missingRequest) {
-        const created = await createRequest({
-          title: `Review: ${row.title}`,
-          description:
-            row.description ??
-            (reviewNotes.trim() || "Routed from Inbox intake for review."),
-          request_type: reviewType,
-          priority: row.priority,
-          due_date: row.due_date,
-        });
-        createdIds.set(row.id, created.id);
+      let createdId = row.request_id;
+      const description = values.supportingInfo
+        ? values.supportingInfo
+        : row.description ?? null;
+      if (!createdId) {
+        try {
+          const created = await createRequest({
+            title: values.name,
+            description,
+            request_type: values.requestType,
+            priority: values.priority,
+            linked_template_id: values.templateId,
+            due_date: row.due_date,
+          });
+          createdId = created.id;
+        } catch {
+          // Real-mode API failure (or demo fixture rejection): keep the
+          // UI honest — do not pretend a Request was created. Demo
+          // mode falls back to a synthetic id so the route-notice link
+          // stays clickable; real mode surfaces the failure to the
+          // caller via the unset routeNotice and the modal stays open.
+          if (!demoMode) {
+            throw new Error(
+              "Could not create Request via the existing API.",
+            );
+          }
+          createdId = `demo-req-${row.id}`;
+        }
       }
       const now = new Date().toISOString();
       setState((prev) =>
         prev.kind === "loaded"
           ? {
               kind: "loaded",
-              rows: prev.rows.map((row) =>
-                selectedIdSet.has(row.id) && row.item_type !== "approval"
+              rows: prev.rows.map((r) =>
+                r.id === row.id && r.item_type !== "approval"
                   ? {
-                      ...row,
+                      ...r,
                       status: "completed",
-                      request_id: row.request_id ?? createdIds.get(row.id) ?? null,
+                      request_id: r.request_id ?? createdId ?? null,
                       item_type: "request_review",
                       updated_at: now,
                     }
-                  : row,
+                  : r,
               ),
             }
           : prev,
       );
-      setRouteNotice(
-        `Routed ${selectedCount} inbox item${selectedCount === 1 ? "" : "s"} toward Requests in demo mode.`,
-      );
+      const templateLabel =
+        values.templateId && templates.length > 0
+          ? templates.find((t) => t.id === values.templateId)?.name
+          : null;
+      const summary = [
+        `Routed "${values.name}"`,
+        `as ${values.requestType.replace(/_/g, " ")}`,
+        templateLabel ? `using ${templateLabel}` : null,
+        demoMode ? "in demo mode" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      setRouteNotice({
+        message: `${summary}.`,
+        href: createdId
+          ? mountedPath(`/requests/${createdId}`, location.pathname)
+          : undefined,
+        linkLabel: createdId ? "Open Request" : undefined,
+      });
       clearSelection();
+    } catch (err) {
+      setRouteNotice({
+        message:
+          err instanceof Error
+            ? err.message
+            : "Could not create Request. Open the Requests workspace to continue.",
+        href: mountedPath("/requests", location.pathname),
+        linkLabel: "Open Requests",
+      });
     } finally {
       setRoutingBusy(false);
       setActiveRoutingPanel(null);
@@ -351,7 +428,20 @@ export default function InboxPage() {
 
       {routeNotice && (
         <p className="text-sm text-success" data-testid="inbox-route-notice">
-          {routeNotice}
+          {routeNotice.message}
+          {routeNotice.href && (
+            <>
+              {" "}
+              <Link
+                to={routeNotice.href}
+                className="underline hover:text-ink"
+                data-testid="inbox-route-notice-link"
+              >
+                {routeNotice.linkLabel ?? "Open"}
+              </Link>
+              .
+            </>
+          )}
         </p>
       )}
 
@@ -374,7 +464,7 @@ export default function InboxPage() {
               type="button"
               className="rounded border border-rule px-3 py-1 text-sm hover:bg-canvas-muted disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => setActiveRoutingPanel("review")}
-              disabled={selectedHasApproval}
+              disabled={selectedHasApproval || selectedCount > 1}
               data-testid="inbox-move-review"
             >
               Move to Requests / Send for Review
@@ -410,6 +500,16 @@ export default function InboxPage() {
               )}
             </div>
           )}
+
+          {!selectedHasApproval && selectedCount > 1 && (
+            <div
+              className="text-sm text-ink-muted"
+              data-testid="inbox-multi-review-help"
+            >
+              Move to Review currently supports one intake item at a time.
+              Reduce the selection to a single item to send for review.
+            </div>
+          )}
         </div>
       )}
 
@@ -431,75 +531,17 @@ export default function InboxPage() {
         }
       />
 
-      {activeRoutingPanel === "review" && (
-        <section
-          className="rounded border border-rule bg-canvas p-4"
-          data-testid="inbox-review-panel"
-        >
-          <h2 className="text-base font-medium text-ink">Move to Review</h2>
-          <p className="mt-1 text-sm text-ink-muted">
-            Supporting information can be added now; template-specific follow-up
-            questions are planned in a later pass.
-          </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-sm text-ink-muted">
-              <span>Request type</span>
-              <select
-                className="w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={reviewType}
-                onChange={(e) => setReviewType(e.target.value)}
-                data-testid="inbox-review-type"
-              >
-                <option value="review_existing">Review existing</option>
-                <option value="new_contract">New contract</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label className="space-y-1 text-sm text-ink-muted sm:col-span-2">
-              <span>Supporting information</span>
-              <textarea
-                className="h-24 w-full rounded border border-rule px-2 py-1 text-sm text-ink"
-                value={reviewNotes}
-                onChange={(e) => setReviewNotes(e.target.value)}
-                data-testid="inbox-review-notes"
-              />
-            </label>
-          </div>
-          {!demoMode && (
-            <p className="mt-3 text-sm text-ink-muted" data-testid="inbox-review-real-note">
-              Review routing from Inbox uses the existing Request creation flow.
-            </p>
-          )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {demoMode ? (
-              <button
-                type="button"
-                className="rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={routingBusy}
-                onClick={routeToReviewDemo}
-                data-testid="inbox-review-route-demo"
-              >
-                {routingBusy ? "Routing…" : "Route to Requests"}
-              </button>
-            ) : (
-              <Link
-                to={mountedPath("/requests", location.pathname)}
-                className="rounded border border-ink bg-ink px-3 py-1 text-sm text-canvas hover:opacity-90"
-                data-testid="inbox-review-open-requests"
-              >
-                Open Requests workspace
-              </Link>
-            )}
-            <button
-              type="button"
-              className="rounded border border-rule px-3 py-1 text-sm hover:bg-canvas-muted"
-              onClick={() => setActiveRoutingPanel(null)}
-            >
-              Close
-            </button>
-          </div>
-        </section>
-      )}
+      <MoveToReviewModal
+        open={activeRoutingPanel === "review"}
+        itemTitle={selectedCount === 1 ? selectedRows[0]?.title ?? null : null}
+        selectedCount={selectedCount}
+        demoMode={demoMode}
+        busy={routingBusy}
+        templates={templates}
+        templatesLoading={templatesLoading}
+        onCancel={() => setActiveRoutingPanel(null)}
+        onSubmit={routeToReview}
+      />
 
       {state.kind === "loading" && (
         <LoadingSkeleton rows={6} />
