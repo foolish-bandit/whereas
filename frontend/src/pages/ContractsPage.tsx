@@ -136,6 +136,10 @@ export default function ContractsPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [sort, setSort] = useState<SortOrder>(initialSort);
   const [includeMerged, setIncludeMerged] = useState(initialMerged);
+  // PR #105 — Advanced filters panel. Opens expanded by default so
+  // the existing inline controls remain available without an extra
+  // click; users can collapse it to reclaim vertical space.
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
 
   // Debounce the URL + fetch updates so a fast typist doesn't fire a
   // request per keystroke. The committed value drives both the URL
@@ -281,6 +285,27 @@ export default function ContractsPage() {
     setCommittedSearch("");
   }
 
+  // PR #105 — count of non-default filter dimensions currently
+  // applied. Each of (q, status, sort, type, merged) that differs
+  // from its default contributes 1; surfaced as a chip next to the
+  // Advanced filters toggle so users can see at a glance how
+  // narrowed the list is.
+  const activeFilterCount =
+    (committedSearch.trim() ? 1 : 0) +
+    (statusFilter !== "all" ? 1 : 0) +
+    (sort !== "newest" ? 1 : 0) +
+    (typeFilter !== "all" ? 1 : 0) +
+    (includeMerged ? 1 : 0);
+
+  function onResetAllFilters() {
+    setSearch("");
+    setCommittedSearch("");
+    setStatusFilter("all");
+    setTypeFilter("all");
+    setSort("newest");
+    setIncludeMerged(false);
+  }
+
   return (
     <div data-testid="repository-page">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
@@ -335,7 +360,8 @@ export default function ContractsPage() {
         </span>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* Search row — first-class, always inline. */}
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <label className="relative flex-1 min-w-[200px]">
           <span className="sr-only">
             Search Repository records by title or Text preview content
@@ -361,59 +387,119 @@ export default function ContractsPage() {
             </button>
           )}
         </label>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
-          aria-label="Filter by status"
-          data-testid="repository-filter-status"
+        <button
+          type="button"
+          onClick={() => setShowAdvancedFilters((v) => !v)}
+          aria-expanded={showAdvancedFilters}
+          aria-controls="repository-advanced-panel"
+          className="flex items-center gap-2 rounded border border-rule bg-canvas px-2.5 py-1.5 text-xs text-ink hover:border-rule-strong"
+          data-testid="repository-advanced-toggle"
         >
-          {STATUS_FILTERS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
-          aria-label="Filter by type"
-          data-testid="repository-filter-type"
-        >
-          <option value="all">All types</option>
-          {types.map((t) => (
-            <option key={t} value={t}>
-              {mimeLabel(t)}
-            </option>
-          ))}
-        </select>
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as SortOrder)}
-          className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
-          aria-label="Sort by"
-          data-testid="repository-sort"
-        >
-          {SORT_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <label
-          className="flex items-center gap-2 text-xs text-ink-subtle"
-          data-testid="repository-include-merged-label"
-        >
-          <input
-            type="checkbox"
-            checked={includeMerged}
-            onChange={(e) => setIncludeMerged(e.target.checked)}
-            data-testid="repository-include-merged"
-          />
-          Show merged
-        </label>
+          {showAdvancedFilters ? "Hide filters" : "Advanced filters"}
+          {activeFilterCount > 0 && (
+            <span
+              className="rounded-full border border-info/40 bg-info/10 px-1.5 text-[10px] font-medium text-info"
+              data-testid="repository-advanced-active-count"
+            >
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Advanced filters panel. Open by default so existing inline
+          controls remain available without a click; users can fold
+          it to free up vertical space. */}
+      {showAdvancedFilters && (
+        <div
+          id="repository-advanced-panel"
+          className="mb-4 rounded border border-rule bg-canvas-subtle p-3"
+          data-testid="repository-advanced-panel"
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
+              aria-label="Filter by status"
+              data-testid="repository-filter-status"
+            >
+              {STATUS_FILTERS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
+              aria-label="Filter by type"
+              data-testid="repository-filter-type"
+            >
+              <option value="all">All types</option>
+              {types.map((t) => (
+                <option key={t} value={t}>
+                  {mimeLabel(t)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortOrder)}
+              className="rounded border border-rule bg-canvas px-2.5 py-1.5 text-sm text-ink focus:border-accent-ring focus:outline-none"
+              aria-label="Sort by"
+              data-testid="repository-sort"
+            >
+              {SORT_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <label
+              className="flex items-center gap-2 text-xs text-ink-subtle"
+              data-testid="repository-include-merged-label"
+            >
+              <input
+                type="checkbox"
+                checked={includeMerged}
+                onChange={(e) => setIncludeMerged(e.target.checked)}
+                data-testid="repository-include-merged"
+              />
+              Show merged
+            </label>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-subtle">
+            {committedSearch.trim() && (
+              <span
+                className="rounded border border-rule bg-canvas px-1.5 py-0.5"
+                data-testid="repository-advanced-search-summary"
+              >
+                Search:{" "}
+                <span className="text-ink">"{committedSearch.trim()}"</span>
+                <button
+                  type="button"
+                  onClick={onClearSearch}
+                  className="ml-1 text-ink-muted underline hover:text-ink"
+                  data-testid="repository-advanced-clear-search"
+                >
+                  clear
+                </button>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onResetAllFilters}
+              disabled={activeFilterCount === 0}
+              className="rounded border border-rule bg-canvas px-2 py-0.5 text-ink hover:border-rule-strong disabled:opacity-50"
+              data-testid="repository-advanced-reset-all"
+            >
+              Reset all filters
+            </button>
+          </div>
+        </div>
+      )}
 
       {state.kind === "loading" && <LoadingSkeleton rows={6} />}
 
@@ -439,14 +525,24 @@ export default function ContractsPage() {
             title="No matches"
             description="No Repository records match the current search or filters. Search looks at the record title and any Text preview content."
             action={
-              <button
-                type="button"
-                onClick={onClearSearch}
-                className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
-                data-testid="repository-empty-clear-search"
-              >
-                Clear search
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClearSearch}
+                  className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
+                  data-testid="repository-empty-clear-search"
+                >
+                  Clear search
+                </button>
+                <button
+                  type="button"
+                  onClick={onResetAllFilters}
+                  className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
+                  data-testid="repository-empty-reset-filters"
+                >
+                  Reset filters
+                </button>
+              </div>
             }
           />
         ) : (

@@ -752,6 +752,179 @@ describe("ContractsPage (Repository list)", () => {
     ).toHaveTextContent(/active: merged/i);
   });
 
+  // -------------------------------------------------------------------------
+  // PR #105 — Advanced filters panel
+  // -------------------------------------------------------------------------
+
+  it("renders the Advanced filters toggle (PR #105)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findByTestId("repository-views");
+    expect(
+      screen.getByTestId("repository-advanced-toggle"),
+    ).toBeInTheDocument();
+    // No active filter chip when defaults are in effect.
+    expect(
+      screen.queryByTestId("repository-advanced-active-count"),
+    ).toBeNull();
+  });
+
+  it("active filter count reflects q + status + sort + merged", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/demo/repository?q=Acme&status=executed&sort=oldest&merged=true",
+        ]}
+      >
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    const chip = await screen.findByTestId("repository-advanced-active-count");
+    expect(chip).toHaveTextContent("4");
+  });
+
+  it("collapses the panel when toggled and hides filter controls", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findByTestId("repository-views");
+    expect(
+      screen.getByTestId("repository-advanced-panel"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("repository-advanced-toggle"));
+    expect(
+      screen.queryByTestId("repository-advanced-panel"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("repository-filter-status"),
+    ).toBeNull();
+    // Toggle button copy flips.
+    expect(
+      screen.getByTestId("repository-advanced-toggle"),
+    ).toHaveTextContent(/advanced filters/i);
+  });
+
+  it("clear-search in the panel removes q from URL + state", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=Acme"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("repository-advanced-search-summary");
+    fireEvent.click(
+      screen.getByTestId("repository-advanced-clear-search"),
+    );
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("repository-search") as HTMLInputElement).value,
+      ).toBe("");
+    });
+    expect(
+      screen.queryByTestId("repository-advanced-search-summary"),
+    ).toBeNull();
+  });
+
+  it("reset all filters clears q/status/sort/merged + returns to All active", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/demo/repository?q=Acme&status=executed&sort=oldest&merged=true",
+        ]}
+      >
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("repository-advanced-active-count");
+    fireEvent.click(screen.getByTestId("repository-advanced-reset-all"));
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("repository-filter-status") as HTMLSelectElement)
+          .value,
+      ).toBe("all");
+    });
+    expect(
+      (screen.getByTestId("repository-sort") as HTMLSelectElement).value,
+    ).toBe("newest");
+    expect(
+      (screen.getByTestId("repository-include-merged") as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    expect(
+      (screen.getByTestId("repository-search") as HTMLInputElement).value,
+    ).toBe("");
+    // Active preset chip + label restore to the default "All active".
+    expect(
+      screen.getByTestId("repository-view-active"),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: all active/i);
+    // Filter count chip disappears once everything is back to defaults.
+    expect(
+      screen.queryByTestId("repository-advanced-active-count"),
+    ).toBeNull();
+  });
+
+  it("reset all is disabled when no filters are active", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findByTestId("repository-advanced-panel");
+    expect(
+      screen.getByTestId("repository-advanced-reset-all"),
+    ).toBeDisabled();
+  });
+
+  it("Quick Views still work after changes from the advanced panel", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findByTestId("repository-views");
+    // Change the status from the panel select first.
+    fireEvent.change(screen.getByTestId("repository-filter-status"), {
+      target: { value: "ready" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("repository-view-active-label"),
+      ).toHaveTextContent(/custom view/i),
+    );
+    // Now click a Quick View — it should override the panel state.
+    fireEvent.click(screen.getByTestId("repository-view-executed"));
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId("repository-filter-status") as HTMLSelectElement)
+          .value,
+      ).toBe("executed");
+    });
+    expect(
+      screen.getByTestId("repository-view-active-label"),
+    ).toHaveTextContent(/active: executed/i);
+  });
+
+  it("no-matches empty state offers Clear search AND Reset filters", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("q=zzz")) return jsonResponse([]);
+      return jsonResponse([row()]);
+    });
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?q=zzz"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText(/no matches/i);
+    expect(
+      screen.getByTestId("repository-empty-clear-search"),
+    ).toBeInTheDocument();
+    const reset = screen.getByTestId("repository-empty-reset-filters");
+    fireEvent.click(reset);
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("repository-search") as HTMLInputElement).value,
+      ).toBe(""),
+    );
+  });
+
   it("does not leak storage internals in the DOM with a preset active", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse([

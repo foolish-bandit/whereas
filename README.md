@@ -402,6 +402,39 @@ them as `AgreementTemplateVariable` rows in one click.
   extractor returns nothing. The section degrades gracefully if
   the suggestions endpoint fails (treated as empty).
 
+## Repository Advanced filters panel (PR #105)
+
+The Repository list (`/demo/repository`) now wraps its status / type
+/ sort / *Show merged* controls in an *Advanced filters* panel,
+collapsible from a toggle next to the search box.
+
+- An *Advanced filters* button next to the search box opens / closes
+  the panel. A small chip on the button shows the count of non-default
+  filter dimensions currently applied — q, status, sort, type,
+  *Show merged* each contribute 1.
+- Panel contents: the existing status / type / sort selects and
+  *Show merged* toggle (same `data-testid`s, same source-of-truth
+  state), plus a current-search summary chip with an inline *clear*
+  button and a *Reset all filters* button that returns everything to
+  the default *All active* view. *Reset all filters* is disabled when
+  no filters are active.
+- The panel is **open by default** so users see the filter controls
+  without an extra click; collapsing reclaims vertical space.
+- URL params remain the source of truth: `q`, `status`, `sort`,
+  `merged=true`. Defaults are omitted from the URL.
+- The PR #104 Quick Views bar keeps working — changing a filter in
+  the panel flips the active label to *Custom view* if the
+  combination doesn't match a built-in preset; clicking a preset
+  overrides the panel state.
+- The no-matches empty state now offers both *Clear search* and a
+  full *Reset filters* CTA.
+
+Frontend-only. No backend changes. No Repository API, search,
+artifact, DocuSeal, approval, request, or duplicate-merge semantics
+changed. These are still URL-backed built-in views — per-user
+named saved views require backend persistence + auth and are
+intentional future work.
+
 ## Repository quick views (PR #104)
 
 The Repository list (`/demo/repository`) now carries a compact
