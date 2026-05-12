@@ -133,6 +133,11 @@ const MOCK_LATENCY_MS = 250;
 
 const sessionList: ContractListItem[] = [];
 const sessionDetailById: Record<string, ContractDetail> = {};
+// PR #91 — saved redlines, keyed by contract_id. These are layered on
+// top of the synthesized lifecycle artifacts in getContractArtifacts
+// so a demo user who clicks "Save to Document History" sees their
+// new redline row immediately, as they would against the real backend.
+const sessionSavedRedlinesByContractId: Record<string, ContractArtifact[]> = {};
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -242,7 +247,10 @@ export async function getContractArtifacts(
     metadata_json: null,
   };
   if (id !== MOCK_NDA_ID) {
-    return [original];
+    const savedNonNda = sessionSavedRedlinesByContractId[id] ?? [];
+    return savedNonNda.length === 0
+      ? [original]
+      : [...savedNonNda, original];
   }
   const generated: ContractArtifact = {
     id: `${id}-artifact-generated`,
@@ -278,7 +286,10 @@ export async function getContractArtifacts(
   };
   // Listing order: newest first, matching the real backend's
   // ``created_at desc`` ordering.
-  return [signed, generated, original];
+  const base = [signed, generated, original];
+  const saved = sessionSavedRedlinesByContractId[id] ?? [];
+  if (saved.length === 0) return base;
+  return [...saved, ...base];
 }
 
 export async function uploadContract(
@@ -772,6 +783,68 @@ export async function compareContractArtifacts(
     diff_blocks: diff.blocks,
     warnings: [],
   };
+}
+
+/**
+ * Demo-mode counterpart for the PR #91 persisted-redline save. Adds
+ * a synthetic ``redline`` ContractArtifact row to the session
+ * artifacts map for the given contract so the Document History list
+ * picks it up on the next fetch.
+ */
+export async function saveContractArtifactsCompare(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<ContractArtifact> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  // Reuse the compare path for org/contract/artifact resolution so
+  // the demo error handling matches the live backend.
+  const compare = await compareContractArtifacts(
+    contractId,
+    baseArtifactId,
+    compareArtifactId,
+    options,
+  );
+  const detail =
+    sessionDetailById[contractId] ?? MOCK_DETAIL_BY_ID[contractId];
+  const contractTitle = detail?.title ?? "comparison-report";
+  const safe =
+    (contractTitle || "comparison-report")
+      .replace(/[^A-Za-z0-9 _-]/g, "_")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 80) || "comparison-report";
+  const now = new Date().toISOString();
+  const redline: ContractArtifact = {
+    id: `${contractId}-redline-${Date.now().toString(36)}`,
+    contract_id: contractId,
+    artifact_type: "redline",
+    storage_backend: "s3",
+    filename: `${safe}-comparison-report.docx`,
+    mime_type:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    file_hash_sha256: null,
+    size_bytes: 4096,
+    source: "comparison_report",
+    is_official: false,
+    created_at: now,
+    metadata_json: {
+      base_artifact_id: compare.base.artifact_id,
+      compare_artifact_id: compare.compare.artifact_id,
+      base_artifact_type: compare.base.artifact_type,
+      compare_artifact_type: compare.compare.artifact_type,
+      added_lines: compare.summary.added_lines,
+      removed_lines: compare.summary.removed_lines,
+      changed_blocks: compare.summary.changed_blocks,
+      unchanged_lines: compare.summary.unchanged_lines,
+      format: "docx",
+      source_kind: "comparison_report",
+    },
+  };
+  const existing = sessionSavedRedlinesByContractId[contractId] ?? [];
+  sessionSavedRedlinesByContractId[contractId] = [redline, ...existing];
+  return redline;
 }
 
 /**
@@ -1362,6 +1435,9 @@ export function __resetMockState(): void {
   }
   sessionClauseTemplates.length = 0;
   archivedDemoClauseIds.clear();
+  for (const k of Object.keys(sessionSavedRedlinesByContractId)) {
+    delete sessionSavedRedlinesByContractId[k];
+  }
   sessionPlaybookList.length = 0;
   for (const k of Object.keys(sessionPlaybookDetailById)) {
     delete sessionPlaybookDetailById[k];

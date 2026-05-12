@@ -1889,6 +1889,219 @@ async def export_contract_artifacts_compare(
     )
 
 
+@router.post(
+    "/{contract_id}/artifacts/compare/save",
+    response_model=ContractArtifactResponse,
+    status_code=201,
+    responses={
+        201: {"description": "Comparison report persisted as a redline artifact."},
+        404: {"description": "Contract or artifact not found in this org."},
+        409: {"description": "Selected artifact has no retrievable storage metadata."},
+        422: {"description": "Either side could not be converted to comparable text."},
+    },
+)
+async def save_contract_artifacts_compare(
+    contract_id: uuid.UUID,
+    payload: ArtifactCompareRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ContractArtifactResponse:
+    """Persist a comparison report as a ``redline`` ``ContractArtifact`` (PR #91).
+
+    Same resolution rules and scoping invariants as
+    ``export_contract_artifacts_compare``; the difference is that the
+    rendered DOCX bytes are encrypted via the existing
+    ``DocumentStorage`` pipeline (fresh per-artifact DEK) and a new
+    ``ContractArtifact`` row is written with ``artifact_type="redline"``,
+    ``is_official=False`` and ``source="comparison_report"``.
+
+    Saved redlines are deliberately **not** "official": the default
+    *Download current document* action keeps preferring
+    ``signed_pdf`` → ``generated_docx`` → ``original_upload`` (see
+    ``DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY``), which filters to
+    official rows. Redlines surface in Document History and are
+    retrievable via the existing per-artifact download endpoint
+    (PR #70).
+
+    Metadata stored on the redline row is allowlisted: the two source
+    artifact ids/types, the diff summary counts, and ``format=docx``.
+    The diff text, extracted text, ``storage_key``, ``wrapped_dek``,
+    and any signer PII never enter the metadata blob or the audit
+    event.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    contract = await _get_contract_for_org(
+        session,
+        contract_id=contract_id,
+        organization_id=user.organization_id,
+    )
+    base_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.base_artifact_id,
+        organization_id=user.organization_id,
+    )
+    compare_artifact = await _resolve_downloadable_artifact(
+        session,
+        contract_id=contract.id,
+        artifact_id=payload.compare_artifact_id,
+        organization_id=user.organization_id,
+    )
+
+    base_bytes, base_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=base_artifact,
+        allow_legacy_fallback=False,
+    )
+    compare_bytes, compare_mime = await _decrypt_artifact_bytes(
+        session,
+        user=user,
+        contract=contract,
+        artifact=compare_artifact,
+        allow_legacy_fallback=False,
+    )
+
+    try:
+        base_extracted = extract_comparable_text(
+            file_bytes=base_bytes,
+            mime_type=base_mime,
+            filename=base_artifact.filename,
+            side="base",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The base version could not be converted to comparable text."
+            ),
+        ) from exc
+    try:
+        compare_extracted = extract_comparable_text(
+            file_bytes=compare_bytes,
+            mime_type=compare_mime,
+            filename=compare_artifact.filename,
+            side="compare",
+        )
+    except CompareTextExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The compare version could not be converted to comparable text."
+            ),
+        ) from exc
+
+    del base_bytes, compare_bytes
+
+    diff = compute_text_diff(base_extracted.text, compare_extracted.text)
+    diff.warnings.extend(base_extracted.warnings)
+    diff.warnings.extend(compare_extracted.warnings)
+
+    base_label = artifact_compare_label(
+        base_artifact.artifact_type, base_artifact.source
+    )
+    compare_label = artifact_compare_label(
+        compare_artifact.artifact_type, compare_artifact.source
+    )
+    docx_bytes = render_compare_report_docx(
+        diff=diff,
+        base=CompareSideMetadata(
+            label=base_label,
+            filename=base_artifact.filename,
+            created_at=base_artifact.created_at,
+        ),
+        compare=CompareSideMetadata(
+            label=compare_label,
+            filename=compare_artifact.filename,
+            created_at=compare_artifact.created_at,
+        ),
+        contract_title=contract.title,
+    )
+
+    # Encrypt and persist via the existing storage pipeline. Fresh
+    # per-artifact DEK so the redline doesn't piggyback on any other
+    # artifact's key (matches the signed_pdf pattern from PR #45).
+    org = await _load_organization(session, user.organization_id)
+    org_master_key = _load_org_key_or_http(org)
+    storage = DocumentStorage(get_settings())
+    document_id = f"contract-{contract.id}-redline-{uuid.uuid4()}"
+    try:
+        stored = await storage.store_encrypted(
+            plaintext_bytes=docx_bytes,
+            document_id=document_id,
+            org_master_key=org_master_key,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not store the redline artifact.",
+        ) from exc
+    finally:
+        del org_master_key
+
+    file_hash = hashlib.sha256(docx_bytes).hexdigest()
+    filename = build_export_filename(contract.title)
+    metadata: dict[str, Any] = {
+        "base_artifact_id": str(base_artifact.id),
+        "compare_artifact_id": str(compare_artifact.id),
+        "base_artifact_type": base_artifact.artifact_type,
+        "compare_artifact_type": compare_artifact.artifact_type,
+        "added_lines": diff.summary.added_lines,
+        "removed_lines": diff.summary.removed_lines,
+        "changed_blocks": diff.summary.changed_blocks,
+        "unchanged_lines": diff.summary.unchanged_lines,
+        "format": "docx",
+        "source_kind": "comparison_report",
+    }
+
+    artifact = ContractArtifact(
+        organization_id=contract.organization_id,
+        contract_id=contract.id,
+        artifact_type="redline",
+        storage_backend="s3",
+        storage_key=stored.s3_key,
+        wrapped_dek=stored.wrapped_dek_bytes,
+        filename=filename,
+        mime_type=_DOCX_MIME,
+        file_hash_sha256=file_hash,
+        size_bytes=len(docx_bytes),
+        source="comparison_report",
+        is_official=False,
+        created_by=user.id,
+        metadata_json=metadata,
+    )
+    session.add(artifact)
+    await session.flush()
+
+    # Drop the plaintext reference now that the ciphertext is in
+    # storage and the metadata row is staged for commit.
+    del docx_bytes
+
+    await record_event(
+        session,
+        organization_id=user.organization_id,
+        event_type=AuditEventType.CONTRACT_ARTIFACT_REDLINE_SAVED,
+        actor_user_id=user.id,
+        target_type="contract",
+        target_id=str(contract.id),
+        details={
+            "contract_id": str(contract.id),
+            "artifact_id": str(artifact.id),
+            "base_artifact_id": str(base_artifact.id),
+            "compare_artifact_id": str(compare_artifact.id),
+            "base_artifact_type": base_artifact.artifact_type,
+            "compare_artifact_type": compare_artifact.artifact_type,
+            "added_lines": diff.summary.added_lines,
+            "removed_lines": diff.summary.removed_lines,
+            "changed_blocks": diff.summary.changed_blocks,
+            "format": "docx",
+        },
+    )
+
+    return ContractArtifactResponse.model_validate(artifact)
+
+
 def _compare_side_response(artifact: ContractArtifact) -> ArtifactCompareSideResponse:
     """Project a ContractArtifact into a compare-panel side descriptor.
 

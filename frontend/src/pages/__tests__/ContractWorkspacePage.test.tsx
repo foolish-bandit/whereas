@@ -1868,6 +1868,207 @@ describe("ContractWorkspacePage compare versions (PR #71)", () => {
     expect(panel.textContent ?? "").toMatch(/not an official Word redline/i);
     expect(panel.textContent ?? "").toMatch(/comparison report/i);
   });
+
+  // -------------------------------------------------------------------------
+  // PR #91 — save redline to Document History
+  // -------------------------------------------------------------------------
+
+  it("disables Save to Document History until two distinct versions are picked", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    const saveBtn = screen.getByTestId("compare-save-redline-button");
+    expect(saveBtn).toBeDisabled();
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    expect(saveBtn).not.toBeDisabled();
+  });
+
+  it("POSTs to /artifacts/compare/save and refreshes Document History on success", async () => {
+    const REDLINE_ID = "redline-1";
+    const REDLINE_FILENAME = "Test-MSA-comparison-report.docx";
+    const SAVED_REDLINE = {
+      id: REDLINE_ID,
+      contract_id: CONTRACT_ID,
+      artifact_type: "redline",
+      storage_backend: "s3",
+      filename: REDLINE_FILENAME,
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      file_hash_sha256: null,
+      size_bytes: 4096,
+      source: "comparison_report",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: {
+        base_artifact_id: SOURCE_ARTIFACT.id,
+        compare_artifact_id: SIGNED_ARTIFACT.id,
+        base_artifact_type: "original_upload",
+        compare_artifact_type: "signed_pdf",
+        added_lines: 3,
+        removed_lines: 2,
+        changed_blocks: 1,
+        unchanged_lines: 12,
+        format: "docx",
+        source_kind: "comparison_report",
+      },
+    };
+
+    let saved = false;
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    const baseImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/save`,
+        ) &&
+        init?.method === "POST"
+      ) {
+        saved = true;
+        return jsonResponse(SAVED_REDLINE, 201);
+      }
+      // Once saved, the artifacts listing must include the new redline.
+      if (
+        saved &&
+        url.endsWith(`/api/contracts/${CONTRACT_ID}/artifacts`)
+      ) {
+        return jsonResponse([
+          SAVED_REDLINE,
+          SIGNED_ARTIFACT,
+          SOURCE_ARTIFACT,
+        ]);
+      }
+      return baseImpl!(url, init);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-save-redline-button"));
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/save`,
+        ),
+      );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(
+        (saveCall![1] as RequestInit).body as string,
+      );
+      expect(body.base_artifact_id).toBe(SOURCE_ARTIFACT.id);
+      expect(body.compare_artifact_id).toBe(SIGNED_ARTIFACT.id);
+    });
+
+    // Success confirmation surfaces with the filename.
+    const confirm = await screen.findByTestId("compare-save-redline-confirm");
+    expect(confirm.textContent ?? "").toContain(REDLINE_FILENAME);
+
+    // The Document History list refreshes — the new redline row
+    // appears with the user-facing "Redline" label.
+    await waitFor(() => {
+      const history = screen.getByTestId("document-history-list");
+      expect(history.textContent ?? "").toMatch(/redline/i);
+    });
+  });
+
+  it("surfaces a safe error when the save endpoint fails and does not refresh", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    const baseImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/save`,
+        )
+      ) {
+        return jsonResponse({ detail: "boom" }, 500);
+      }
+      return baseImpl!(url, init);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-save-redline-button"));
+
+    const err = await screen.findByTestId("compare-save-redline-error");
+    expect(err.textContent ?? "").toMatch(/boom|failed/i);
+    expect(
+      screen.queryByTestId("compare-save-redline-confirm"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not surface storage internals returned by a regressed save endpoint", async () => {
+    withCompare([SIGNED_ARTIFACT, SOURCE_ARTIFACT], HAPPY_COMPARE_BODY);
+    const baseImpl = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith(
+          `/api/contracts/${CONTRACT_ID}/artifacts/compare/save`,
+        ) &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          {
+            id: "r1",
+            contract_id: CONTRACT_ID,
+            artifact_type: "redline",
+            storage_backend: "s3",
+            filename: "x.docx",
+            mime_type:
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            file_hash_sha256: null,
+            size_bytes: 1,
+            source: "comparison_report",
+            is_official: false,
+            created_at: "2026-05-12T00:00:00Z",
+            metadata_json: {
+              base_artifact_id: SOURCE_ARTIFACT.id,
+              compare_artifact_id: SIGNED_ARTIFACT.id,
+              format: "docx",
+              source_kind: "comparison_report",
+            },
+            // Poison values: the api-client scrub should drop these
+            // before the page ever sees them.
+            storage_key: "should-not-appear",
+            wrapped_dek: "should-not-appear",
+          },
+          201,
+        );
+      }
+      return baseImpl!(url, init);
+    });
+
+    renderPage();
+    await screen.findByTestId("document-history-compare-panel");
+    fireEvent.change(screen.getByTestId("compare-base-select"), {
+      target: { value: SOURCE_ARTIFACT.id },
+    });
+    fireEvent.change(screen.getByTestId("compare-target-select"), {
+      target: { value: SIGNED_ARTIFACT.id },
+    });
+    fireEvent.click(screen.getByTestId("compare-save-redline-button"));
+
+    await screen.findByTestId("compare-save-redline-confirm");
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("storage_key");
+    expect(text).not.toContain("wrapped_dek");
+    expect(text).not.toContain("should-not-appear");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1103,3 +1103,229 @@ async def test_compare_export_response_carries_no_storage_internals(
         b"docuseal_submission_id",
     ):
         assert needle not in body
+
+
+# --------------------------------------------------------------------------
+# PR #91 — persisted redline (save the comparison report to Document History)
+# --------------------------------------------------------------------------
+
+
+async def test_compare_save_persists_a_redline_artifact_row(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """Happy path: POST .../compare/save creates a new
+    ``ContractArtifact`` with ``artifact_type=redline``,
+    ``is_official=False``, ``source=comparison_report``, and a
+    ``mime_type`` of the DOCX content type. Storage key + wrapped DEK
+    are present on the row (so the existing per-artifact download can
+    retrieve it) but never travel on the wire."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["artifact_type"] == "redline"
+    assert body["is_official"] is False
+    assert body["source"] == "comparison_report"
+    assert body["mime_type"] == _DOCX_MIME
+    assert body["size_bytes"] > 0
+    metadata = body["metadata_json"]
+    assert metadata["base_artifact_id"] == str(base.id)
+    assert metadata["compare_artifact_id"] == str(compare.id)
+    assert metadata["format"] == "docx"
+    assert metadata["source_kind"] == "comparison_report"
+    for forbidden in ("storage_key", "wrapped_dek"):
+        assert forbidden not in body
+    db_artifact = await db_session.get(ContractArtifact, uuid.UUID(body["id"]))
+    assert db_artifact is not None
+    assert db_artifact.storage_key
+    assert db_artifact.wrapped_dek
+    assert db_artifact.artifact_type == "redline"
+    assert db_artifact.is_official is False
+
+
+async def test_compare_save_emits_safe_audit_event(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 201
+
+    details = await _expect_audit_event(
+        db_session, event_type="contract.artifact_redline_saved"
+    )
+    assert details is not None
+    assert set(details.keys()) == {
+        "contract_id",
+        "artifact_id",
+        "base_artifact_id",
+        "compare_artifact_id",
+        "base_artifact_type",
+        "compare_artifact_type",
+        "added_lines",
+        "removed_lines",
+        "changed_blocks",
+        "format",
+    }
+    assert details["artifact_id"] == response.json()["id"]
+    serialized = str(details)
+    for needle in ("storage_key", "wrapped_dek", "alpha", "BETA", "epsilon"):
+        assert needle not in serialized
+
+
+async def test_compare_save_appears_in_artifacts_listing(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """After saving, the new redline shows up in the contract's
+    artifact listing — that's the whole point: it joins Document
+    History."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    listing_before = await client.get(
+        f"/api/contracts/{contract_id}/artifacts",
+        headers=_headers(user_org.user),
+    )
+    assert listing_before.status_code == 200
+    before_types = [a["artifact_type"] for a in listing_before.json()]
+    assert "redline" not in before_types
+
+    save = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert save.status_code == 201
+
+    listing_after = await client.get(
+        f"/api/contracts/{contract_id}/artifacts",
+        headers=_headers(user_org.user),
+    )
+    assert listing_after.status_code == 200
+    after_types = [a["artifact_type"] for a in listing_after.json()]
+    assert "redline" in after_types
+
+
+async def test_compare_save_does_not_change_download_priority(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """A saved redline must never become the *current document*. It's
+    not in ``DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY`` AND it's
+    ``is_official=False``, so the priority resolver cannot return
+    it."""
+    from app.services.contract_artifacts import (
+        DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY,
+        get_latest_official_downloadable_artifact,
+    )
+
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    save = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert save.status_code == 201
+
+    assert "redline" not in DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY
+
+    chosen = await get_latest_official_downloadable_artifact(
+        db_session,
+        contract_id=contract_id,
+        organization_id=user_org.org.id,
+    )
+    assert chosen is not None
+    assert chosen.artifact_type == "original_upload"
+    assert chosen.is_official is True
+
+
+async def test_compare_save_cross_org_returns_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, _compare = await _two_artifacts(client, db_session, user_org)
+
+    other_org = await _create_user_org(db_session)
+    _, _, other_compare = await _two_artifacts(client, db_session, other_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(other_compare.id),
+        },
+    )
+    assert response.status_code == 404
+
+
+async def test_compare_save_unextractable_side_returns_422(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_markdown_converter,
+) -> None:
+    """If one side is un-extractable nothing is persisted."""
+    stub_markdown_converter()
+    user_org = await _create_user_org(db_session)
+    contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+    _set_artifact_plaintext(compare, "")
+
+    response = await client.post(
+        f"/api/contracts/{contract_id}/artifacts/compare/save",
+        headers=_headers(user_org.user),
+        json={
+            "base_artifact_id": str(base.id),
+            "compare_artifact_id": str(compare.id),
+        },
+    )
+    assert response.status_code == 422
+
+    after = (
+        await db_session.execute(
+            select(ContractArtifact).where(
+                ContractArtifact.contract_id == contract_id,
+                ContractArtifact.artifact_type == "redline",
+            )
+        )
+    ).scalars().all()
+    assert after == []

@@ -594,6 +594,48 @@ export async function compareContractArtifacts(
 }
 
 /**
+ * Persist a comparison report as a ``redline`` ``ContractArtifact``
+ * in Document History (PR #91).
+ *
+ * Same body shape as `exportContractArtifactsCompare`; resolves to
+ * the new artifact's safe metadata (``ContractArtifact`` projection
+ * — no ``storage_key`` / ``wrapped_dek``). Saved redlines are
+ * deliberately not "official" and are not in the download priority
+ * chain, so the default *Download current document* action keeps
+ * preferring ``signed_pdf`` → ``generated_docx`` → ``original_upload``.
+ */
+export async function saveContractArtifactsCompare(
+  contractId: string,
+  baseArtifactId: string,
+  compareArtifactId: string,
+  options: ApiOptions = {},
+): Promise<ContractArtifact> {
+  if (isDemoMode()) {
+    return mockApi.saveContractArtifactsCompare(
+      contractId,
+      baseArtifactId,
+      compareArtifactId,
+      options,
+    );
+  }
+  const data = await call<ContractArtifact>(
+    `/api/contracts/${encodeURIComponent(
+      contractId,
+    )}/artifacts/compare/save`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_artifact_id: baseArtifactId,
+        compare_artifact_id: compareArtifactId,
+      }),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+/**
  * On-demand redline-style export of a comparison report DOCX (PR #90).
  *
  * POSTs the same body shape as `compareContractArtifacts` and resolves
