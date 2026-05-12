@@ -623,4 +623,176 @@ describe("ClauseLibraryPage", () => {
       expect(text).not.toContain(needle);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // PR #121 — Drawer accessibility hardening.
+  // ---------------------------------------------------------------------
+
+  it("labels the drawer via aria-labelledby pointing at the title", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const drawer = screen.getByTestId("clause-detail");
+    expect(drawer).toHaveAttribute("role", "dialog");
+    expect(drawer).toHaveAttribute("aria-modal", "true");
+    const labelledBy = drawer.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    const title = screen.getByTestId("clause-detail-title");
+    expect(title.id).toBe(labelledBy);
+  });
+
+  it("moves focus into the drawer when it opens", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const closeButton = screen.getByTestId("clause-detail-close");
+    await waitFor(() => expect(document.activeElement).toBe(closeButton));
+  });
+
+  it("closes on Escape from view mode", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const drawer = screen.getByTestId("clause-detail");
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+  });
+
+  it("Escape exits edit mode first, then a second Escape closes the drawer", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+
+    // First Escape exits edit mode without closing.
+    fireEvent.keyDown(screen.getByTestId("clause-detail"), { key: "Escape" });
+    expect(screen.queryByTestId("clause-edit-form")).toBeNull();
+    expect(screen.getByTestId("clause-detail")).toBeInTheDocument();
+
+    // Second Escape closes the drawer.
+    fireEvent.keyDown(screen.getByTestId("clause-detail"), { key: "Escape" });
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+  });
+
+  it("Escape during edit does not persist a draft mutation", async () => {
+    let patched = false;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.includes("/api/clause-templates/ct-1") &&
+        init?.method === "PATCH"
+      ) {
+        patched = true;
+        return jsonResponse(baseRow());
+      }
+      if (url.includes("/api/clause-templates")) {
+        return jsonResponse([baseRow()]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+    fireEvent.change(screen.getByTestId("clause-edit-name"), {
+      target: { value: "Discarded draft" },
+    });
+    fireEvent.keyDown(screen.getByTestId("clause-detail"), { key: "Escape" });
+
+    // Edit form closed; title unchanged; no PATCH was issued.
+    expect(screen.queryByTestId("clause-edit-form")).toBeNull();
+    expect(screen.getByTestId("clause-detail-title")).toHaveTextContent(
+      "Mutual NDA confidentiality clause",
+    );
+    expect(patched).toBe(false);
+  });
+
+  it("returns focus to the opener (View details button) when the drawer closes", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    const opener = screen.getByTestId("clause-toggle");
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    fireEvent.click(opener);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("clause-detail-close"),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("clause-detail-close"));
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("traps Tab focus within the drawer panel", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const drawer = screen.getByTestId("clause-detail");
+    const closeButton = screen.getByTestId("clause-detail-close");
+    const copyButton = screen.getByTestId("clause-detail-copy");
+    const archiveButton = screen.getByTestId("clause-detail-archive");
+
+    // Shift+Tab from the first focusable wraps to the last.
+    closeButton.focus();
+    fireEvent.keyDown(drawer, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(archiveButton);
+
+    // Tab forward from the last focusable wraps to the first.
+    archiveButton.focus();
+    fireEvent.keyDown(drawer, { key: "Tab" });
+    expect(document.activeElement).toBe(closeButton);
+
+    // A middle Tab is allowed to pass through (browser handles it).
+    copyButton.focus();
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    const prevented = !drawer.dispatchEvent(event);
+    expect(prevented).toBe(false);
+  });
+
+  it("backdrop click still closes the drawer", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const drawer = screen.getByTestId("clause-detail");
+    fireEvent.click(drawer); // click on backdrop (event.target === currentTarget)
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+  });
+
+  it("Cancel still discards draft after a11y wiring", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+    fireEvent.change(screen.getByTestId("clause-edit-name"), {
+      target: { value: "Should be discarded" },
+    });
+    fireEvent.click(screen.getByTestId("clause-edit-cancel"));
+
+    expect(screen.queryByTestId("clause-edit-form")).toBeNull();
+    // Re-entering edit shows the original value, not the discarded draft.
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+    expect(screen.getByTestId("clause-edit-name")).toHaveValue(
+      "Mutual NDA confidentiality clause",
+    );
+  });
 });
