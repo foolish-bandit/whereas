@@ -27,6 +27,10 @@ const DOCX_MIME =
 
 export const MOCK_NDA_ID = "00000000-0000-4000-8000-000000000001";
 export const MOCK_MSA_ID = "00000000-0000-4000-8000-000000000002";
+export const MOCK_SIGNATURE_OUT_ID = "00000000-0000-4000-8000-000000000004";
+export const MOCK_EXECUTED_ID = "00000000-0000-4000-8000-000000000005";
+export const MOCK_MERGED_ID = "00000000-0000-4000-8000-000000000006";
+export const MOCK_REDLINE_ID = "00000000-0000-4000-8000-000000000007";
 export const MOCK_FAILED_ID = "00000000-0000-4000-8000-000000000003";
 
 const MUTUAL_NDA_TEXT = `MUTUAL NON-DISCLOSURE AGREEMENT
@@ -152,14 +156,60 @@ export const MOCK_LIST: ContractListItem[] = [
   },
   {
     id: MOCK_MSA_ID,
-    title: "Master Services Agreement — Initech (sample)",
-    status: "extracting",
+    title: "Mutual NDA Draft Source — Acme (sample)",
+    status: "uploaded",
     mime_type: DOCX_MIME,
     file_hash_sha256:
       "0000000000000000000000000000000000000000000000000000000000000002",
     page_count: 14,
     created_at: "2026-02-03T08:14:51Z",
     updated_at: "2026-02-03T08:15:02Z",
+  },
+  {
+    id: MOCK_SIGNATURE_OUT_ID,
+    title: "NDA — Acme (out for signature, sample)",
+    status: "sent_for_signature",
+    mime_type: PDF_MIME,
+    file_hash_sha256:
+      "0000000000000000000000000000000000000000000000000000000000000004",
+    page_count: 3,
+    created_at: "2026-02-15T09:00:00Z",
+    updated_at: "2026-02-16T12:20:00Z",
+  },
+  {
+    id: MOCK_EXECUTED_ID,
+    title: "NDA — Acme (executed, sample)",
+    status: "executed",
+    mime_type: PDF_MIME,
+    file_hash_sha256:
+      "0000000000000000000000000000000000000000000000000000000000000005",
+    page_count: 3,
+    created_at: "2026-02-01T09:30:00Z",
+    updated_at: "2026-02-20T18:45:00Z",
+  },
+  {
+    id: MOCK_MERGED_ID,
+    title: "NDA — Acme duplicate scan (merged sample)",
+    status: "ready",
+    mime_type: PDF_MIME,
+    file_hash_sha256:
+      "0000000000000000000000000000000000000000000000000000000000000006",
+    page_count: 2,
+    created_at: "2026-01-20T11:11:00Z",
+    updated_at: "2026-01-22T11:11:00Z",
+    merged_into_contract_id: MOCK_NDA_ID,
+    merged_at: "2026-01-22T11:11:00Z",
+  },
+  {
+    id: MOCK_REDLINE_ID,
+    title: "NDA — Acme (redline history sample)",
+    status: "ready",
+    mime_type: DOCX_MIME,
+    file_hash_sha256:
+      "0000000000000000000000000000000000000000000000000000000000000007",
+    page_count: 4,
+    created_at: "2026-02-05T10:00:00Z",
+    updated_at: "2026-02-06T10:00:00Z",
   },
   {
     id: MOCK_FAILED_ID,
@@ -261,14 +311,42 @@ export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
     clauses: NDA_CLAUSES,
   },
   [MOCK_MSA_ID]: {
-    ...MOCK_LIST[1],
+    ...MOCK_LIST.find((c) => c.id === MOCK_MSA_ID)!,
     full_text:
       "Master Services Agreement (sample). Extraction is still in progress in this demo; metadata fields will appear here once it completes.",
     extracted_fields: [],
     clauses: [],
   },
-  [MOCK_FAILED_ID]: {
-    ...MOCK_LIST[2],
+    [MOCK_SIGNATURE_OUT_ID]: {
+    ...MOCK_LIST.find((c) => c.id === MOCK_SIGNATURE_OUT_ID)!,
+    full_text:
+      "NDA signature packet sent to both parties. Awaiting counterparty signature in this demo record.",
+    extracted_fields: [],
+    clauses: [],
+  },
+  [MOCK_EXECUTED_ID]: {
+    ...MOCK_LIST.find((c) => c.id === MOCK_EXECUTED_ID)!,
+    full_text:
+      "Executed NDA with signed PDF finalized. This demo record represents post-signature storage.",
+    extracted_fields: [],
+    clauses: [],
+  },
+  [MOCK_MERGED_ID]: {
+    ...MOCK_LIST.find((c) => c.id === MOCK_MERGED_ID)!,
+    full_text:
+      "Duplicate NDA copy merged into canonical record. Hidden by default unless Show merged is enabled.",
+    extracted_fields: [],
+    clauses: [],
+  },
+  [MOCK_REDLINE_ID]: {
+    ...MOCK_LIST.find((c) => c.id === MOCK_REDLINE_ID)!,
+    full_text:
+      "NDA negotiation draft with redline history entries available in Document History.",
+    extracted_fields: [],
+    clauses: [],
+  },
+[MOCK_FAILED_ID]: {
+    ...MOCK_LIST.find((c) => c.id === MOCK_FAILED_ID)!,
     full_text:
       "Vendor SOW (sample). Extraction failed in this demo to illustrate the UI for that state. The original file would still be downloadable.",
     extracted_fields: [],
@@ -684,7 +762,7 @@ export const MOCK_REQUESTS: ContractRequest[] = [
     counterparty_name: "Acme Corp",
     due_date: "2026-05-20",
     assigned_to: null,
-    linked_contract_id: null,
+    linked_contract_id: MOCK_NDA_ID,
     linked_template_id: MOCK_DEMO_NDA_TEMPLATE_ID,
     created_at: "2026-05-08T16:00:00Z",
     updated_at: "2026-05-08T16:00:00Z",
@@ -694,7 +772,7 @@ export const MOCK_REQUESTS: ContractRequest[] = [
   {
     id: MOCK_REQUEST_IN_PROGRESS_ID,
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "Vendor MSA renewal",
+    title: "NDA generation request linked to Repository",
     description: "Renewal terms under negotiation; pricing TBD.",
     request_type: "renewal",
     contract_type: "MSA",
@@ -715,11 +793,11 @@ export const MOCK_REQUESTS: ContractRequest[] = [
   {
     id: MOCK_REQUEST_COMPLETED_ID,
     organization_id: MOCK_DEMO_ORG_ID,
-    title: "NDA with Acme Corp (completed)",
-    description: "Closed; Repository record on file.",
+    title: "MSA request pending final approval",
+    description: "Waiting on executive approval before signature.",
     request_type: "new_contract",
     contract_type: "NDA",
-    status: "completed",
+    status: "blocked",
     priority: "normal",
     requester_name: "Privacy team",
     requester_email: null,
@@ -779,7 +857,7 @@ export const MOCK_INBOX_ITEMS: InboxItem[] = [
     title: "Triage Q2 NDA backlog",
     description: null,
     item_type: "general",
-    status: "completed",
+    status: "blocked",
     priority: "low",
     assigned_to: null,
     due_date: null,
