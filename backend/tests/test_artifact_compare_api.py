@@ -875,13 +875,20 @@ _DOCX_MIME = (
 async def _expect_audit_event(
     db_session: AsyncSession, *, event_type: str
 ) -> dict[str, Any] | None:
-    """Return the most recent audit event of the given type, if any."""
+    """Return the most recent audit event of the given type, if any.
+
+    ``AuditEvent`` exposes ``sequence`` (monotonic, indexed) and
+    ``occurred_at`` for ordering; there is no ``created_at`` column.
+    Ordering by ``sequence`` gives the same result as ``occurred_at``
+    and is deterministic even when two events land in the same wall
+    clock microsecond.
+    """
     from app.security.audit_log import AuditEvent
 
     stmt = (
         select(AuditEvent)
         .where(AuditEvent.event_type == event_type)
-        .order_by(AuditEvent.created_at.desc())
+        .order_by(AuditEvent.sequence.desc())
         .limit(1)
     )
     row = (await db_session.execute(stmt)).scalar_one_or_none()
@@ -1256,7 +1263,9 @@ async def test_compare_save_does_not_change_download_priority(
     """A saved redline must never become the *current document*. It's
     not in ``DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY`` AND it's
     ``is_official=False``, so the priority resolver cannot return
-    it."""
+    it — regardless of whether the contract's pre-save current document
+    is ``original_upload`` or ``generated_docx``.
+    """
     from app.services.contract_artifacts import (
         DOWNLOADABLE_ARTIFACT_TYPES_BY_PRIORITY,
         get_latest_official_downloadable_artifact,
@@ -1265,6 +1274,21 @@ async def test_compare_save_does_not_change_download_priority(
     stub_markdown_converter()
     user_org = await _create_user_org(db_session)
     contract_id, base, compare = await _two_artifacts(client, db_session, user_org)
+
+    # Snapshot the pre-save current document so we can compare it
+    # against the post-save resolution.  ``_two_artifacts`` attaches an
+    # ``original_upload`` and a ``generated_docx``; the priority order
+    # is ``signed_pdf`` → ``generated_docx`` → ``original_upload``, so
+    # the pre-save winner is the ``generated_docx``.  The exact id is
+    # what matters here, not the artifact_type.
+    before = await get_latest_official_downloadable_artifact(
+        db_session,
+        contract_id=contract_id,
+        organization_id=user_org.org.id,
+    )
+    assert before is not None
+    before_id = before.id
+    before_type = before.artifact_type
 
     save = await client.post(
         f"/api/contracts/{contract_id}/artifacts/compare/save",
@@ -1284,7 +1308,15 @@ async def test_compare_save_does_not_change_download_priority(
         organization_id=user_org.org.id,
     )
     assert chosen is not None
-    assert chosen.artifact_type == "original_upload"
+    # The current document is exactly the one that was current before
+    # the redline save — saving a redline must not change which artifact
+    # the download endpoint serves.
+    assert chosen.id == before_id
+    assert chosen.artifact_type == before_type
+    # And the redline itself cannot have become the current document:
+    # it isn't even in the priority tuple, and it's stored with
+    # ``is_official=False``.
+    assert chosen.artifact_type != "redline"
     assert chosen.is_official is True
 
 

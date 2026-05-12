@@ -499,6 +499,61 @@ Frontend-only. No backend changes. No Repository API, search,
 artifact-priority, DocuSeal, approval, request, or duplicate-merge
 semantics changed.
 
+## Redline / compare test suite repair (PR #110)
+
+Restores the backend test suite to **0 failures**. No product code
+changed — three stale test assumptions corrected and one wrong column
+name fixed in a test helper.
+
+Failures (all in `backend/tests/test_artifact_compare_*.py`) and root
+causes:
+
+- **`test_compute_text_diff_simple_replace`,
+  `test_compute_text_diff_pure_insert_and_pure_delete`,
+  `test_compute_text_diff_truncates_with_warning`** — stale assertions
+  from before PR #93. PR #93 switched the diff unit from raw lines to
+  paragraph-shaped blocks (`_split_paragraphs` collapses single
+  newlines mid-paragraph so a wrap-width change is not a content
+  change). The fixtures used single-`\n`-separated tokens, which the
+  splitter correctly collapses to a single paragraph; under
+  paragraph mode the assertions read the wrong counts. Fixed by
+  rewriting the fixtures with blank-line (`\n\n`) separators so the
+  splitter produces one paragraph per token — same conceptual diff,
+  paragraph unit, original assertions hold.
+- **`test_compare_export_emits_safe_audit_event`,
+  `test_compare_save_emits_safe_audit_event`** — the `_expect_audit_event`
+  helper ordered by `AuditEvent.created_at`, a column that does not
+  exist. The model exposes `sequence` (monotonic, indexed) and
+  `occurred_at`. Switched the helper to order by `sequence.desc()` —
+  deterministic even when two events land in the same wall-clock
+  microsecond.
+- **`test_compare_save_does_not_change_download_priority`** — the
+  assertion hard-coded `chosen.artifact_type == "original_upload"`,
+  but `_two_artifacts` (PR #93 fixture refresh) attaches an
+  `original_upload` *and* a `generated_docx`. The download-priority
+  tuple is `signed_pdf → generated_docx → original_upload`, so the
+  pre- and post-save winner is correctly `generated_docx`. Rewrote
+  the test to snapshot the pre-save current document and assert the
+  post-save resolver returns the same artifact id (the actual
+  invariant the test is verifying), plus the unchanged
+  defense-in-depth assertions: `"redline"` not in priority tuple,
+  `chosen.is_official is True`, `chosen.artifact_type != "redline"`.
+
+### Tests / results
+
+- `ruff check backend/` — clean.
+- `pytest tests/test_artifact_compare_service.py tests/test_artifact_compare_api.py` — **31 / 31** passing (was 25/31).
+- `pytest` (full backend suite) — **793 passing, 14 skipped, 0 failures**.
+
+### Confirmations
+
+- No app code touched — only `backend/tests/test_artifact_compare_*.py`.
+- No compare / redline / audit / artifact-priority semantics changed.
+- No DocuSeal / approval / request / template flow changes.
+- Security assertions in the audit-event tests preserved (still scan
+  for `storage_key`, `wrapped_dek`, and extracted-text content
+  leakage).
+
 ## Backend API response leak audit (PR #109)
 
 Backend-side companion to the frontend MVP readiness audit (PR #107).
