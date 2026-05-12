@@ -25,7 +25,7 @@ We will not accept PRs that hard-code a specific provider, prompt-engineer for a
 
 ## 4. Privacy is the differentiator
 
-Whereas runs locally by default. Documents never leave the user's infrastructure unless the user explicitly configures a remote LLM provider. When a remote provider is used, Whereas should provide hooks for pre-flight masking (e.g., via a Sonomos-style PII layer) — but that integration is opt-in, not bundled.
+Whereas runs locally by default. Documents never leave the user's infrastructure unless the user explicitly configures a remote LLM provider. When a remote provider is used, Whereas should provide hooks for pre-flight masking via a generic PII-redaction layer — but that integration is opt-in, not bundled, and not coupled to any specific vendor.
 
 ## 5. Boring tech, where possible
 
