@@ -9,6 +9,7 @@ import {
   isCurrentArtifact,
   pickCurrentDocumentLabel,
   pickPrimaryOriginCopy,
+  resolveRedlineLinkage,
   safeArtifactMetadataChips,
 } from "../artifacts";
 import type { ContractArtifact } from "../../types/contracts";
@@ -415,5 +416,134 @@ describe("formatFileSize", () => {
     expect(formatFileSize(0)).toBe("0 B");
     expect(formatFileSize(1024)).toBe("1.0 KB");
     expect(formatFileSize(1024 * 1024)).toBe("1.0 MB");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR #92 — saved redline linkage
+// ---------------------------------------------------------------------------
+
+describe("resolveRedlineLinkage", () => {
+  const original = makeArtifact({
+    id: "art-orig",
+    artifact_type: "original_upload",
+    source: "user_upload",
+    filename: "source.pdf",
+  });
+  const signed = makeArtifact({
+    id: "art-signed",
+    artifact_type: "signed_pdf",
+    source: "docuseal",
+    filename: "executed.pdf",
+  });
+
+  function redline(meta: Record<string, unknown>): ContractArtifact {
+    return makeArtifact({
+      id: "art-redline",
+      artifact_type: "redline",
+      source: "comparison_report",
+      filename: "redline.docx",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: meta,
+    });
+  }
+
+  it("resolves both sides from the artifact list when present", () => {
+    const r = redline({
+      base_artifact_id: original.id,
+      compare_artifact_id: signed.id,
+      base_artifact_type: "original_upload",
+      compare_artifact_type: "signed_pdf",
+    });
+    const link = resolveRedlineLinkage(r, [r, signed, original]);
+    expect(link).not.toBeNull();
+    expect(link!.base).toEqual({
+      label: "Source file",
+      filename: "source.pdf",
+      present: true,
+    });
+    expect(link!.compare).toEqual({
+      label: "Signed PDF",
+      filename: "executed.pdf",
+      present: true,
+    });
+  });
+
+  it("falls back to the type label and marks present=false when a source is missing", () => {
+    const r = redline({
+      base_artifact_id: "art-missing",
+      compare_artifact_id: signed.id,
+      base_artifact_type: "generated_docx",
+      compare_artifact_type: "signed_pdf",
+    });
+    const link = resolveRedlineLinkage(r, [r, signed]);
+    expect(link).not.toBeNull();
+    expect(link!.base).toEqual({
+      label: "Generated Word document",
+      filename: null,
+      present: false,
+    });
+    expect(link!.compare.present).toBe(true);
+  });
+
+  it("returns null when neither id is in metadata", () => {
+    const r = redline({});
+    expect(resolveRedlineLinkage(r, [r])).toBeNull();
+  });
+
+  it("returns null on non-redline rows", () => {
+    expect(resolveRedlineLinkage(original, [original])).toBeNull();
+    expect(resolveRedlineLinkage(signed, [signed, original])).toBeNull();
+  });
+
+  it("returns null when metadata_json is missing entirely", () => {
+    const r = makeArtifact({
+      id: "art-redline-no-meta",
+      artifact_type: "redline",
+      source: "comparison_report",
+      is_official: false,
+      metadata_json: null,
+    });
+    expect(resolveRedlineLinkage(r, [r])).toBeNull();
+  });
+});
+
+describe("getArtifactHistoryItems redline linkage (PR #92)", () => {
+  it("attaches the linkage to redline rows and not to anything else", () => {
+    const original = makeArtifact({
+      id: "art-orig",
+      artifact_type: "original_upload",
+      source: "user_upload",
+      filename: "source.pdf",
+      created_at: "2026-05-01T00:00:00Z",
+    });
+    const signed = makeArtifact({
+      id: "art-signed",
+      artifact_type: "signed_pdf",
+      source: "docuseal",
+      filename: "executed.pdf",
+      created_at: "2026-05-03T00:00:00Z",
+    });
+    const redline = makeArtifact({
+      id: "art-redline",
+      artifact_type: "redline",
+      source: "comparison_report",
+      filename: "redline.docx",
+      is_official: false,
+      created_at: "2026-05-12T00:00:00Z",
+      metadata_json: {
+        base_artifact_id: "art-orig",
+        compare_artifact_id: "art-signed",
+        base_artifact_type: "original_upload",
+        compare_artifact_type: "signed_pdf",
+      },
+    });
+    const items = getArtifactHistoryItems([signed, original, redline]);
+    const redlineItem = items.find((i) => i.artifact.id === "art-redline");
+    const signedItem = items.find((i) => i.artifact.id === "art-signed");
+    expect(redlineItem?.redlineLinkage?.base.label).toBe("Source file");
+    expect(redlineItem?.redlineLinkage?.compare.label).toBe("Signed PDF");
+    expect(signedItem?.redlineLinkage).toBeNull();
   });
 });

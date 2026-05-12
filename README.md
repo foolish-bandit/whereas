@@ -242,6 +242,23 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Redline linkage in Document History (PR #92)
+
+When a saved redline (PR #91) appears in Document History, the row
+now shows the two source artifacts it was derived from:
+
+```
+Redline of: Source file ↔ Signed PDF
+```
+
+The linkage is resolved client-side from the redline's allowlisted
+`metadata_json` (`base_artifact_id` / `compare_artifact_id` /
+`*_artifact_type`), looked up against the contract's current
+artifact list. If a source artifact is no longer present in the list
+(deleted, archived) the side falls back to its type label and is
+marked `(removed)` so the row is still readable. Frontend-only;
+no backend or schema changes.
+
 ## Persisted redline (PR #91)
 
 PR #90 shipped on-demand redline export — download a comparison
