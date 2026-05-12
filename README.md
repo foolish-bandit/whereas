@@ -218,9 +218,15 @@ than the top-level nav:
   mount-aware links into the related Request / Repository / workflow
   context (PR #79).
 - `/demo/inbox` — the generic work-queue across all `item_type`s
-  (request_review, signature_followup, metadata_cleanup, general),
-  polished in PR #84 with mount-aware deep links, type / status /
-  priority chips, an *Overdue* badge, and an item-type filter.
+  (request_review, signature_followup, metadata_cleanup, general).
+  Inbox is the intake front door: selected intake items can be routed
+  toward Repository or Requests/Review where supported. Approval tasks
+  remain governed by the approval-task workflow and are not generically
+  routable from this queue.
+
+Current Inbox routing is a workflow foundation only: full Repository
+settings capture and template-specific supporting-question flows are
+planned follow-up work.
 
 Nothing about the backend `Contract` / `Approval` / `Template` models
 or their HTTP endpoints changed in the recent UI polish work; the
