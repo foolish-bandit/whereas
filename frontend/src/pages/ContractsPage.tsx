@@ -139,7 +139,7 @@ export default function ContractsPage() {
   // PR #105 — Advanced filters panel. Opens expanded by default so
   // the existing inline controls remain available without an extra
   // click; users can collapse it to reclaim vertical space.
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   // Debounce the URL + fetch updates so a fast typist doesn't fire a
   // request per keystroke. The committed value drives both the URL

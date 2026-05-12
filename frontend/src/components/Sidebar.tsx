@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
 import { getDashboardSummary } from "../lib/api";
@@ -9,14 +10,25 @@ import { demoPath } from "../lib/routes";
 // from their respective workspace landings rather than the sidebar
 // so the nav reads as a CLM workspace and not a list of tables.
 const NAV = [
-  { to: demoPath("/dashboard"), label: "Dashboard" },
-  { to: demoPath("/repository"), label: "Repository" },
-  { to: demoPath("/requests"), label: "Requests" },
-  { to: demoPath("/playbooks"), label: "Playbooks" },
-  { to: demoPath("/clause-manager"), label: "Clause Manager" },
-  { to: demoPath("/approvals"), label: "Approvals" },
-  { to: demoPath("/settings"), label: "Settings" },
+  { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
+  { to: demoPath("/repository"), label: "Repository", Icon: RepositoryIcon },
+  { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
+  { to: demoPath("/playbooks"), label: "Playbooks", Icon: PlaybooksIcon },
+  { to: demoPath("/clause-manager"), label: "Clause Manager", Icon: ClauseIcon },
+  { to: demoPath("/approvals"), label: "Approvals", Icon: ApprovalsIcon },
+  { to: demoPath("/settings"), label: "Settings", Icon: SettingsIcon },
 ];
+type IconProps = { className?: string };
+function BaseIcon({ className, children }: { className?: string; children: ReactNode }) {
+  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className={className} aria-hidden>{children}</svg>;
+}
+function DashboardIcon({ className }: IconProps) { return <BaseIcon className={className}><rect x="3" y="3" width="6" height="6" /><rect x="11" y="3" width="6" height="4" /><rect x="11" y="9" width="6" height="8" /><rect x="3" y="11" width="6" height="6" /></BaseIcon>; }
+function RepositoryIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 6h14v10H3z" /><path d="M3 9h14" /><path d="M7 6V4h6v2" /></BaseIcon>; }
+function RequestsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M5 3h8l3 3v11H5z" /><path d="M13 3v3h3" /><path d="M8 11h6M8 14h4" /></BaseIcon>; }
+function PlaybooksIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M4 4h6v12H4zM10 4h6v12h-6z" /></BaseIcon>; }
+function ClauseIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3v14M4 6l6 4-6 4M16 6l-6 4 6 4" /></BaseIcon>; }
+function ApprovalsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3l6 2v5c0 3.5-2.2 5.8-6 7-3.8-1.2-6-3.5-6-7V5z" /><path d="M7.5 10.5l1.7 1.7 3.3-3.3" /></BaseIcon>; }
+function SettingsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="10" cy="10" r="2.5" /><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.2 5.2l1.4 1.4M13.4 13.4l1.4 1.4M14.8 5.2l-1.4 1.4M6.6 13.4l-1.4 1.4" /></BaseIcon>; }
 
 interface SidebarProps {
   /**
@@ -222,6 +234,7 @@ function NavList({
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3 text-sm">
       {NAV.map((item) => {
+        const Icon = item.Icon;
         const extras = NAV_EXTRA_MATCHES[item.to] ?? [];
         const matchesExtra = extras.some(
           (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -242,7 +255,10 @@ function NavList({
               ].join(" ")
             }
           >
-            <span>{item.label}</span>
+            <span className="inline-flex items-center gap-2">
+              <Icon className="h-4 w-4" aria-hidden />
+              <span>{item.label}</span>
+            </span>
             {showBadge && (
               <span
                 className="rounded bg-danger px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-canvas"
