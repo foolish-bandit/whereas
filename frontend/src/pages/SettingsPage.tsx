@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import BrowserCapabilitiesCard from "../components/BrowserCapabilitiesCard";
 import FirstRunSetupCard from "../components/FirstRunSetupCard";
@@ -56,10 +57,18 @@ export default function SettingsPage() {
     <div data-testid="settings-page">
       <h1 className="font-serif text-2xl text-ink">Settings</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        Whereas does not have real authentication yet. The backend identifies
-        callers by an{" "}
+        The backend identifies callers by an{" "}
         <code className="font-mono text-xs">X-Whereas-Dev-User</code> header.
-        Store the UUID of an existing user here; it is kept in your browser only.
+        Store the UUID of an existing user here; it is kept in your
+        browser only. Full authentication arrives with the production
+        deployment — see{" "}
+        <Link
+          to="/demo/known-limitations#auth"
+          className="underline hover:text-ink"
+        >
+          known limitations
+        </Link>
+        .
       </p>
 
       {demo && (

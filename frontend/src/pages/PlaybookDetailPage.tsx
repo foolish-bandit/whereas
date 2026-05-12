@@ -254,7 +254,7 @@ function RulesPanel({ rules }: { rules: PlaybookRuleSummary[] }) {
           Rules ({rules.length})
         </h2>
         <p className="mt-0.5 text-xs text-ink-subtle">
-          Read-only view. Authoring tools land in a follow-up release.
+          Read-only view. Rules are authored in the playbook YAML.
         </p>
       </div>
       <ul className="divide-y divide-rule">

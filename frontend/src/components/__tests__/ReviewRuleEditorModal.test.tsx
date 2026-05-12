@@ -134,7 +134,7 @@ describe("ReviewRuleEditorModal", () => {
       /not persisted to the server/i,
     );
     expect(screen.getByTestId("review-rule-real-note")).toHaveTextContent(
-      /clause manager integration is future work/i,
+      /authoritative source is the yaml playbook/i,
     );
   });
 

@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
+import KnownLimitationsPage from "./pages/KnownLimitationsPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
 import RequestDetailPage from "./pages/RequestDetailPage";
@@ -84,6 +85,7 @@ function DemoApp() {
         <Route path="upload" element={<UploadPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="integrations" element={<IntegrationsPage />} />
+        <Route path="known-limitations" element={<KnownLimitationsPage />} />
 
         {/* Clause Manager (new label) + legacy /clause-library alias. */}
         <Route path="clause-manager" element={<ClauseLibraryPage />} />
