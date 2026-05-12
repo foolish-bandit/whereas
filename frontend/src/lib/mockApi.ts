@@ -1524,6 +1524,7 @@ export function __resetMockState(): void {
   }
   sessionClauseTemplates.length = 0;
   archivedDemoClauseIds.clear();
+  clauseDemoOverrides.clear();
   for (const k of Object.keys(sessionSavedRedlinesByContractId)) {
     delete sessionSavedRedlinesByContractId[k];
   }
@@ -1564,17 +1565,24 @@ const sessionClauseTemplates: ClauseTemplate[] = [];
 // list reflects the user's action without mutating the baseline data.
 const archivedDemoClauseIds: Set<string> = new Set();
 
-function withClauseArchiveOverride(row: ClauseTemplate): ClauseTemplate {
-  if (archivedDemoClauseIds.has(row.id) && row.is_active) {
-    return { ...row, is_active: false };
-  }
-  return row;
+// PR #120 — Edit / Restore polish in demo mode. Same idea as the
+// archive override: hold per-id field patches so the user's edits and
+// restores reflect immediately without mutating DEMO_CLAUSE_TEMPLATES.
+const clauseDemoOverrides: Map<string, Partial<ClauseTemplate>> = new Map();
+
+function withClauseDemoOverrides(row: ClauseTemplate): ClauseTemplate {
+  const patch = clauseDemoOverrides.get(row.id);
+  const archived = archivedDemoClauseIds.has(row.id);
+  if (!patch && !archived) return row;
+  const merged: ClauseTemplate = { ...row, ...(patch ?? {}) };
+  if (archived && merged.is_active) merged.is_active = false;
+  return merged;
 }
 
 export async function listClauseTemplates(filters: { clause_type?: string; jurisdiction?: string; contract_type?: string; tag?: string; include_inactive?: boolean } = {}, options: ApiOptions = {}): Promise<ClauseTemplate[]> {
   await delay(MOCK_LATENCY_MS, options.signal);
   let rows = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES].map(
-    withClauseArchiveOverride,
+    withClauseDemoOverrides,
   );
   if (!filters.include_inactive) rows = rows.filter((r) => r.is_active);
   if (filters.clause_type) rows = rows.filter((r) => r.clause_type === filters.clause_type);
@@ -1596,16 +1604,40 @@ export async function getClauseTemplate(id: string, options: ApiOptions = {}): P
   await delay(MOCK_LATENCY_MS, options.signal);
   const row = [...sessionClauseTemplates, ...DEMO_CLAUSE_TEMPLATES].find((r) => r.id === id);
   if (!row) throw new ApiError(404, "Clause template not found.");
-  return withClauseArchiveOverride(row);
+  return withClauseDemoOverrides(row);
 }
 
 export async function updateClauseTemplate(id: string, payload: ClauseTemplateUpdateRequest, options: ApiOptions = {}): Promise<ClauseTemplate> {
   await delay(MOCK_LATENCY_MS, options.signal);
-  const idx = sessionClauseTemplates.findIndex((r) => r.id === id);
-  if (idx < 0) throw new ApiError(404, "Clause template not found.");
-  const updated = { ...sessionClauseTemplates[idx], ...payload, updated_at: new Date().toISOString(), tags: payload.tags ?? sessionClauseTemplates[idx].tags };
-  sessionClauseTemplates[idx] = updated;
-  return updated;
+  const sessionIdx = sessionClauseTemplates.findIndex((r) => r.id === id);
+  if (sessionIdx >= 0) {
+    const updated = {
+      ...sessionClauseTemplates[sessionIdx],
+      ...payload,
+      updated_at: new Date().toISOString(),
+      tags: payload.tags ?? sessionClauseTemplates[sessionIdx].tags,
+    };
+    sessionClauseTemplates[sessionIdx] = updated;
+    return updated;
+  }
+  // PR #120 — demo seed rows are read-only by reference, so record a
+  // per-id override patch instead of mutating the baseline fixture.
+  // This lets Edit and Restore work in demo mode without faking
+  // backend persistence.
+  const demoRow = DEMO_CLAUSE_TEMPLATES.find((r) => r.id === id);
+  if (!demoRow) throw new ApiError(404, "Clause template not found.");
+  const prev = clauseDemoOverrides.get(id) ?? {};
+  const { tags: payloadTags, ...payloadRest } = payload;
+  const next: Partial<ClauseTemplate> = {
+    ...prev,
+    ...payloadRest,
+    updated_at: new Date().toISOString(),
+  };
+  if (payloadTags !== undefined && payloadTags !== null) next.tags = payloadTags;
+  clauseDemoOverrides.set(id, next);
+  // Restoring an archived demo row also clears the soft-archive flag.
+  if (payload.is_active === true) archivedDemoClauseIds.delete(id);
+  return withClauseDemoOverrides(demoRow);
 }
 
 export async function deleteClauseTemplate(id: string, options: ApiOptions = {}): Promise<void> {

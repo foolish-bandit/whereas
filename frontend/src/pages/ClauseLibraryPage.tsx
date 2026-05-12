@@ -9,6 +9,7 @@ import {
   createClauseTemplate,
   deleteClauseTemplate,
   listClauseTemplates,
+  updateClauseTemplate,
   type ClauseTemplateListFilters,
 } from "../lib/api";
 import { formatDate } from "../lib/format";
@@ -61,18 +62,18 @@ function contractTypeLabel(raw: string | null | undefined): string {
 
 /**
  * Clause Manager (PR #63 nav consolidation; PR #80 UX polish; PR #119
- * contract-type organization).
+ * contract-type organization; PR #120 detail / edit / restore polish).
  *
- * The library is now organized **by contract type**. A chip bar at
- * the top groups clauses by `contract_type` and shows active /
- * archived counts per type. Selecting a chip narrows the list to
- * that type and pre-fills the Add-clause form so curators don't have
- * to retype it.
+ * The library is organized **by contract type** (chip bar at the top
+ * with active/archived counts per type). Selecting a chip narrows the
+ * list and pre-fills the Add-clause form. Each row opens a detail
+ * drawer that shows the full clause record and supports Copy, Edit,
+ * Archive, and Restore inline — without leaving the list view or
+ * dropping the user's current filters.
  *
- * Backend semantics are intentionally untouched. The list endpoint
- * already accepts `contract_type` as a filter, but we apply it
- * client-side here so the chip counts stay accurate without a second
- * fetch.
+ * Backend semantics are intentionally untouched. The list, create,
+ * update, and delete endpoints already exist; PR #120 only wires up
+ * the existing PATCH endpoint to a UI editor + restore action.
  */
 export default function ClauseLibraryPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -87,6 +88,9 @@ export default function ClauseLibraryPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     const controller = new AbortController();
@@ -177,6 +181,25 @@ export default function ClauseLibraryPage() {
     });
   }, [state, search, selectedContractType]);
 
+  const expandedRow = useMemo(
+    () =>
+      state.kind === "loaded"
+        ? state.rows.find((r) => r.id === expandedId) ?? null
+        : null,
+    [state, expandedId],
+  );
+
+  // If the active drawer's row falls out of the loaded set (e.g.,
+  // after archive while "Show archived" is off, or because a fresh
+  // load no longer includes it), close the drawer cleanly.
+  useEffect(() => {
+    if (expandedId && state.kind === "loaded" && !expandedRow) {
+      setExpandedId(null);
+      setEditingId(null);
+      setEditError(null);
+    }
+  }, [expandedId, state, expandedRow]);
+
   async function onCreate() {
     if (!draft.name.trim() || !draft.text.trim()) return;
     setCreating(true);
@@ -208,12 +231,22 @@ export default function ClauseLibraryPage() {
     try {
       await deleteClauseTemplate(id);
       setConfirmId(null);
-      // Refresh so the row reflects archived state when the toggle is
-      // on, or drops out of the list when it's off.
       load();
     } catch (err) {
       setActionError(
         err instanceof Error ? err.message : "Could not archive clause.",
+      );
+    }
+  }
+
+  async function onRestore(id: string) {
+    setActionError(null);
+    try {
+      await updateClauseTemplate(id, { is_active: true });
+      load();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Could not restore clause.",
       );
     }
   }
@@ -228,6 +261,41 @@ export default function ClauseLibraryPage() {
       }, 2000);
     } catch {
       // Best-effort; clipboard permission can be denied silently.
+    }
+  }
+
+  async function onSaveEdit(id: string, patch: EditPatch) {
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const tags = patch.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      const updated = await updateClauseTemplate(id, {
+        name: patch.name.trim(),
+        clause_type: patch.clause_type.trim() || "general",
+        contract_type: patch.contract_type.trim() || null,
+        jurisdiction: patch.jurisdiction.trim() || null,
+        description: patch.description.trim() || null,
+        text: patch.text,
+        tags,
+      });
+      setState((prev) =>
+        prev.kind === "loaded"
+          ? {
+              kind: "loaded",
+              rows: prev.rows.map((r) => (r.id === id ? updated : r)),
+            }
+          : prev,
+      );
+      setEditingId(null);
+    } catch (err) {
+      setEditError(
+        err instanceof Error ? err.message : "Could not save clause.",
+      );
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -398,19 +466,51 @@ export default function ClauseLibraryPage() {
             <ClauseRow
               key={row.id}
               row={row}
-              expanded={expandedId === row.id}
               confirming={confirmId === row.id}
               copied={copiedId === row.id}
-              onToggleExpand={() =>
-                setExpandedId((prev) => (prev === row.id ? null : row.id))
-              }
+              onOpenDetail={() => {
+                setExpandedId(row.id);
+                setEditingId(null);
+                setEditError(null);
+              }}
               onAskArchive={() => setConfirmId(row.id)}
               onCancelArchive={() => setConfirmId(null)}
               onConfirmArchive={() => onConfirmArchive(row.id)}
+              onRestore={() => onRestore(row.id)}
               onCopy={() => onCopy(row)}
             />
           ))}
         </ul>
+      )}
+
+      {expandedRow && (
+        <ClauseDetailDrawer
+          row={expandedRow}
+          editing={editingId === expandedRow.id}
+          savingEdit={savingEdit}
+          editError={editError}
+          copied={copiedId === expandedRow.id}
+          onClose={() => {
+            setExpandedId(null);
+            setEditingId(null);
+            setEditError(null);
+          }}
+          onCopy={() => onCopy(expandedRow)}
+          onStartEdit={() => {
+            setEditingId(expandedRow.id);
+            setEditError(null);
+          }}
+          onCancelEdit={() => {
+            setEditingId(null);
+            setEditError(null);
+          }}
+          onSaveEdit={(patch) => onSaveEdit(expandedRow.id, patch)}
+          onAskArchive={() => setConfirmId(expandedRow.id)}
+          onConfirmArchive={() => onConfirmArchive(expandedRow.id)}
+          onCancelArchive={() => setConfirmId(null)}
+          confirmingArchive={confirmId === expandedRow.id}
+          onRestore={() => onRestore(expandedRow.id)}
+        />
       )}
     </div>
   );
@@ -510,23 +610,23 @@ function ChipCount({
 
 function ClauseRow({
   row,
-  expanded,
   confirming,
   copied,
-  onToggleExpand,
+  onOpenDetail,
   onAskArchive,
   onCancelArchive,
   onConfirmArchive,
+  onRestore,
   onCopy,
 }: {
   row: ClauseTemplate;
-  expanded: boolean;
   confirming: boolean;
   copied: boolean;
-  onToggleExpand: () => void;
+  onOpenDetail: () => void;
   onAskArchive: () => void;
   onCancelArchive: () => void;
   onConfirmArchive: () => void;
+  onRestore: () => void;
   onCopy: () => void;
 }) {
   return (
@@ -555,10 +655,10 @@ function ClauseRow({
           <button
             type="button"
             className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
-            onClick={onToggleExpand}
+            onClick={onOpenDetail}
             data-testid="clause-toggle"
           >
-            {expanded ? "Hide text" : "Show text"}
+            View details
           </button>
           <button
             type="button"
@@ -568,8 +668,8 @@ function ClauseRow({
           >
             {copied ? "Copied" : "Copy text"}
           </button>
-          {row.is_active &&
-            (confirming ? (
+          {row.is_active ? (
+            confirming ? (
               <>
                 <button
                   type="button"
@@ -597,17 +697,19 @@ function ClauseRow({
               >
                 Archive
               </button>
-            ))}
+            )
+          ) : (
+            <button
+              type="button"
+              className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+              onClick={onRestore}
+              data-testid="clause-restore"
+            >
+              Restore
+            </button>
+          )}
         </div>
       </div>
-      {expanded && (
-        <pre
-          className="mt-3 whitespace-pre-wrap break-words rounded border border-rule bg-canvas-subtle p-2 text-sm text-ink-muted"
-          data-testid="clause-text"
-        >
-          {row.text}
-        </pre>
-      )}
     </li>
   );
 }
@@ -655,6 +757,367 @@ function ClauseMetadataChips({ row }: { row: ClauseTemplate }) {
           {chip.label}
         </span>
       ))}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------- */
+/* PR #120 — Clause detail drawer (read / edit / archive / restore).    */
+/* -------------------------------------------------------------------- */
+
+interface EditPatch {
+  name: string;
+  clause_type: string;
+  contract_type: string;
+  jurisdiction: string;
+  description: string;
+  text: string;
+  tags: string; // comma-separated in the form, split on save
+}
+
+function rowToEditPatch(row: ClauseTemplate): EditPatch {
+  return {
+    name: row.name,
+    clause_type: row.clause_type,
+    contract_type: row.contract_type ?? "",
+    jurisdiction: row.jurisdiction ?? "",
+    description: row.description ?? "",
+    text: row.text,
+    tags: row.tags.join(", "),
+  };
+}
+
+interface ClauseDetailDrawerProps {
+  row: ClauseTemplate;
+  editing: boolean;
+  savingEdit: boolean;
+  editError: string | null;
+  copied: boolean;
+  confirmingArchive: boolean;
+  onClose: () => void;
+  onCopy: () => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (patch: EditPatch) => void;
+  onAskArchive: () => void;
+  onConfirmArchive: () => void;
+  onCancelArchive: () => void;
+  onRestore: () => void;
+}
+
+function ClauseDetailDrawer({
+  row,
+  editing,
+  savingEdit,
+  editError,
+  copied,
+  confirmingArchive,
+  onClose,
+  onCopy,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onAskArchive,
+  onConfirmArchive,
+  onCancelArchive,
+  onRestore,
+}: ClauseDetailDrawerProps) {
+  const [draft, setDraft] = useState<EditPatch>(() => rowToEditPatch(row));
+
+  // Reset the form whenever the drawer switches to a different row or
+  // edit mode is (re)entered. Cancel uses the same effect by toggling
+  // `editing` off then on, but explicit reset on entry is clearer.
+  useEffect(() => {
+    if (editing) setDraft(rowToEditPatch(row));
+  }, [editing, row]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clause details"
+      className="fixed inset-0 z-40 flex justify-end bg-ink/40"
+      data-testid="clause-detail"
+      onClick={(e) => {
+        // Click on the backdrop closes; clicks inside the panel are
+        // stopped below.
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="flex h-full w-full max-w-xl flex-col gap-3 overflow-y-auto bg-canvas p-4 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p
+              className="break-words text-base font-semibold text-ink"
+              data-testid="clause-detail-title"
+            >
+              {row.name}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <ClauseStatusPill active={row.is_active} />
+              {row.contract_type && (
+                <span
+                  className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                  data-testid="clause-detail-contract-type"
+                >
+                  {contractTypeLabel(row.contract_type)}
+                </span>
+              )}
+              {row.clause_type && (
+                <span
+                  className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                  data-testid="clause-detail-clause-type"
+                >
+                  {row.clause_type}
+                </span>
+              )}
+              {row.jurisdiction && (
+                <span
+                  className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                  data-testid="clause-detail-jurisdiction"
+                >
+                  {row.jurisdiction}
+                </span>
+              )}
+              {row.tags.map((t, i) => (
+                <span
+                  key={i}
+                  className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                  data-testid="clause-detail-tag"
+                >
+                  #{t}
+                </span>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="rounded border border-rule px-2 py-1 text-xs hover:bg-canvas-muted"
+            onClick={onClose}
+            data-testid="clause-detail-close"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-xs">
+          {!editing && (
+            <>
+              <button
+                type="button"
+                className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                onClick={onCopy}
+                data-testid="clause-detail-copy"
+              >
+                {copied ? "Copied" : "Copy text"}
+              </button>
+              <button
+                type="button"
+                className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                onClick={onStartEdit}
+                data-testid="clause-detail-edit"
+              >
+                Edit
+              </button>
+              {row.is_active ? (
+                confirmingArchive ? (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded border border-danger bg-danger px-2 py-1 text-canvas"
+                      onClick={onConfirmArchive}
+                      data-testid="clause-detail-confirm-archive"
+                    >
+                      Confirm archive
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                      onClick={onCancelArchive}
+                      data-testid="clause-detail-cancel-archive"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="rounded border border-rule px-2 py-1 text-danger hover:bg-canvas-muted"
+                    onClick={onAskArchive}
+                    data-testid="clause-detail-archive"
+                  >
+                    Archive
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
+                  onClick={onRestore}
+                  data-testid="clause-detail-restore"
+                >
+                  Restore
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {row.description && !editing && (
+          <p
+            className="text-sm text-ink-muted"
+            data-testid="clause-detail-description"
+          >
+            {row.description}
+          </p>
+        )}
+
+        {!editing && (
+          <pre
+            className="whitespace-pre-wrap break-words rounded border border-rule bg-canvas-subtle p-2 text-sm text-ink-muted"
+            data-testid="clause-text"
+          >
+            {row.text}
+          </pre>
+        )}
+
+        {!editing && (
+          <p className="text-[11px] text-ink-subtle">
+            Created {formatDate(row.created_at)} · Updated{" "}
+            {formatDate(row.updated_at)}
+            {row.version ? ` · v${row.version}` : ""}
+            {row.source ? ` · ${row.source}` : ""}
+          </p>
+        )}
+
+        {editing && (
+          <form
+            className="grid gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!draft.name.trim() || !draft.text.trim()) return;
+              onSaveEdit(draft);
+            }}
+            data-testid="clause-edit-form"
+          >
+            <label className="text-xs text-ink-muted">
+              Clause name
+              <input
+                className="mt-1 w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                value={draft.name}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, name: e.target.value }))
+                }
+                data-testid="clause-edit-name"
+              />
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-xs text-ink-muted">
+                Contract type slug
+                <input
+                  className="mt-1 w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                  value={draft.contract_type}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      contract_type: e.target.value,
+                    }))
+                  }
+                  data-testid="clause-edit-contract-type"
+                />
+              </label>
+              <label className="text-xs text-ink-muted">
+                Clause type
+                <input
+                  className="mt-1 w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                  value={draft.clause_type}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, clause_type: e.target.value }))
+                  }
+                  data-testid="clause-edit-type"
+                />
+              </label>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-xs text-ink-muted">
+                Jurisdiction
+                <input
+                  className="mt-1 w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                  value={draft.jurisdiction}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, jurisdiction: e.target.value }))
+                  }
+                  data-testid="clause-edit-jurisdiction"
+                />
+              </label>
+              <label className="text-xs text-ink-muted">
+                Tags (comma-separated)
+                <input
+                  className="mt-1 w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                  value={draft.tags}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, tags: e.target.value }))
+                  }
+                  data-testid="clause-edit-tags"
+                />
+              </label>
+            </div>
+            <label className="text-xs text-ink-muted">
+              Guidance / description
+              <textarea
+                className="mt-1 min-h-[3rem] w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                value={draft.description}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, description: e.target.value }))
+                }
+                data-testid="clause-edit-description"
+              />
+            </label>
+            <label className="text-xs text-ink-muted">
+              Clause text
+              <textarea
+                className="mt-1 min-h-[8rem] w-full rounded border border-rule px-2 py-1.5 text-sm text-ink"
+                value={draft.text}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, text: e.target.value }))
+                }
+                data-testid="clause-edit-text"
+              />
+            </label>
+            {editError && (
+              <p
+                className="text-xs text-danger"
+                data-testid="clause-edit-error"
+              >
+                {editError}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="rounded border border-ink bg-ink px-3 py-1.5 text-xs text-canvas disabled:opacity-50"
+                disabled={
+                  savingEdit || !draft.name.trim() || !draft.text.trim()
+                }
+                data-testid="clause-edit-save"
+              >
+                {savingEdit ? "Saving…" : "Save changes"}
+              </button>
+              <button
+                type="button"
+                className="rounded border border-rule px-3 py-1.5 text-xs hover:bg-canvas-muted"
+                onClick={onCancelEdit}
+                data-testid="clause-edit-cancel"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

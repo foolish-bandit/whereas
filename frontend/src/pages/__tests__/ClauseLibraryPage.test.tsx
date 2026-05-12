@@ -404,4 +404,223 @@ describe("ClauseLibraryPage", () => {
       expect(text).not.toContain(needle);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // PR #120 — Clause detail drawer, edit, and restore.
+  // ---------------------------------------------------------------------
+
+  it("opens a detail drawer with full metadata, text, and timestamps when View details is clicked", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+
+    const drawer = screen.getByTestId("clause-detail");
+    expect(within(drawer).getByTestId("clause-detail-title")).toHaveTextContent(
+      "Mutual NDA confidentiality clause",
+    );
+    // Friendly contract-type label, raw clause-type slug, jurisdiction, tags.
+    expect(
+      within(drawer).getByTestId("clause-detail-contract-type"),
+    ).toHaveTextContent("NDA");
+    expect(
+      within(drawer).getByTestId("clause-detail-clause-type"),
+    ).toHaveTextContent("confidentiality");
+    expect(
+      within(drawer).getByTestId("clause-detail-jurisdiction"),
+    ).toHaveTextContent("California");
+    expect(
+      within(drawer).getAllByTestId("clause-detail-tag").map((c) => c.textContent),
+    ).toEqual(["#nda", "#core"]);
+    expect(within(drawer).getByTestId("clause-text")).toHaveTextContent(
+      /confidential information/i,
+    );
+    // The description and Created/Updated metadata both render.
+    expect(
+      within(drawer).getByTestId("clause-detail-description"),
+    ).toHaveTextContent(/baseline nda/i);
+    expect(drawer.textContent ?? "").toMatch(/Created/i);
+    expect(drawer.textContent ?? "").toMatch(/Updated/i);
+  });
+
+  it("closes the detail drawer without resetting the active contract-type filter", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(MULTI_TYPE_ROWS));
+    renderPage();
+    await screen.findByText("NDA confidentiality");
+
+    const bar = screen.getByTestId("clause-contract-type-bar");
+    const msaChip = within(bar)
+      .getAllByTestId("clause-contract-type-chip")
+      .find((c) => /^MSA/i.test(c.textContent ?? ""))!;
+    fireEvent.click(msaChip);
+    expect(screen.getByText("MSA governing law")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    expect(screen.getByTestId("clause-detail")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("clause-detail-close"));
+    expect(screen.queryByTestId("clause-detail")).toBeNull();
+    // MSA filter is still active after closing.
+    expect(screen.getByText("MSA governing law")).toBeInTheDocument();
+    expect(screen.queryByText("NDA confidentiality")).toBeNull();
+  });
+
+  it("copies clause text from the detail drawer", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-copy"));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText).toHaveBeenCalledWith(
+      "Each Party shall keep Confidential Information strictly confidential.",
+    );
+  });
+
+  it("opens the edit form with existing values populated and cancels cleanly", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+
+    expect(screen.getByTestId("clause-edit-name")).toHaveValue(
+      "Mutual NDA confidentiality clause",
+    );
+    expect(screen.getByTestId("clause-edit-contract-type")).toHaveValue(
+      "mutual_nda",
+    );
+    expect(screen.getByTestId("clause-edit-type")).toHaveValue("confidentiality");
+    expect(screen.getByTestId("clause-edit-jurisdiction")).toHaveValue(
+      "California",
+    );
+    expect(screen.getByTestId("clause-edit-tags")).toHaveValue("nda, core");
+    expect(screen.getByTestId("clause-edit-text")).toHaveValue(
+      "Each Party shall keep Confidential Information strictly confidential.",
+    );
+
+    // Editing the name field then canceling reverts to view mode without
+    // a PATCH and without changing the visible title.
+    fireEvent.change(screen.getByTestId("clause-edit-name"), {
+      target: { value: "An edit that should be discarded" },
+    });
+    fireEvent.click(screen.getByTestId("clause-edit-cancel"));
+
+    expect(screen.queryByTestId("clause-edit-form")).toBeNull();
+    expect(
+      within(screen.getByTestId("clause-detail")).getByTestId(
+        "clause-detail-title",
+      ),
+    ).toHaveTextContent("Mutual NDA confidentiality clause");
+
+    // No PATCH was issued — only the initial GET.
+    const patchCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(0);
+  });
+
+  it("saves edits via PATCH and reflects the renamed clause in the list", async () => {
+    let patched: { url: string; body: Record<string, unknown> } | null = null;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.includes("/api/clause-templates/ct-1") &&
+        init?.method === "PATCH"
+      ) {
+        patched = {
+          url,
+          body: JSON.parse((init.body as string) ?? "{}"),
+        };
+        return jsonResponse({
+          ...baseRow(),
+          name: (patched.body.name as string) ?? baseRow().name,
+          description:
+            (patched.body.description as string | null | undefined) ?? null,
+        });
+      }
+      if (url.includes("/api/clause-templates")) {
+        return jsonResponse([baseRow()]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+    fireEvent.change(screen.getByTestId("clause-edit-name"), {
+      target: { value: "Renamed NDA clause" },
+    });
+    fireEvent.change(screen.getByTestId("clause-edit-description"), {
+      target: { value: "Updated guidance for negotiators." },
+    });
+    fireEvent.click(screen.getByTestId("clause-edit-save"));
+
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched!.body).toMatchObject({
+      name: "Renamed NDA clause",
+      description: "Updated guidance for negotiators.",
+      contract_type: "mutual_nda",
+      clause_type: "confidentiality",
+      jurisdiction: "California",
+      tags: ["nda", "core"],
+    });
+    // After save, the drawer returns to view mode and the renamed
+    // clause is reflected locally without a second list fetch.
+    await waitFor(() =>
+      expect(screen.queryByTestId("clause-edit-form")).toBeNull(),
+    );
+    expect(
+      within(screen.getByTestId("clause-detail")).getByTestId(
+        "clause-detail-title",
+      ),
+    ).toHaveTextContent("Renamed NDA clause");
+  });
+
+  it("shows Restore for archived rows and calls PATCH is_active=true", async () => {
+    let restored: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.includes("/api/clause-templates/ct-z") &&
+        init?.method === "PATCH"
+      ) {
+        restored = JSON.parse((init.body as string) ?? "{}");
+        return jsonResponse({
+          ...baseRow({ id: "ct-z", is_active: true }),
+        });
+      }
+      if (url.includes("/api/clause-templates")) {
+        return jsonResponse([baseRow({ id: "ct-z", is_active: false })]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+
+    expect(screen.queryByTestId("clause-archive")).toBeNull();
+    fireEvent.click(screen.getByTestId("clause-restore"));
+
+    await waitFor(() => expect(restored).not.toBeNull());
+    expect(restored).toEqual({ is_active: true });
+  });
+
+  it("does not leak forbidden tokens via the detail drawer", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([baseRow()]));
+    renderPage();
+    await screen.findByText("Mutual NDA confidentiality clause");
+    fireEvent.click(screen.getByTestId("clause-toggle"));
+    fireEvent.click(screen.getByTestId("clause-detail-edit"));
+    const text = document.body.textContent ?? "";
+    for (const needle of FORBIDDEN_DOM_TOKENS) {
+      expect(text).not.toContain(needle);
+    }
+  });
 });

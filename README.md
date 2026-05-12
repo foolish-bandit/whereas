@@ -184,12 +184,15 @@ Top-level navigation:
   positions, and deviation rules for contract review.
 - **Clause Manager** — `/demo/clause-manager` (legacy `/demo/clause-library`
   still resolves). Approved clauses, fallback language, and reusable
-  drafting guidance. Workspace shows an *Add a clause* panel,
-  server-side `clause_type` filter + client-side text search,
-  expandable clause text, copy-to-clipboard, an Active / Archived
-  pill, metadata chips (clause type, jurisdiction, contract type,
-  tags), and a two-step Archive confirm. Archive is still soft-delete
-  via the existing endpoint.
+  drafting guidance, organized by contract type. Workspace shows an
+  *Add a clause* panel, server-side `clause_type` filter + client-side
+  text search, a *View details* drawer per clause that exposes the
+  full record (metadata chips, description, full text, timestamps)
+  plus Copy / Edit / Archive / Restore actions, an Active / Archived
+  pill, and a two-step Archive confirm. Edits PATCH the existing
+  clause-template endpoint; Archive is still soft-delete via the
+  existing DELETE endpoint. Clause/playbook integration remains
+  future work.
 - **Approvals** — `/demo/approvals` landing with cards for *Approval
   tasks*, *Approval workflows*, *Approval templates*, and *Approval
   policies*. Cards show live counts pulled from the dashboard summary.
@@ -286,6 +289,22 @@ filter. Free-text search, clause-type filter, *Show archived* toggle,
 two-step Archive confirm, and Copy text actions are preserved. A new
 **Reset filters** action clears search + clause type + contract type
 in one click. Clause/playbook integration remains future work.
+
+### Clause Manager detail / edit polish (PR #120)
+
+Clicking *View details* on any clause now opens a side drawer that
+shows the full record — friendly contract-type label, clause type,
+jurisdiction, tags, description, the full clause text, and the
+created / updated timestamps — without leaving the list view. The
+drawer surfaces Copy text, Edit, Archive (two-step confirm), and
+Restore actions inline, so archived rows can be brought back without
+hunting through the list. The Edit form is pre-filled from the
+clause's existing values and Cancel reverts cleanly without issuing
+a PATCH; Save calls the existing `PATCH /api/clause-templates/{id}`
+endpoint. In demo mode, edits and restores apply against an in-memory
+override map for the seed rows so the UI behaves honestly without
+mutating the baseline fixtures or faking backend persistence.
+Clause/playbook integration remains future work.
 
 ## UI polish pass (PRs #78–#88)
 
