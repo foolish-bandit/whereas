@@ -37,6 +37,18 @@ export interface ContractListItem {
    * NOT exposed; this is a closed enum.
    */
   search_match_source?: "title" | "text_preview" | "title_and_text_preview" | null;
+  /**
+   * Repository columns the legal team actually cares about for an
+   * at-a-glance view. These are sourced from the extraction pipeline
+   * and the user model; any of them can be null when extraction
+   * hasn't run yet or the field wasn't found.
+   */
+  counterparty?: string | null;
+  effective_date?: string | null;
+  renewal_date?: string | null;
+  auto_renew?: boolean | null;
+  owner_user_id?: string | null;
+  owner_display_name?: string | null;
 }
 
 export type ExtractedFieldValue = unknown;

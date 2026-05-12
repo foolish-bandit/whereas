@@ -19,6 +19,12 @@ function row(overrides: Record<string, unknown> = {}) {
     updated_at: "2026-05-01T00:00:00Z",
     merged_into_contract_id: null,
     merged_at: null,
+    counterparty: null,
+    effective_date: null,
+    renewal_date: null,
+    auto_renew: null,
+    owner_user_id: null,
+    owner_display_name: null,
     ...overrides,
   };
 }
@@ -87,39 +93,40 @@ describe("ContractsPage (Repository list)", () => {
     expect(screen.getAllByText("WidgetWorks MSA").length).toBeGreaterThan(0);
   });
 
-  it("sorts client-side by oldest first when selected", async () => {
+  it("sorts client-side by oldest first when the Updated header is clicked twice", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse([
         row({
           id: "c-newest",
           title: "Newest",
           created_at: "2026-05-10T00:00:00Z",
+          updated_at: "2026-05-10T00:00:00Z",
         }),
         row({
           id: "c-oldest",
           title: "Oldest",
           created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
         }),
       ]),
     );
     renderPage();
     await screen.findAllByText("Newest");
-    fireEvent.change(screen.getByTestId("repository-sort"), {
-      target: { value: "oldest" },
-    });
+    // Click the Updated header — first click sorts ascending (oldest
+    // first), which is exactly the assertion below.
+    fireEvent.click(screen.getByTestId("repository-sort-updated"));
     await waitFor(() => {
       const titles = screen
         .getAllByRole("link")
         .map((a) => a.textContent ?? "")
         .filter((t) => t === "Newest" || t === "Oldest");
-      // First occurrence reflects the sort: Oldest should appear before Newest.
       expect(titles.indexOf("Oldest")).toBeLessThan(
         titles.indexOf("Newest"),
       );
     });
   });
 
-  it("sorts client-side by title A→Z when selected", async () => {
+  it("sorts client-side by title A→Z when the Title header is clicked", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse([
         row({ id: "c-b", title: "Beta" }),
@@ -128,9 +135,7 @@ describe("ContractsPage (Repository list)", () => {
     );
     renderPage();
     await screen.findAllByText("Beta");
-    fireEvent.change(screen.getByTestId("repository-sort"), {
-      target: { value: "title_asc" },
-    });
+    fireEvent.click(screen.getByTestId("repository-sort-title"));
     await waitFor(() => {
       const titles = screen
         .getAllByRole("link")
@@ -651,7 +656,7 @@ describe("ContractsPage (Repository list)", () => {
     ).toBe(true);
   });
 
-  it("selecting Recently updated applies the updated_desc sort", async () => {
+  it("selecting Recently updated applies updated_at desc and reorders the list", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse([
         row({
@@ -670,10 +675,17 @@ describe("ContractsPage (Repository list)", () => {
     await screen.findAllByText("Old update");
     fireEvent.click(screen.getByTestId("repository-view-recently_updated"));
     await waitFor(() => {
-      expect(
-        (screen.getByTestId("repository-sort") as HTMLSelectElement).value,
-      ).toBe("updated_desc");
+      const titles = screen
+        .getAllByRole("link")
+        .map((a) => a.textContent ?? "")
+        .filter((t) => t === "Old update" || t === "New update");
+      expect(titles.indexOf("New update")).toBeLessThan(
+        titles.indexOf("Old update"),
+      );
     });
+    expect(
+      screen.getByTestId("repository-sort-updated"),
+    ).toHaveAttribute("data-active", "true");
   });
 
   it("manually changing status away from the active preset switches to Custom view", async () => {
@@ -844,9 +856,16 @@ describe("ContractsPage (Repository list)", () => {
           .value,
       ).toBe("all");
     });
-    expect(
-      (screen.getByTestId("repository-sort") as HTMLSelectElement).value,
-    ).toBe("newest");
+    // The active view chip switches back to "All active", which is
+    // defined as (status=all, sort=renewal_date asc, merged=false) —
+    // a deeper way to assert that the sort returned to its default
+    // without depending on the table being rendered for this fetch
+    // cycle.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("repository-view-active"),
+      ).toHaveAttribute("data-active", "true");
+    });
     expect(
       (screen.getByTestId("repository-include-merged") as HTMLInputElement)
         .checked,
@@ -952,5 +971,98 @@ describe("ContractsPage (Repository list)", () => {
     ]) {
       expect(text).not.toContain(needle);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // New columns — renewal-first sort and column visibility
+  // -------------------------------------------------------------------------
+
+  it("default-sorts by renewal_date ascending with nulls last", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({ id: "c-far", title: "Far", renewal_date: "2027-01-01" }),
+        row({ id: "c-soon", title: "Soon", renewal_date: "2026-06-01" }),
+        row({ id: "c-null", title: "Null renewal", renewal_date: null }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("Far");
+    const titles = screen
+      .getAllByRole("link")
+      .map((a) => a.textContent ?? "")
+      .filter((t) => t === "Far" || t === "Soon" || t === "Null renewal");
+    expect(titles.indexOf("Soon")).toBeLessThan(titles.indexOf("Far"));
+    expect(titles.indexOf("Far")).toBeLessThan(titles.indexOf("Null renewal"));
+  });
+
+  it("clicking the Renewal header toggles direction (asc → desc)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({ id: "c-far", title: "Far", renewal_date: "2027-01-01" }),
+        row({ id: "c-soon", title: "Soon", renewal_date: "2026-06-01" }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("Far");
+    fireEvent.click(screen.getByTestId("repository-sort-renewal"));
+    await waitFor(() => {
+      const titles = screen
+        .getAllByRole("link")
+        .map((a) => a.textContent ?? "")
+        .filter((t) => t === "Far" || t === "Soon");
+      expect(titles.indexOf("Far")).toBeLessThan(titles.indexOf("Soon"));
+    });
+  });
+
+  it("hydrates from a legacy ?sort=newest URL without crashing", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    render(
+      <MemoryRouter initialEntries={["/demo/repository?sort=newest"]}>
+        <ContractsPage />
+      </MemoryRouter>,
+    );
+    // Page renders; legacy sort key maps to created_at desc internally
+    // (no created_at column is rendered, but the Renewal header is no
+    // longer the active sort).
+    await screen.findByTestId("repository-views");
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("repository-sort-renewal"),
+      ).toHaveAttribute("data-active", "false");
+    });
+  });
+
+  it("hides the Owner column by default and exposes a Show columns menu", async () => {
+    window.localStorage.removeItem("whereas:repository:columns");
+    fetchMock.mockResolvedValue(jsonResponse([row()]));
+    renderPage();
+    await screen.findByTestId("repository-views");
+    fireEvent.click(screen.getByTestId("repository-columns-toggle"));
+    const ownerToggle = screen.getByTestId(
+      "repository-columns-toggle-owner",
+    ) as HTMLInputElement;
+    expect(ownerToggle.checked).toBe(false);
+    fireEvent.click(ownerToggle);
+    expect(ownerToggle.checked).toBe(true);
+    // Persisted to localStorage so the next session remembers.
+    const stored = JSON.parse(
+      window.localStorage.getItem("whereas:repository:columns") ?? "[]",
+    );
+    expect(stored).toContain("owner");
+  });
+
+  it("renders an em-dash for missing counterparty / effective / renewal", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        row({
+          id: "c-empty",
+          title: "No metadata yet",
+        }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("No metadata yet");
+    const dashes = screen.getAllByText("—");
+    expect(dashes.length).toBeGreaterThanOrEqual(3);
   });
 });

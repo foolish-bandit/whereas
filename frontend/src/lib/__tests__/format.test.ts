@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 
 import {
   confidenceTier,
+  daysUntil,
   formatBytes,
   humanizeFieldName,
   mimeExtension,
   mimeLabel,
+  relativeDateWithin,
   renderExtractedValue,
   sanitizeFilename,
 } from "../format";
@@ -103,5 +105,30 @@ describe("renderExtractedValue", () => {
   it("returns em-dash for null/undefined", () => {
     expect(renderExtractedValue(null)).toBe("—");
     expect(renderExtractedValue(undefined)).toBe("—");
+  });
+});
+
+describe("daysUntil / relativeDateWithin", () => {
+  const now = new Date("2026-05-12T12:00:00Z");
+
+  it("counts whole days regardless of clock time within a day", () => {
+    expect(daysUntil("2026-05-12", now)).toBe(0);
+    expect(daysUntil("2026-05-13", now)).toBe(1);
+    expect(daysUntil("2026-05-11", now)).toBe(-1);
+    expect(daysUntil("2026-06-04", now)).toBe(23);
+  });
+
+  it("returns null for invalid input", () => {
+    expect(daysUntil("not-a-date", now)).toBeNull();
+  });
+
+  it("renders 'in N days' / 'today' / 'tomorrow' within the window", () => {
+    expect(relativeDateWithin("2026-06-04", 90, now)).toBe("in 23 days");
+    expect(relativeDateWithin("2026-05-12", 90, now)).toBe("today");
+    expect(relativeDateWithin("2026-05-13", 90, now)).toBe("tomorrow");
+  });
+
+  it("returns null when the date is outside the window", () => {
+    expect(relativeDateWithin("2027-01-15", 90, now)).toBeNull();
   });
 });
