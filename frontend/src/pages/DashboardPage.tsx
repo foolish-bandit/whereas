@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import KpiTile from "../components/dashboard/KpiTile";
 import {
   ApiError,
   MissingDevUserError,
@@ -56,6 +57,9 @@ interface CountTile {
   hint: string;
   to: string;
   tone?: "default" | "danger";
+  /** Demo-only trend hint surfaced via TrendIndicator. Real
+   * deployments need a time-series query — see Prompt 12. */
+  demoTrend?: { pct: number; invert?: boolean };
 }
 
 const PIPELINE_TILES: CountTile[] = [
@@ -64,6 +68,7 @@ const PIPELINE_TILES: CountTile[] = [
     label: "Open requests",
     hint: "Status open",
     to: demoPath("/requests"),
+    demoTrend: { pct: 12 },
   },
   {
     key: "in_progress_requests",
@@ -97,6 +102,7 @@ const REPOSITORY_TILES: CountTile[] = [
     label: "Executed contracts",
     hint: "Status executed",
     to: demoPath("/repository"),
+    demoTrend: { pct: 8 },
   },
 ];
 
@@ -113,6 +119,7 @@ const APPROVAL_COUNT_TILES: CountTile[] = [
     hint: "Pending steps past their due date",
     to: demoPath("/approvals/tasks"),
     tone: "danger",
+    demoTrend: { pct: -3, invert: true },
   },
   {
     key: "active_approval_workflows",
@@ -532,26 +539,16 @@ function CountGroup({
           const value = counts[tile.key];
           const danger = tile.tone === "danger" && Number(value) > 0;
           return (
-            <Link
+            <KpiTile
               key={tile.key}
+              testId={`count-${tile.key}`}
               to={tile.to}
-              data-testid={`count-${tile.key}`}
-              className={`group rounded border bg-canvas p-3 transition-colors hover:border-rule-strong hover:bg-canvas-subtle ${
-                danger ? "border-danger-ring" : "border-rule"
-              }`}
-            >
-              <p className="text-xs uppercase tracking-wide text-ink-subtle">
-                {tile.label}
-              </p>
-              <p
-                className={`mt-2 text-2xl font-semibold tabular-nums ${
-                  danger ? "text-danger" : "text-ink"
-                }`}
-              >
-                {value}
-              </p>
-              <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
-            </Link>
+              label={tile.label}
+              value={value}
+              description={tile.hint}
+              danger={danger}
+              trend={tile.demoTrend ?? null}
+            />
           );
         })}
       </div>
@@ -614,19 +611,13 @@ function ApprovalAnalyticsSection({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {APPROVAL_ANALYTICS_TILES.map((tile) => (
-          <div
+          <KpiTile
             key={tile.key}
-            className="rounded border border-rule p-3"
-            data-testid={`approval-analytics-${tile.key}`}
-          >
-            <p className="text-xs uppercase tracking-wide text-ink-subtle">
-              {tile.label}
-            </p>
-            <p className="mt-2 text-2xl font-semibold text-ink tabular-nums">
-              {analytics[tile.key]}
-            </p>
-            <p className="mt-1 text-xs text-ink-subtle">{tile.hint}</p>
-          </div>
+            testId={`approval-analytics-${tile.key}`}
+            label={tile.label}
+            value={analytics[tile.key]}
+            description={tile.hint}
+          />
         ))}
       </div>
 
