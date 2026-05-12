@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import StatusBadge from "./StatusBadge";
+import Pill from "./ui/Pill";
 import { formatDate, mimeLabel } from "../lib/format";
 import type { ContractListItem } from "../types/contracts";
 
@@ -10,13 +11,15 @@ interface ContractTableProps {
 
 function MergedChip() {
   return (
-    <span
-      className="rounded border border-rule bg-canvas-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted"
+    <Pill
+      tone="neutral"
+      variant="soft"
+      className="uppercase tracking-wide"
       data-testid="repository-merged-chip"
       title="This record has been merged into another Repository record."
     >
       Merged
-    </span>
+    </Pill>
   );
 }
 
@@ -30,14 +33,16 @@ function MatchSourceChip({ source }: { source: string }) {
   const label = MATCH_SOURCE_LABEL[source];
   if (!label) return null;
   return (
-    <span
-      className="rounded border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-info"
+    <Pill
+      tone="info"
+      variant="soft"
+      className="uppercase tracking-wide"
       data-testid="repository-match-source-chip"
       data-source={source}
       title="Why this record matched the current search"
     >
       {label}
-    </span>
+    </Pill>
   );
 }
 

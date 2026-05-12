@@ -5,6 +5,8 @@ import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import ReviewRuleEditorModal from "../components/ReviewRuleEditorModal";
+import Pill from "../components/ui/Pill";
+import SeverityTag, { type Severity } from "../components/ui/SeverityTag";
 import {
   ApiError,
   MissingDevUserError,
@@ -552,21 +554,13 @@ function ReviewRuleGrid({ rules }: { rules: ReviewRule[] }) {
 }
 
 function SeverityPill({ severity }: { severity: ReviewRuleSeverity }) {
-  const tone =
-    severity === "blocker"
-      ? "border-danger-ring bg-danger-soft text-danger"
-      : severity === "high"
-        ? "border-warning-ring bg-warning-soft text-warning"
-        : severity === "medium"
-          ? "border-rule bg-canvas-subtle text-ink-muted"
-          : "border-rule bg-canvas-muted text-ink-subtle";
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${tone}`}
+    <SeverityTag
+      level={severity as Severity}
       data-testid="review-rule-severity-pill"
     >
       {severity}
-    </span>
+    </SeverityTag>
   );
 }
 
@@ -679,17 +673,10 @@ function PlaybookTable({ playbooks }: { playbooks: PlaybookSummary[] }) {
 }
 
 function StatusPill({ active }: { active: boolean }) {
-  if (active) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-rule bg-canvas-subtle px-2 py-0.5 text-[11px] font-medium text-ink-muted">
-        Active
-      </span>
-    );
-  }
   return (
-    <span className="inline-flex items-center rounded-full border border-rule bg-canvas-muted px-2 py-0.5 text-[11px] font-medium text-ink-subtle">
-      Deactivated
-    </span>
+    <Pill tone={active ? "success" : "neutral"} variant="soft">
+      {active ? "Active" : "Deactivated"}
+    </Pill>
   );
 }
 

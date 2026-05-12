@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
+import SeverityTag from "../components/ui/SeverityTag";
 import {
   ApiError,
   MissingDevUserError,
@@ -180,12 +181,13 @@ function ApprovalTaskRow({
             {row.priority ? ` · ${row.priority} priority` : ""}
             {row.due_date ? ` · due ${row.due_date}` : ""}
             {overdue ? (
-              <span
-                className="ml-2 rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-danger"
+              <SeverityTag
+                level="overdue"
+                className="ml-2"
                 data-testid="approval-task-overdue"
               >
                 overdue
-              </span>
+              </SeverityTag>
             ) : null}
           </p>
         </div>

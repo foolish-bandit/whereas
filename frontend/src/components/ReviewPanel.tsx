@@ -17,6 +17,8 @@ import type {
 } from "../types/findings";
 import type { PlaybookSummary } from "../types/playbooks";
 import type { PlaybookRuleMatchResult } from "../types/review";
+import Pill from "./ui/Pill";
+import SeverityTag, { type Severity } from "./ui/SeverityTag";
 
 const SEVERITY_RANK: Record<string, number> = {
   blocker: 0,
@@ -703,47 +705,25 @@ function FindingStatusControls({
 }
 
 function StatusPill({ status }: { status: "pass" | "fail" }) {
-  const className =
-    status === "pass"
-      ? "border-success-ring bg-success-soft text-success"
-      : "border-danger-ring bg-danger-soft text-danger";
-  const label = status === "pass" ? "Pass" : "Fail";
   return (
-    <span
-      className={[
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-        className,
-      ].join(" ")}
+    <Pill
+      tone={status === "pass" ? "success" : "danger"}
+      variant="soft"
+      className="uppercase tracking-wide"
     >
-      {label}
-    </span>
+      {status === "pass" ? "Pass" : "Fail"}
+    </Pill>
   );
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const color = (() => {
-    switch (severity) {
-      case "blocker":
-      case "high":
-        return "border-danger-ring bg-danger-soft text-danger";
-      case "medium":
-        return "border-warning-ring bg-warning-soft text-warning";
-      case "low":
-        return "border-rule bg-canvas-subtle text-ink-muted";
-      case "info":
-      default:
-        return "border-rule bg-canvas-subtle text-ink-subtle";
-    }
-  })();
+  if (severity === "blocker" || severity === "high" || severity === "medium" || severity === "low") {
+    return <SeverityTag level={severity as Severity}>{severity}</SeverityTag>;
+  }
   return (
-    <span
-      className={[
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
-        color,
-      ].join(" ")}
-    >
+    <Pill tone="neutral" variant="soft" className="uppercase tracking-wide">
       {severity}
-    </span>
+    </Pill>
   );
 }
 
@@ -752,28 +732,16 @@ function FindingStatusBadge({
 }: {
   status: DeviationFinding["finding_status"];
 }) {
-  const color = (() => {
-    switch (status) {
-      case "reviewed":
-        return "border-success-ring bg-success-soft text-success";
-      case "ignored":
-        return "border-rule bg-canvas-subtle text-ink-muted";
-      case "superseded":
-        return "border-rule bg-canvas-subtle text-ink-subtle";
-      case "open":
-      default:
-        return "border-warning-ring bg-warning-soft text-warning";
-    }
-  })();
+  const tone =
+    status === "reviewed"
+      ? "success"
+      : status === "ignored" || status === "superseded"
+        ? "neutral"
+        : "warning";
   return (
-    <span
-      className={[
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
-        color,
-      ].join(" ")}
-    >
+    <Pill tone={tone} variant="soft" className="uppercase tracking-wide">
       {FINDING_STATUS_LABELS[status] ?? status}
-    </span>
+    </Pill>
   );
 }
 
