@@ -399,8 +399,8 @@ function ArtifactHistoryPreviewCard() {
         />
       </ol>
       <p className="mt-4 text-xs text-ink-subtle">
-        Download, inline preview, version-to-version compare,
-        paragraph-aware redline export.
+        Download, inline preview, version-to-version diff,
+        redline export.
       </p>
     </article>
   );
@@ -514,8 +514,8 @@ const FEATURES: Array<{ title: string; body: string }> = [
     body: "Author per-contract-type approval policies. Workflows route through legal / finance / exec steps; signature is blocked until every required step is approved.",
   },
   {
-    title: "Document History + paragraph-aware redline",
-    body: "Per-version download, inline preview, base-vs-compare diff exported as DOCX, saved as a redline artifact (never the current document).",
+    title: "Document History + version diff",
+    body: "Per-version download, inline preview, base-vs-compare word-level diff exported as DOCX, saved as a redline artifact (never the current document).",
   },
   {
     title: "Embedded e-signature via DocuSeal",
@@ -682,7 +682,7 @@ function HonestStatusSection() {
               <li>· Requests workspace with template-to-contract conversion</li>
               <li>· Approval policies, workflow templates, runs, tasks, gates</li>
               <li>· DocuSeal send + completion webhook → signed-PDF artifact</li>
-              <li>· Document History: download, preview, compare, paragraph-aware redline</li>
+              <li>· Document History: download, preview, version diff, redline export</li>
               <li>· Audit log with allowlisted detail fields, org-scoped</li>
               <li>· PWA shell, no <code className="font-mono text-xs">/api/*</code> caching</li>
             </ul>
