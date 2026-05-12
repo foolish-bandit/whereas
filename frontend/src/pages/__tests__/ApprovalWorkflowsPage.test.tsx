@@ -104,6 +104,16 @@ describe("ApprovalWorkflowsPage", () => {
     expect(screen.getByTestId("approval-status").textContent).toBe("active");
   });
 
+  it("each row links to the new detail page (PR #98)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_RUN_LIST_ITEM]));
+    renderPage();
+    await screen.findByText("Legal approval");
+    expect(screen.getByTestId("approvals-open-detail")).toHaveAttribute(
+      "href",
+      "/approvals/workflows/wf-1",
+    );
+  });
+
   it("creates a workflow with steps and shows the first pending step", async () => {
     let listed: typeof SAMPLE_RUN_LIST_ITEM[] = [];
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {

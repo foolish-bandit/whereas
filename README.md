@@ -242,6 +242,51 @@ Cross-cutting hardening on every PR in this pass:
   row actions, established on Clause Manager (PR #80) and reused on
   Approval Policies (PR #85).
 
+## Approval Workflow detail page (PR #98)
+
+Approval Workflows now have a dedicated detail page at
+`/demo/approvals/workflows/:id` so a user can inspect one workflow
+in context — its status, attached Request / Repository record,
+progress, ordered steps, and related activity timeline — without
+expanding-inline-in-the-list.
+
+Sections on the page:
+
+- **Header**: breadcrumb (*Approvals → Workflows → name*), workflow
+  name, status pill, *Source* label (*From template* / *From policy:
+  <name>* / blank for manual) derived from existing allowlisted
+  metadata.
+- **Attached to**: mount-aware links to the related Request and/or
+  Repository record. Manual workflows render a clear *"Not attached
+  to a Request or Repository record"* message.
+- **Progress**: *Step N of M* for active runs, *N of M approved*
+  otherwise. Current step name + due / *overdue* badge when active.
+- **Steps**: ordered timeline. Current step is highlighted with an
+  info tone. Each step shows its status pill, approver name + email
+  (when set by the variable / template), due date, decided-at, and
+  a small *decision note recorded* indicator when one is present —
+  the note text itself is NOT rendered on this page (presence-only,
+  per PR #98 brief). The existing inline view on the list page
+  still renders full note text and is unchanged.
+- **Workflow actions**: Approve / Reject buttons appear on the
+  current pending step; a *Cancel workflow* button (two-step
+  confirm) on active runs. Reuses the existing
+  `approve / reject / cancel` API client. Terminal workflows
+  (completed / rejected / cancelled) render *"No further action"*.
+- **Related activity**: reuses the existing `ActivityTimeline`
+  component anchored on the related Request when present, else the
+  Repository record. The dedicated approval-detail page never
+  queries raw audit rows.
+
+Per-row *Open detail* links were added to the existing
+`/demo/approvals/workflows` list page so users can reach the new
+detail from the list. Existing *Show steps* inline expand and the
+`?workflow_id=` deep-link expansion behavior are preserved.
+
+Frontend-only — no backend changes. No approval state machine,
+gate, policy matching, DocuSeal flow, request workflow, or
+artifact-priority changes.
+
 ## Pre-generation review step (PR #97)
 
 The *Generate agreement* action on a template detail page is now a

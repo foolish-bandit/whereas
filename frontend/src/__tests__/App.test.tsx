@@ -294,6 +294,17 @@ describe("App routing — UI consolidation pass", () => {
     );
   });
 
+  it("renders the new /demo/approvals/workflows/:id detail route (PR #98)", async () => {
+    renderAt("/demo/approvals/workflows/wf-deep-detail");
+    // The detail page starts in loading state — the loading testId
+    // is enough to confirm the route resolved to the right component.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("approval-workflow-detail-loading"),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("renders the new /demo/approvals/templates route", async () => {
     renderAt("/demo/approvals/templates");
     await waitFor(() =>

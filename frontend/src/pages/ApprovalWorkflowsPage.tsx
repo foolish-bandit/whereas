@@ -488,6 +488,16 @@ export default function ApprovalWorkflowsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
+                  <Link
+                    to={mountedPath(
+                      `/approvals/workflows/${row.id}`,
+                      location.pathname,
+                    )}
+                    className="rounded border border-rule px-2 py-1 text-ink hover:bg-canvas-muted"
+                    data-testid="approvals-open-detail"
+                  >
+                    Open detail
+                  </Link>
                   <button
                     type="button"
                     className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted"
