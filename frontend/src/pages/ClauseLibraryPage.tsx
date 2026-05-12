@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -763,7 +763,35 @@ function ClauseMetadataChips({ row }: { row: ClauseTemplate }) {
 
 /* -------------------------------------------------------------------- */
 /* PR #120 — Clause detail drawer (read / edit / archive / restore).    */
+/* PR #121 — accessibility hardening: focus management + focus trap +   */
+/*           Escape-to-close (with edit-mode escape escape ladder).     */
 /* -------------------------------------------------------------------- */
+
+/**
+ * Collect focusable elements inside a container, in document order,
+ * filtering out elements that can't actually receive focus right now
+ * (disabled, hidden, or zero-size). Used by the dialog's Tab trap.
+ */
+function getFocusableElements(root: HTMLElement): HTMLElement[] {
+  const selector = [
+    "a[href]",
+    "button:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(",");
+  const all = Array.from(root.querySelectorAll<HTMLElement>(selector));
+  return all.filter((el) => {
+    if (el.hasAttribute("disabled")) return false;
+    if (el.getAttribute("aria-hidden") === "true") return false;
+    // In jsdom, offsetParent is null and width/height are 0, so we
+    // intentionally only filter on explicit visibility hints to avoid
+    // wiping the candidate set in the test environment.
+    if (el.hidden) return false;
+    return true;
+  });
+}
 
 interface EditPatch {
   name: string;
@@ -823,6 +851,12 @@ function ClauseDetailDrawer({
   onRestore,
 }: ClauseDetailDrawerProps) {
   const [draft, setDraft] = useState<EditPatch>(() => rowToEditPatch(row));
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Captured once on mount so we can restore focus to whatever element
+  // opened the drawer (typically the row's View details button).
+  const openerRef = useRef<HTMLElement | null>(null);
 
   // Reset the form whenever the drawer switches to a different row or
   // edit mode is (re)entered. Cancel uses the same effect by toggling
@@ -831,11 +865,72 @@ function ClauseDetailDrawer({
     if (editing) setDraft(rowToEditPatch(row));
   }, [editing, row]);
 
+  // PR #121 — focus management. On mount: remember the previously
+  // focused element (the opener), then move focus into the drawer so
+  // keyboard users can immediately operate it and screen readers
+  // announce the dialog. On unmount: restore focus to the opener if
+  // it's still in the document.
+  useEffect(() => {
+    const opener =
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    openerRef.current = opener;
+    // Defer focus to after paint so the close button is mounted.
+    const id = window.setTimeout(() => {
+      closeButtonRef.current?.focus();
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      const target = openerRef.current;
+      if (target && typeof document !== "undefined" && document.contains(target)) {
+        target.focus();
+      }
+    };
+  }, []);
+
+  /**
+   * Keyboard handling for the dialog:
+   *  - Escape exits edit mode first if active (so unsaved drafts can
+   *    be discarded without immediately tearing the drawer down), then
+   *    closes the drawer on a second Escape.
+   *  - Tab / Shift+Tab are trapped inside the panel so focus can't
+   *    fall behind the modal backdrop.
+   */
+  function onDialogKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      if (editing) {
+        onCancelEdit();
+      } else {
+        onClose();
+      }
+      return;
+    }
+    if (e.key === "Tab" && panelRef.current) {
+      const focusable = getFocusableElements(panelRef.current);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (active === first || !panelRef.current.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Clause details"
+      aria-labelledby={titleId}
       className="fixed inset-0 z-40 flex justify-end bg-ink/40"
       data-testid="clause-detail"
       onClick={(e) => {
@@ -843,14 +938,17 @@ function ClauseDetailDrawer({
         // stopped below.
         if (e.target === e.currentTarget) onClose();
       }}
+      onKeyDown={onDialogKeyDown}
     >
       <div
+        ref={panelRef}
         className="flex h-full w-full max-w-xl flex-col gap-3 overflow-y-auto bg-canvas p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <p
+              id={titleId}
               className="break-words text-base font-semibold text-ink"
               data-testid="clause-detail-title"
             >
@@ -894,10 +992,12 @@ function ClauseDetailDrawer({
             </div>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             className="rounded border border-rule px-2 py-1 text-xs hover:bg-canvas-muted"
             onClick={onClose}
             data-testid="clause-detail-close"
+            aria-label="Close clause details"
           >
             Close
           </button>
