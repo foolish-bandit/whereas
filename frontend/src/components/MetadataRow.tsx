@@ -158,15 +158,32 @@ export default function MetadataRow({
           </Pill>
         )}
         {hasSpan ? (
-          <button
-            type="button"
-            onClick={() => onJumpToSource(key)}
-            className="inline-flex items-center gap-1 rounded border border-rule px-1.5 py-0.5 text-ink-muted hover:border-rule-strong hover:text-ink"
-            data-testid={`metadata-row-jump-${key}`}
-            aria-label={`Jump to source for ${humanizeFieldName(field.field_name)}`}
-          >
-            <span aria-hidden>↗</span> jump to source
-          </button>
+          <span className="group/jump relative inline-block">
+            <button
+              type="button"
+              onClick={() => onJumpToSource(key)}
+              className="inline-flex items-center gap-1 rounded border border-rule px-1.5 py-0.5 text-ink-muted hover:border-rule-strong hover:text-ink"
+              data-testid={`metadata-row-jump-${key}`}
+              aria-label={`Jump to source for ${humanizeFieldName(field.field_name)}`}
+              aria-describedby={`metadata-row-tooltip-${key}`}
+            >
+              <span aria-hidden>↗</span> jump to source
+            </button>
+            {field.span_text ? (
+              <span
+                id={`metadata-row-tooltip-${key}`}
+                role="tooltip"
+                data-testid={`metadata-row-tooltip-${key}`}
+                className="pointer-events-none invisible absolute bottom-full left-0 z-10 mb-1 w-64 rounded border border-rule bg-canvas p-2 text-xs italic text-ink-muted opacity-0 shadow-md transition-opacity group-hover/jump:visible group-hover/jump:opacity-100"
+              >
+                “
+                {field.span_text.length > 200
+                  ? `${field.span_text.slice(0, 200).trim()}…`
+                  : field.span_text.trim()}
+                ”
+              </span>
+            ) : null}
+          </span>
         ) : (
           <span className="text-warning" title="No citation available">
             Citation unavailable

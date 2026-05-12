@@ -317,6 +317,39 @@ export default function ContractWorkspacePage() {
     return { start: field.span_start, end: field.span_end };
   }, [contract, selectedKey, activeRun]);
 
+  // Citation ranges for the original-text viewer: every extracted
+  // field with a valid span. Marks are subdued; the active one (the
+  // most recently clicked) is brighter and scrolls into view.
+  const citationRanges = useMemo(() => {
+    if (!contract) return [] as { key: string; start: number; end: number }[];
+    return contract.extracted_fields
+      .filter(
+        (f) =>
+          typeof f.span_start === "number" && typeof f.span_end === "number",
+      )
+      .map((f) => ({
+        key: fieldKey(f),
+        start: f.span_start as number,
+        end: f.span_end as number,
+      }));
+  }, [contract]);
+
+  // Auto-clear the active citation after 4 seconds so the brighter
+  // highlight is a transient acknowledgement, not a persistent state
+  // the user has to dismiss. Only field-key selections get this
+  // treatment — clause and review-finding selections drive the rest
+  // of the workspace and shouldn't auto-clear out from under the user.
+  useEffect(() => {
+    if (!selectedKey) return;
+    if (selectedKey.startsWith("clause:") || selectedKey.startsWith("review:")) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSelectedKey((current) => (current === selectedKey ? null : current));
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [selectedKey]);
+
   async function onDownload() {
     if (!contract) return;
     setDownloadState({ kind: "downloading" });
@@ -600,6 +633,8 @@ export default function ContractWorkspacePage() {
               fullText={state.contract.full_text}
               selectedSpan={selectedSpan}
               selectionToken={selectedKey}
+              citations={citationRanges}
+              activeCitationKey={selectedKey}
               rightSlot={
                 <ViewerModeToggle
                   mode={viewerMode}

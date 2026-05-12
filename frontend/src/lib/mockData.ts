@@ -57,10 +57,46 @@ function span(text: string, needle: string): { start: number; end: number } {
   return { start, end: start + needle.length };
 }
 
-const partiesSpan = span(MUTUAL_NDA_TEXT, "Acme Corporation");
+/**
+ * Build a hand-tagged ExtractedField for a demo contract. The needle
+ * is anchored against `text` at runtime so we never ship stale offsets.
+ */
+function tag(
+  text: string,
+  spec: {
+    field_name: string;
+    value_json: unknown;
+    needle: string;
+    confidence: number;
+    extracted_at: string;
+  },
+): ExtractedField {
+  const s = span(text, spec.needle);
+  return {
+    field_name: spec.field_name,
+    value_json: spec.value_json,
+    span_start: s.start,
+    span_end: s.end,
+    span_text: text.slice(s.start, s.end),
+    confidence: spec.confidence,
+    model_name: "demo-extractor",
+    prompt_version: "v0.demo",
+    extracted_at: spec.extracted_at,
+  };
+}
+
+const partiesSpan = span(
+  MUTUAL_NDA_TEXT,
+  "Acme Corporation, a Delaware corporation",
+);
+const counterpartyNdaSpan = span(MUTUAL_NDA_TEXT, "Globex Industries, Inc.");
 const effectiveDateSpan = span(MUTUAL_NDA_TEXT, "January 15, 2026");
 const termSpan = span(MUTUAL_NDA_TEXT, "twenty-four (24) months");
 const governingLawSpan = span(MUTUAL_NDA_TEXT, "State of Delaware");
+const terminationNoticeNdaSpan = span(
+  MUTUAL_NDA_TEXT,
+  "thirty (30) days' prior written notice",
+);
 const terminationSpan = span(
   MUTUAL_NDA_TEXT,
   "Either Party may terminate this Agreement at any time upon thirty (30) days' prior written notice",
@@ -114,6 +150,34 @@ const NDA_FIELDS: ExtractedField[] = [
       governingLawSpan.end,
     ),
     confidence: 0.91,
+    model_name: "demo-extractor",
+    prompt_version: "v0.demo",
+    extracted_at: "2026-01-15T10:30:00Z",
+  },
+  {
+    field_name: "counterparty",
+    value_json: "Globex Industries, Inc.",
+    span_start: counterpartyNdaSpan.start,
+    span_end: counterpartyNdaSpan.end,
+    span_text: MUTUAL_NDA_TEXT.slice(
+      counterpartyNdaSpan.start,
+      counterpartyNdaSpan.end,
+    ),
+    confidence: 0.92,
+    model_name: "demo-extractor",
+    prompt_version: "v0.demo",
+    extracted_at: "2026-01-15T10:30:00Z",
+  },
+  {
+    field_name: "termination_notice_period",
+    value_json: "30 days",
+    span_start: terminationNoticeNdaSpan.start,
+    span_end: terminationNoticeNdaSpan.end,
+    span_text: MUTUAL_NDA_TEXT.slice(
+      terminationNoticeNdaSpan.start,
+      terminationNoticeNdaSpan.end,
+    ),
+    confidence: 0.88,
     model_name: "demo-extractor",
     prompt_version: "v0.demo",
     extracted_at: "2026-01-15T10:30:00Z",
@@ -345,6 +409,305 @@ const NDA_CLAUSES: Clause[] = (() => {
   });
 })();
 
+// --------------------------------------------------------------------------
+// Hand-tagged demo content for the other five Repository samples. The
+// Failed contract intentionally keeps an empty fields list — its
+// reason-for-being in the demo is to illustrate the "extraction
+// failed" UI state.
+// --------------------------------------------------------------------------
+
+const MSA_TEXT = `MASTER SERVICES AGREEMENT
+
+This Master Services Agreement (the "Agreement") is entered into as of February 3, 2026 (the "Effective Date") by and between Acme Corporation ("Customer") and Initech LLC, a Texas limited liability company ("Provider").
+
+1. Services. Provider shall perform the services described in one or more statements of work (each, an "SOW") executed by the parties under this Agreement.
+
+2. Term. The initial term of this Agreement is three (3) years from the Effective Date. This Agreement will automatically renew for successive one (1) year periods unless either party gives written notice of non-renewal at least sixty (60) days before the end of the then-current term.
+
+3. Fees. Customer shall pay Provider the fees set forth in each SOW. The minimum annual commitment under this Agreement is $480,000 USD.
+
+4. Governing Law. This Agreement shall be governed by and construed in accordance with the laws of the State of California, without regard to its conflict of laws principles.
+
+5. Termination. Either party may terminate this Agreement for material breach upon sixty (60) days' written notice if the breaching party fails to cure during such period.`;
+
+const MSA_FIELDS: ExtractedField[] = [
+  tag(MSA_TEXT, {
+    field_name: "parties",
+    value_json: ["Acme Corporation", "Initech LLC"],
+    needle: 'Acme Corporation ("Customer") and Initech LLC',
+    confidence: 0.95,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "counterparty",
+    value_json: "Initech LLC",
+    needle: "Initech LLC, a Texas limited liability company",
+    confidence: 0.93,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "effective_date",
+    value_json: "2026-02-03",
+    needle: "February 3, 2026",
+    confidence: 0.97,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "term",
+    value_json: "3 years, auto-renewing 1 year",
+    needle:
+      "three (3) years from the Effective Date. This Agreement will automatically renew for successive one (1) year periods",
+    confidence: 0.84,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "renewal_date",
+    value_json: "2029-02-03",
+    needle: "automatically renew for successive one (1) year periods",
+    confidence: 0.78,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "contract_value",
+    value_json: { amount: 480000, currency: "USD" },
+    needle: "$480,000 USD",
+    confidence: 0.9,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "governing_law",
+    value_json: "California",
+    needle: "State of California",
+    confidence: 0.92,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+  tag(MSA_TEXT, {
+    field_name: "termination_notice_period",
+    value_json: "60 days",
+    needle: "sixty (60) days' written notice",
+    confidence: 0.81,
+    extracted_at: "2026-02-03T08:14:51Z",
+  }),
+];
+
+const SIGNATURE_TEXT = `MUTUAL NON-DISCLOSURE AGREEMENT — OUT FOR SIGNATURE
+
+Between Acme Corporation ("Acme") and Initech LLC, a Texas limited liability company ("Counterparty"). Effective as of March 1, 2026.
+
+1. Term. This Agreement remains in effect for twelve (12) months from the Effective Date and renews automatically for successive twelve (12) month periods unless either party gives written notice at least forty-five (45) days prior to renewal.
+
+2. Governing Law. This Agreement is governed by the laws of the State of New York.
+
+3. Termination. Either party may terminate this Agreement for any reason upon forty-five (45) days' prior written notice to the other party.
+
+This packet has been sent to both parties for signature via DocuSeal.`;
+
+const SIGNATURE_FIELDS: ExtractedField[] = [
+  tag(SIGNATURE_TEXT, {
+    field_name: "parties",
+    value_json: ["Acme Corporation", "Initech LLC"],
+    needle: 'Acme Corporation ("Acme") and Initech LLC',
+    confidence: 0.94,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "counterparty",
+    value_json: "Initech LLC",
+    needle: "Initech LLC, a Texas limited liability company",
+    confidence: 0.92,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "effective_date",
+    value_json: "2026-03-01",
+    needle: "March 1, 2026",
+    confidence: 0.96,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "term",
+    value_json: "12 months, auto-renewing",
+    needle: "twelve (12) months from the Effective Date",
+    confidence: 0.86,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "renewal_date",
+    value_json: "2026-06-01",
+    needle: "renews automatically for successive twelve (12) month periods",
+    confidence: 0.71,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "governing_law",
+    value_json: "New York",
+    needle: "State of New York",
+    confidence: 0.95,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+  tag(SIGNATURE_TEXT, {
+    field_name: "termination_notice_period",
+    value_json: "45 days",
+    needle: "forty-five (45) days' prior written notice",
+    confidence: 0.83,
+    extracted_at: "2026-02-15T09:00:00Z",
+  }),
+];
+
+const EXECUTED_TEXT = `MUTUAL NON-DISCLOSURE AGREEMENT — EXECUTED
+
+Between Acme Corporation ("Acme") and Stark Industries, a Delaware corporation ("Counterparty"). Effective as of February 20, 2026.
+
+1. Term. This Agreement remains in effect for twenty-four (24) months from the Effective Date and may be extended by mutual written agreement of the parties.
+
+2. Governing Law. This Agreement shall be governed by the laws of the State of Delaware.
+
+3. Termination. Either party may terminate this Agreement for cause upon thirty (30) days' prior written notice to the other party, with an opportunity to cure during such period.
+
+Executed by both parties via DocuSeal on February 20, 2026.`;
+
+const EXECUTED_FIELDS: ExtractedField[] = [
+  tag(EXECUTED_TEXT, {
+    field_name: "parties",
+    value_json: ["Acme Corporation", "Stark Industries"],
+    needle: 'Acme Corporation ("Acme") and Stark Industries',
+    confidence: 0.96,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "counterparty",
+    value_json: "Stark Industries",
+    needle: "Stark Industries, a Delaware corporation",
+    confidence: 0.94,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "effective_date",
+    value_json: "2026-02-20",
+    needle: "February 20, 2026",
+    confidence: 0.97,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "term",
+    value_json: "24 months",
+    needle: "twenty-four (24) months from the Effective Date",
+    confidence: 0.9,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "renewal_date",
+    value_json: "2028-02-20",
+    needle: "may be extended by mutual written agreement",
+    confidence: 0.62,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "governing_law",
+    value_json: "Delaware",
+    needle: "State of Delaware",
+    confidence: 0.96,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+  tag(EXECUTED_TEXT, {
+    field_name: "termination_notice_period",
+    value_json: "30 days",
+    needle: "thirty (30) days' prior written notice",
+    confidence: 0.89,
+    extracted_at: "2026-02-20T18:45:00Z",
+  }),
+];
+
+const REDLINE_TEXT = `MUTUAL NON-DISCLOSURE AGREEMENT — NEGOTIATION DRAFT
+
+Between Acme Corporation ("Acme") and Wayne Enterprises, a Delaware corporation ("Counterparty"). Effective as of April 1, 2026.
+
+1. Term. This Agreement remains in effect for thirty-six (36) months from the Effective Date. The parties have not yet agreed on an auto-renewal mechanic; both options are tracked in Document History.
+
+2. Governing Law. This Agreement is governed by the laws of the State of New York. (Acme's playbook prefers Delaware; redlined in v2.)
+
+3. Termination. Either party may terminate this Agreement upon ninety (90) days' prior written notice to the other party.`;
+
+const REDLINE_FIELDS: ExtractedField[] = [
+  tag(REDLINE_TEXT, {
+    field_name: "parties",
+    value_json: ["Acme Corporation", "Wayne Enterprises"],
+    needle: 'Acme Corporation ("Acme") and Wayne Enterprises',
+    confidence: 0.93,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+  tag(REDLINE_TEXT, {
+    field_name: "counterparty",
+    value_json: "Wayne Enterprises",
+    needle: "Wayne Enterprises, a Delaware corporation",
+    confidence: 0.91,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+  tag(REDLINE_TEXT, {
+    field_name: "effective_date",
+    value_json: "2026-04-01",
+    needle: "April 1, 2026",
+    confidence: 0.95,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+  tag(REDLINE_TEXT, {
+    field_name: "term",
+    value_json: "36 months",
+    needle: "thirty-six (36) months from the Effective Date",
+    confidence: 0.88,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+  tag(REDLINE_TEXT, {
+    field_name: "governing_law",
+    value_json: "New York (contested — playbook prefers Delaware)",
+    needle: "State of New York",
+    confidence: 0.64,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+  tag(REDLINE_TEXT, {
+    field_name: "termination_notice_period",
+    value_json: "90 days",
+    needle: "ninety (90) days' prior written notice",
+    confidence: 0.85,
+    extracted_at: "2026-02-06T10:00:00Z",
+  }),
+];
+
+// Merged is a duplicate scan of the canonical NDA; reuse its text and a
+// trimmed field set so the citation flow is identical when a user lands
+// on the merged record.
+const MERGED_TEXT = MUTUAL_NDA_TEXT;
+const MERGED_FIELDS: ExtractedField[] = [
+  tag(MERGED_TEXT, {
+    field_name: "parties",
+    value_json: ["Acme Corporation", "Globex Industries, Inc."],
+    needle: "Acme Corporation, a Delaware corporation",
+    confidence: 0.93,
+    extracted_at: "2026-01-22T11:11:00Z",
+  }),
+  tag(MERGED_TEXT, {
+    field_name: "counterparty",
+    value_json: "Globex Industries, Inc.",
+    needle: "Globex Industries, Inc.",
+    confidence: 0.91,
+    extracted_at: "2026-01-22T11:11:00Z",
+  }),
+  tag(MERGED_TEXT, {
+    field_name: "effective_date",
+    value_json: "2026-01-15",
+    needle: "January 15, 2026",
+    confidence: 0.97,
+    extracted_at: "2026-01-22T11:11:00Z",
+  }),
+  tag(MERGED_TEXT, {
+    field_name: "governing_law",
+    value_json: "Delaware",
+    needle: "State of Delaware",
+    confidence: 0.9,
+    extracted_at: "2026-01-22T11:11:00Z",
+  }),
+];
+
 export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
   [MOCK_NDA_ID]: {
     ...MOCK_LIST[0],
@@ -354,37 +717,32 @@ export const MOCK_DETAIL_BY_ID: Record<string, ContractDetail> = {
   },
   [MOCK_MSA_ID]: {
     ...MOCK_LIST.find((c) => c.id === MOCK_MSA_ID)!,
-    full_text:
-      "Master Services Agreement (sample). Extraction is still in progress in this demo; metadata fields will appear here once it completes.",
-    extracted_fields: [],
+    full_text: MSA_TEXT,
+    extracted_fields: MSA_FIELDS,
     clauses: [],
   },
-    [MOCK_SIGNATURE_OUT_ID]: {
+  [MOCK_SIGNATURE_OUT_ID]: {
     ...MOCK_LIST.find((c) => c.id === MOCK_SIGNATURE_OUT_ID)!,
-    full_text:
-      "NDA signature packet sent to both parties. Awaiting counterparty signature in this demo record.",
-    extracted_fields: [],
+    full_text: SIGNATURE_TEXT,
+    extracted_fields: SIGNATURE_FIELDS,
     clauses: [],
   },
   [MOCK_EXECUTED_ID]: {
     ...MOCK_LIST.find((c) => c.id === MOCK_EXECUTED_ID)!,
-    full_text:
-      "Executed NDA with signed PDF finalized. This demo record represents post-signature storage.",
-    extracted_fields: [],
+    full_text: EXECUTED_TEXT,
+    extracted_fields: EXECUTED_FIELDS,
     clauses: [],
   },
   [MOCK_MERGED_ID]: {
     ...MOCK_LIST.find((c) => c.id === MOCK_MERGED_ID)!,
-    full_text:
-      "Duplicate NDA copy merged into canonical record. Hidden by default unless Show merged is enabled.",
-    extracted_fields: [],
+    full_text: MERGED_TEXT,
+    extracted_fields: MERGED_FIELDS,
     clauses: [],
   },
   [MOCK_REDLINE_ID]: {
     ...MOCK_LIST.find((c) => c.id === MOCK_REDLINE_ID)!,
-    full_text:
-      "NDA negotiation draft with redline history entries available in Document History.",
-    extracted_fields: [],
+    full_text: REDLINE_TEXT,
+    extracted_fields: REDLINE_FIELDS,
     clauses: [],
   },
 [MOCK_FAILED_ID]: {
