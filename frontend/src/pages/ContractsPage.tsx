@@ -539,9 +539,9 @@ export default function ContractsPage() {
         <div>
           <h1 className="font-serif text-xl text-ink sm:text-2xl">Repository</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            All agreements, drafts, signed documents, and contract records.
-            Extracted metadata is machine-generated and must be reviewed before
-            relying on it.
+            Your agreement workspace for drafts, negotiated files, and signed
+            records. Machine-generated metadata and text extraction can be
+            incomplete and must be reviewed before use.
           </p>
         </div>
         <Link

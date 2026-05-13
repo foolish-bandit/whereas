@@ -124,7 +124,7 @@ export default function IntakePage() {
       <div>
         <h1 className="text-lg font-semibold text-ink">Intake</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Start contract work from one guided front door.
+          Start new agreement work from one guided front door, then route each item to Requests, Repository, or Approvals.
         </p>
       </div>
 

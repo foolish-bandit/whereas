@@ -182,7 +182,7 @@ export default function DashboardPage() {
     <div className="space-y-6" data-testid="dashboard-page">
       <PageHeader
         title="Dashboard"
-        description="Contract-ops command center: what needs attention, what is flowing through the pipeline, and what changed recently. Click a tile, action card, or row to jump straight into the matching surface."
+        description="Your MVP workspace summary: what needs attention now, what is moving through Requests, Repository, Inbox, and Approvals, and what changed recently. Metrics are operational signals only and should be reviewed by your team."
       />
 
       {state.kind === "loading" && (

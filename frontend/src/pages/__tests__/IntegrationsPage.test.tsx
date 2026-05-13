@@ -18,9 +18,9 @@ describe("IntegrationsPage", () => {
     expect(screen.getByTestId("integrations-page")).toBeInTheDocument();
   });
 
-  it("renders the self-hosted philosophy explanation", () => {
+  it("renders the integration availability explanation", () => {
     renderPage();
-    expect(screen.getByText(/self-hosted and local-first/i)).toBeInTheDocument();
+    expect(screen.getByText(/\"Available\" means you can configure it now/i)).toBeInTheDocument();
     expect(screen.getByText(/admin-controlled/i)).toBeInTheDocument();
   });
 
