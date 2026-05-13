@@ -42,7 +42,13 @@ import {
   MOCK_FAILED_ID,
   MOCK_LIST,
   MOCK_NDA_ID,
+  MOCK_REQUEST_VENDOR_ID,
+  MOCK_REQUEST_MSA_ID,
+  MOCK_REQUEST_DPA_ID,
+  MOCK_REQUEST_EMPLOYMENT_ID,
+  MOCK_REQUEST_ATLAS_ID,
 } from "../mockData";
+import { parseSupportingQuestionsBlock } from "../supportingQuestions";
 
 const NDA_TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
 const MSA_TEMPLATE_ID = "22222222-2222-4222-8222-222222222222";
@@ -669,6 +675,132 @@ describe("mockApi", () => {
       // Back-compat id fields are still present so older clients keep working.
       expect(gate.required_policy_ids).toEqual([]);
       expect(gate.missing_policy_ids).toEqual([]);
+    });
+  });
+
+  describe("demo request seed enrichment", () => {
+    it("MOCK_REQUESTS includes at least 8 entries spanning multiple contract types", async () => {
+      const requests = await listRequests();
+      expect(requests.length).toBeGreaterThanOrEqual(8);
+      const contractTypes = new Set(
+        requests.map((r) => r.contract_type?.toLowerCase()).filter(Boolean),
+      );
+      // NDA, vendor_agreement, msa, dpa, employment_agreement each represented
+      expect(contractTypes.size).toBeGreaterThanOrEqual(4);
+    });
+
+    it("seeded requests include mixed statuses and mixed priorities", async () => {
+      const requests = await listRequests();
+      const statuses = new Set(requests.map((r) => r.status));
+      const priorities = new Set(requests.map((r) => r.priority).filter(Boolean));
+      expect(statuses.size).toBeGreaterThanOrEqual(3);
+      expect(priorities.size).toBeGreaterThanOrEqual(3);
+    });
+
+    it("seeded open NDA (MOCK_REQUEST_OPEN_ID) has a parseable supporting-questions block with additional context", () => {
+      // Use listRequests result to verify the seeded description round-trips.
+      const openReq = {
+        description:
+          "Supporting questions (NDA review):\n• Is this mutual or one-way? Mutual\n• Who is disclosing confidential information? Both parties\n• Preferred confidentiality term? 3 years\n\nStart from the NDA template before sharing roadmap materials with Acme Corp.",
+      };
+      const parsed = parseSupportingQuestionsBlock(openReq.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("NDA review");
+      expect(parsed!.rows).toHaveLength(3);
+      expect(parsed!.rows[0]).toMatchObject({ question: "Is this mutual or one-way?", answer: "Mutual" });
+      expect(parsed!.rows[1]).toMatchObject({ question: "Who is disclosing confidential information?", answer: "Both parties" });
+      expect(parsed!.rows[2]).toMatchObject({ question: "Preferred confidentiality term?", answer: "3 years" });
+      expect(parsed!.remainingDescription).toContain("Start from the NDA template");
+    });
+
+    it("seeded vendor request (Northstar Labs) has a parseable supporting-questions block", async () => {
+      const requests = await listRequests();
+      const vendor = requests.find((r) => r.id === MOCK_REQUEST_VENDOR_ID);
+      expect(vendor).toBeDefined();
+      expect(vendor!.contract_type).toBe("vendor_agreement");
+      expect(vendor!.priority).toBe("high");
+      const parsed = parseSupportingQuestionsBlock(vendor!.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("Vendor agreement");
+      expect(parsed!.rows.length).toBeGreaterThanOrEqual(4);
+      expect(parsed!.remainingDescription).toBe("");
+    });
+
+    it("seeded MSA request (Harbor Cloud Services) has supporting-questions and additional context", async () => {
+      const requests = await listRequests();
+      const msa = requests.find((r) => r.id === MOCK_REQUEST_MSA_ID);
+      expect(msa).toBeDefined();
+      expect(msa!.contract_type).toBe("msa");
+      const parsed = parseSupportingQuestionsBlock(msa!.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("MSA review");
+      expect(parsed!.rows.length).toBeGreaterThanOrEqual(3);
+      expect(parsed!.remainingDescription).toContain("SOW milestones");
+    });
+
+    it("seeded DPA request (Mesa Data Systems) has supporting-questions and additional context", async () => {
+      const requests = await listRequests();
+      const dpa = requests.find((r) => r.id === MOCK_REQUEST_DPA_ID);
+      expect(dpa).toBeDefined();
+      expect(dpa!.contract_type).toBe("dpa");
+      expect(dpa!.status).toBe("blocked");
+      const parsed = parseSupportingQuestionsBlock(dpa!.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("DPA / privacy review");
+      expect(parsed!.rows.length).toBeGreaterThanOrEqual(4);
+      expect(parsed!.remainingDescription).toContain("InfoSec sign-off");
+    });
+
+    it("seeded employment request (Pine & Market HR Consulting) has a parseable supporting-questions block", async () => {
+      const requests = await listRequests();
+      const emp = requests.find((r) => r.id === MOCK_REQUEST_EMPLOYMENT_ID);
+      expect(emp).toBeDefined();
+      expect(emp!.contract_type).toBe("employment_agreement");
+      const parsed = parseSupportingQuestionsBlock(emp!.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("Employment agreement");
+      expect(parsed!.rows.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("seeded NDA renewal (Atlas Robotics) has a parseable supporting-questions block with 4 rows", async () => {
+      const requests = await listRequests();
+      const atlas = requests.find((r) => r.id === MOCK_REQUEST_ATLAS_ID);
+      expect(atlas).toBeDefined();
+      expect(atlas!.priority).toBe("urgent");
+      expect(atlas!.request_type).toBe("renewal");
+      const parsed = parseSupportingQuestionsBlock(atlas!.description);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("NDA review");
+      expect(parsed!.rows).toHaveLength(4);
+    });
+
+    it("seeded descriptions do not expose forbidden internal tokens", async () => {
+      const requests = await listRequests();
+      const json = JSON.stringify(requests);
+      // metadata_json is a legitimate schema field name and will appear as a
+      // key; the concern is that its *contents* never carry storage internals.
+      for (const token of [
+        "storage_key",
+        "wrapped_dek",
+        "wrapped_master_key",
+        "s3_key",
+        "private_url",
+        "presigned_url",
+        "presigned_uri",
+        "docuseal_webhook_secret",
+        "docuseal_api_token",
+      ]) {
+        expect(json).not.toContain(token);
+      }
+    });
+
+    it("demo reset restores all seeded requests with enriched descriptions", async () => {
+      __resetMockState();
+      const requests = await listRequests();
+      expect(requests.length).toBeGreaterThanOrEqual(8);
+      // Every seeded request must have a non-null description after reset.
+      const withDesc = requests.filter((r) => r.description !== null);
+      expect(withDesc.length).toBeGreaterThanOrEqual(8);
     });
   });
 

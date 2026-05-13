@@ -432,4 +432,108 @@ describe("RequestDetailPage", () => {
     expect(await screen.findByTestId("request-approval-none")).toBeInTheDocument();
     expect(await screen.findByTestId("activity-timeline-empty")).toBeInTheDocument();
   });
+
+  describe("demo seed descriptions", () => {
+    // These tests use the exact description strings written into MOCK_REQUESTS
+    // to verify that the seeded format parses and renders correctly on the
+    // Request Detail page without touching backend or real API calls.
+
+    it("seeded open NDA description renders supporting-questions and additional context", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (NDA review):\n• Is this mutual or one-way? Mutual\n• Who is disclosing confidential information? Both parties\n• Preferred confidentiality term? 3 years\n\nStart from the NDA template before sharing roadmap materials with Acme Corp.",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("NDA review");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(3);
+      expect(rows[0]).toHaveTextContent("Is this mutual or one-way?");
+      expect(rows[0]).toHaveTextContent("Mutual");
+      expect(rows[1]).toHaveTextContent("Who is disclosing confidential information?");
+      expect(rows[1]).toHaveTextContent("Both parties");
+      const ctx = screen.getByTestId("request-additional-context");
+      expect(ctx).toHaveTextContent("Start from the NDA template");
+    });
+
+    it("seeded MSA description renders supporting-questions and additional context", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (MSA review):\n• Customer paper or company paper? Customer paper\n• Any attached order forms or SOWs? Yes — two SOWs for onboarding and managed migration\n• Are liability caps negotiable? Yes — targeting 12 months of fees paid\n• Non-standard payment or termination terms? Net-60 payment; 90-day termination for convenience, no cure period.\n\nOnboarding timeline is Q3; confirm SOW milestones align before execution.",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("MSA review");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(4);
+      const ctx = screen.getByTestId("request-additional-context");
+      expect(ctx).toHaveTextContent("SOW milestones");
+    });
+
+    it("seeded DPA description renders DPA / privacy review label and additional context", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (DPA / privacy review):\n• What personal data is involved? Employee directories and project-assignment records synced to vendor HR platform\n• Sensitive personal information involved? No\n• Cross-border transfer expected? Yes — US to EU under standard contractual clauses\n• Counterparty role? Processor\n• Security addendum required? Yes — attached to draft\n\nWaiting on InfoSec sign-off. Draft SCC addendum shared 2026-04-28.",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("DPA / privacy review");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(5);
+      expect(screen.getByTestId("request-additional-context")).toHaveTextContent("InfoSec sign-off");
+    });
+
+    it("seeded employment description renders Employment agreement label without additional context", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (Employment agreement):\n• Employee, contractor, advisor, or consultant? Full-time employee\n• Is equity, bonus, or commission compensation involved? Yes — annual bonus target 12% of base\n• Restrictive covenants expected? Non-solicitation of employees; no non-compete\n• Jurisdiction / state that applies? California",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("Employment agreement");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(4);
+      expect(screen.queryByTestId("request-additional-context")).toBeNull();
+    });
+
+    it("seeded Atlas NDA renewal description renders 4 supporting-question rows", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (NDA review):\n• Is this mutual or one-way? Mutual\n• Who is disclosing confidential information? Both parties — includes product roadmap and pricing\n• Preferred confidentiality term? 5 years\n• Unusual disclosure restrictions to flag? Carve-out for compelled disclosures added by Atlas counsel; review against our standard form.",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("NDA review");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(4);
+      expect(rows[3]).toHaveTextContent("Unusual disclosure restrictions to flag?");
+    });
+
+    it("seeded vendor description renders Vendor agreement label", async () => {
+      mockDetail({
+        ...BASE_REQUEST,
+        description:
+          "Supporting questions (Vendor agreement):\n• What product or service is being purchased? SaaS data pipeline and observability tooling\n• New vendor or renewal? New vendor\n• Will the vendor access company or customer data? Yes — anonymized usage analytics\n• Is a security review required? Yes — completed\n• Estimated contract value? $36,000 annually",
+      });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-supporting-questions-label")).toHaveTextContent("Vendor agreement");
+      const rows = screen.getAllByTestId("request-supporting-question-row");
+      expect(rows).toHaveLength(5);
+      expect(screen.queryByTestId("request-additional-context")).toBeNull();
+    });
+  });
 });
