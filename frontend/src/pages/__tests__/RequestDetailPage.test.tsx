@@ -696,4 +696,105 @@ describe("RequestDetailPage", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe("lifecycle progress tracker", () => {
+    it("renders the tracker section on the page", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("request-lifecycle-progress")).toBeInTheDocument();
+      expect(screen.getByTestId("lifecycle-progress")).toBeInTheDocument();
+    });
+
+    it("open request without linked contract — intake complete, draft current, rest not_started", async () => {
+      mockDetail(BASE_REQUEST, approvalStatus({ has_active_workflows: false, blocking_reason: null, blocking_reason_text: null }));
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+
+      const intakeLi = screen.getByTestId("lifecycle-stage-intake");
+      const draftLi = screen.getByTestId("lifecycle-stage-draft");
+      const repositoryLi = screen.getByTestId("lifecycle-stage-repository");
+      const signatureLi = screen.getByTestId("lifecycle-stage-signature");
+      const executedLi = screen.getByTestId("lifecycle-stage-executed");
+
+      // Intake should be complete — contains a Complete icon
+      expect(intakeLi.querySelector('[aria-label="Complete"]')).toBeTruthy();
+      // Draft is current (no linked contract)
+      expect(draftLi.querySelector('[aria-label="Current step"]')).toBeTruthy();
+      expect(draftLi).toHaveAttribute("aria-current", "step");
+      // No linked contract → repository/signature/executed are not_started
+      expect(repositoryLi.querySelector('[aria-label="Not started"]')).toBeTruthy();
+      expect(signatureLi.querySelector('[aria-label="Not started"]')).toBeTruthy();
+      expect(executedLi.querySelector('[aria-label="Not started"]')).toBeTruthy();
+    });
+
+    it("request with linked contract — draft and repository complete", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: true,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+
+      const draftLi = screen.getByTestId("lifecycle-stage-draft");
+      const repositoryLi = screen.getByTestId("lifecycle-stage-repository");
+
+      expect(draftLi.querySelector('[aria-label="Complete"]')).toBeTruthy();
+      expect(repositoryLi.querySelector('[aria-label="Complete"]')).toBeTruthy();
+    });
+
+    it("approval pending state — approval stage shows current", async () => {
+      mockDetail(
+        BASE_REQUEST,
+        approvalStatus({ has_active_workflows: true }),
+      );
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+
+      const approvalLi = await screen.findByTestId("lifecycle-stage-approval");
+      expect(approvalLi.querySelector('[aria-label="Current step"]')).toBeTruthy();
+      expect(approvalLi).toHaveAttribute("aria-current", "step");
+    });
+
+    it("approval blocked state — approval stage shows blocked", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_rejected_workflows: true,
+          blocking_reason: "rejected_approval_workflows",
+          blocking_reason_text: "An approval workflow was rejected.",
+        }),
+      );
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+
+      const approvalLi = await screen.findByTestId("lifecycle-stage-approval");
+      expect(approvalLi.querySelector('[aria-label="Blocked"]')).toBeTruthy();
+      expect(approvalLi).not.toHaveAttribute("aria-current");
+    });
+
+    it("all six stage items are present", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+
+      for (const id of ["intake", "draft", "approval", "repository", "signature", "executed"]) {
+        expect(screen.getByTestId(`lifecycle-stage-${id}`)).toBeInTheDocument();
+      }
+    });
+  });
 });

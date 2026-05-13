@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import EmptyState from "../components/EmptyState";
+import LifecycleProgress from "../components/LifecycleProgress";
 import Pill from "../components/ui/Pill";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection from "../components/RequestConvertSection";
@@ -20,6 +21,7 @@ import {
 } from "../lib/api";
 import { formatDateTime, humanizeFieldName } from "../lib/format";
 import { mountedPath } from "../lib/routes";
+import { deriveRequestLifecycleStages } from "../lib/requestLifecycle";
 import { getRequestStage } from "../lib/requestStage";
 import { parseSupportingQuestionsBlock } from "../lib/supportingQuestions";
 import type { ContractListItem } from "../types/contracts";
@@ -191,9 +193,28 @@ export default function RequestDetailPage() {
     setRefreshKey((v) => v + 1);
   }
 
+  const approvalSummary =
+    approvalState.kind === "loaded" ? approvalState.status.summary : undefined;
+  const linkedContractStatus =
+    linkedState.kind === "loaded" && linkedState.record
+      ? linkedState.record.status
+      : undefined;
+  const lifecycleStages = deriveRequestLifecycleStages(
+    request,
+    approvalSummary,
+    linkedContractStatus,
+  );
+
   return (
     <div className="space-y-5" data-testid="request-detail-page">
       <RequestHeader request={request} />
+      <section
+        className="rounded border border-rule bg-canvas-subtle p-4"
+        data-testid="request-lifecycle-progress"
+        aria-label="Contract lifecycle stages"
+      >
+        <LifecycleProgress stages={lifecycleStages} />
+      </section>
       <StagePanel request={request} approvalState={approvalState} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
