@@ -633,6 +633,50 @@ describe("ContractWorkspacePage markdown integration", () => {
 
 });
 
+
+
+describe("ContractWorkspacePage repository lifecycle tracker", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    setDevUserId(VALID_UUID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDevUserId();
+  });
+
+  it("renders the repository lifecycle tracker with all repository stages", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+
+    expect(await screen.findByTestId("repository-lifecycle-progress")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-source")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-metadata")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-review")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-approval")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-signature")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-stage-executed")).toBeInTheDocument();
+  });
+
+  it("switches the active right-rail tab when lifecycle action buttons are clicked", async () => {
+    setupFetch(fetchMock);
+    renderPage();
+
+    await screen.findByTestId("repository-lifecycle-progress");
+    fireEvent.click(screen.getByRole("button", { name: /review: open review/i }));
+    expect(screen.getByTestId("rail-tab-review")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /signature: open signers/i }));
+    expect(screen.getByTestId("rail-tab-signers")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /approval: open lifecycle/i }));
+    expect(screen.getByTestId("rail-tab-lifecycle")).toBeVisible();
+  });
+});
 describe("ContractWorkspacePage Repository detail polish (PR #68)", () => {
   let fetchMock: Mock;
 

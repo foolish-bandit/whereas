@@ -13,6 +13,7 @@ import LoadingSkeleton from "../components/LoadingSkeleton";
 import HistoryTab from "../components/HistoryTab";
 import KeyTermsPanel from "../components/KeyTermsPanel";
 import MarkdownPreview from "../components/MarkdownPreview";
+import LifecycleProgress from "../components/LifecycleProgress";
 import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";
 import ReviewTab from "../components/ReviewTab";
@@ -46,6 +47,7 @@ import {
 } from "../lib/artifacts";
 import { clauseHasValidSpan } from "../lib/clauses";
 import { isDemoMode } from "../lib/env";
+import { deriveRepositoryLifecycleStages } from "../lib/repositoryLifecycle";
 import { fieldKey } from "../lib/fields";
 import {
   formatDate,
@@ -611,8 +613,15 @@ export default function ContractWorkspacePage() {
   const artifacts =
     artifactsState.kind === "loaded" ? artifactsState.artifacts : [];
 
-  return (
-    <div>
+
+  const repositoryLifecycleStages = deriveRepositoryLifecycleStages({
+    contract: state.contract,
+    artifacts,
+    metadataView,
+    hasReviewData: Boolean(activeRun) || demoFindings.length > 0,
+  });
+
+  return (    <div>
       <Link
         to="/demo/repository"
         className="text-sm text-ink-muted hover:text-ink"
@@ -661,6 +670,22 @@ export default function ContractWorkspacePage() {
         }}
       />
 
+
+      <section
+        className="mt-4 rounded border border-rule bg-canvas-subtle p-4"
+        data-testid="repository-lifecycle-progress"
+        aria-label="Repository lifecycle stages"
+      >
+        <LifecycleProgress stages={repositoryLifecycleStages} />
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3" data-testid="repository-lifecycle-actions">
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("history")}>Source file: open History</button>
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("metadata")}>Metadata: open Metadata</button>
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("review")}>Review: open Review</button>
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("lifecycle")}>Approval: open Lifecycle</button>
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("signers")}>Signature: open Signers</button>
+          <button type="button" className="text-left text-xs text-ink underline" onClick={() => setActiveTab("history")}>Executed: open History</button>
+        </div>
+      </section>
       <div
         className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]"
         data-testid="contract-preview-section"
@@ -901,6 +926,7 @@ function Sidebar({
         role="tabpanel"
         aria-labelledby="tab-review"
         hidden={activeTab !== "review"}
+        data-testid="rail-tab-review"
       >
         {demoFindings.length > 0 ? (
           <ReviewTab
