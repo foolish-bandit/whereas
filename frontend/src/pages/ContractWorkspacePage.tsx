@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
+import KeyTermsPanel from "../components/KeyTermsPanel";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import DuplicateMergePanel from "../components/DuplicateMergePanel";
@@ -742,6 +743,13 @@ export default function ContractWorkspacePage() {
           />
         </div>
       </div>
+
+      <KeyTermsPanel
+        contract={state.contract}
+        metadata={metadataView}
+        artifacts={artifacts}
+        onReviewMetadata={() => setActiveTab("metadata")}
+      />
 
       <DetailsSection
         contract={state.contract}
