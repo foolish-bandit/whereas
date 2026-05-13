@@ -55,7 +55,7 @@ describe("SettingsPage", () => {
     const aiSection = screen.getByTestId("settings-ai-local-intelligence");
 
     expect(
-      within(aiSection).getByRole("link", { name: /small model stack notes/i }),
+      within(aiSection).getByRole("link", { name: /ai_small_model_stack/i }),
     ).toHaveAttribute("href", "/docs/AI_SMALL_MODEL_STACK.md");
     expect(
       within(aiSection).getByRole("link", { name: /known limitations/i }),
