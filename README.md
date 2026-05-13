@@ -196,6 +196,12 @@ Top-level navigation:
   from an `AgreementTemplate` (PR #48) or uploading a third-party
   file (PR #65). Both paths set `linked_contract_id` and resolve the
   open `request_review` inbox item in the same transaction.
+  Demo mode ships eight seeded requests covering NDA review, vendor
+  agreement, MSA review, DPA / privacy review, and employment agreement
+  — each pre-filled with guided supporting-question answers so the
+  Request Detail page shows the structured intake view out of the box.
+  Supporting-question answers are stored in the free-text `description`
+  field only; no structured answer storage exists in the backend.
   Agreement-template management lives under `/demo/requests/templates`
   (legacy `/demo/agreement-templates` still resolves).
 - **Playbooks** — `/demo/playbooks`. Review standards, fallback
