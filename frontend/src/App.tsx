@@ -26,12 +26,14 @@ import ApprovalWorkflowDetailPage from "./pages/ApprovalWorkflowDetailPage";
 import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import ApprovalWorkflowTemplatesPage from "./pages/ApprovalWorkflowTemplatesPage";
 import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
+import IntakePage from "./pages/IntakePage";
 import LandingPage from "./pages/marketing/LandingPage";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/intake" element={<StandaloneApp><IntakePage /></StandaloneApp>} />
       <Route path="/requests" element={<StandaloneApp><RequestsPage /></StandaloneApp>} />
       <Route
         path="/requests/templates"
@@ -78,6 +80,7 @@ function DemoApp() {
         <Route path="/" element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="intake" element={<IntakePage />} />
 
         {/* Repository (new label) + legacy /contracts alias. */}
         <Route path="repository" element={<ContractsPage />} />

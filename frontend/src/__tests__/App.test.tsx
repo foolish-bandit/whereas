@@ -376,4 +376,48 @@ describe("App routing — UI consolidation pass", () => {
       await screen.findByTestId("approval-policies-deep-link-not-found"),
     ).toHaveTextContent("apol-missing");
   });
+
+  it("renders the Intake page at /demo/intake", async () => {
+    renderAt("/demo/intake");
+    await waitFor(() =>
+      expect(screen.getByTestId("intake-page")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { name: /intake/i, level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders all five intake action cards at /demo/intake", async () => {
+    renderAt("/demo/intake");
+    await waitFor(() =>
+      expect(screen.getByTestId("intake-page")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("intake-card-upload")).toBeInTheDocument();
+    expect(screen.getByTestId("intake-card-request")).toBeInTheDocument();
+    expect(screen.getByTestId("intake-card-templates")).toBeInTheDocument();
+    expect(screen.getByTestId("intake-card-inbox")).toBeInTheDocument();
+    expect(screen.getByTestId("intake-card-approvals")).toBeInTheDocument();
+  });
+
+  it("renders the Intake page at the standalone /intake route", async () => {
+    renderAt("/intake");
+    await waitFor(() =>
+      expect(screen.getByTestId("intake-page")).toBeInTheDocument(),
+    );
+  });
+
+  it("highlights Intake in the sidebar when at /demo/intake", async () => {
+    renderAt("/demo/intake");
+    await waitFor(() =>
+      expect(screen.getByTestId("intake-page")).toBeInTheDocument(),
+    );
+    // There are two sidebar-nav elements (desktop + mobile drawer);
+    // check both — the active link should appear in at least one.
+    const navs = screen.getAllByTestId("sidebar-nav");
+    const activeIntakeLinks = navs.flatMap((nav) =>
+      Array.from(nav.querySelectorAll('a[href="/demo/intake"]')),
+    );
+    expect(activeIntakeLinks.length).toBeGreaterThan(0);
+    expect(activeIntakeLinks[0].className).toMatch(/font-medium/);
+  });
 });
