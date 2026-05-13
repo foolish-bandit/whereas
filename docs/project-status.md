@@ -32,6 +32,8 @@ planned later, and what belongs to future AI/automation phases.
 
 ## Future AI/automation
 
+- AI architecture is constrained to a small-model strategy by default (≤2B default model cap, deterministic-first pipeline, playbook-grounded findings, and required human review).
+- Canonical architecture and boundaries: [AI_SMALL_MODEL_STACK.md](AI_SMALL_MODEL_STACK.md).
 - Richer structured supporting-question answer persistence in backend models.
 - Deeper Clause ↔ Playbook relationship and automation loop.
 - Broader AI-assisted review/automation features beyond current deterministic workflow aids.
