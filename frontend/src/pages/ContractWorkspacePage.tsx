@@ -11,6 +11,7 @@ import DuplicateMergePanel from "../components/DuplicateMergePanel";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import HistoryTab from "../components/HistoryTab";
+import KeyTermsPanel from "../components/KeyTermsPanel";
 import MarkdownPreview from "../components/MarkdownPreview";
 import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";

@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import KpiTile from "../components/dashboard/KpiTile";
+import PageHeader from "../components/ui/PageHeader";
+import WorkspaceCard from "../components/ui/WorkspaceCard";
 import {
   ApiError,
   MissingDevUserError,
@@ -178,15 +180,10 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
-      <div>
-        <h1 className="text-lg font-semibold text-ink">Dashboard</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Contract-ops command center: what needs attention, what is
-          flowing through the pipeline, and what changed recently.
-          Click a tile, action card, or row to jump straight into the
-          matching surface.
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="Contract-ops command center: what needs attention, what is flowing through the pipeline, and what changed recently. Click a tile, action card, or row to jump straight into the matching surface."
+      />
 
       {state.kind === "loading" && (
         <div data-testid="dashboard-loading">
@@ -383,15 +380,14 @@ function QuickActions() {
       </h2>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {QUICK_ACTIONS.map((qa) => (
-          <Link
+          <WorkspaceCard
             key={qa.key}
             to={qa.to}
-            data-testid={`quick-action-${qa.key}`}
-            className="rounded border border-rule bg-canvas p-3 transition-colors hover:border-rule-strong hover:bg-canvas-subtle"
-          >
-            <p className="text-sm font-medium text-ink">{qa.label}</p>
-            <p className="mt-1 text-xs text-ink-subtle">{qa.hint}</p>
-          </Link>
+            title={qa.label}
+            description={qa.hint}
+            testId={`quick-action-${qa.key}`}
+            variant="primary"
+          />
         ))}
       </div>
     </section>
