@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import ClauseLibraryPage from "./pages/ClauseLibraryPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
+import DevComponentsPage from "./pages/DevComponentsPage";
 import KnownLimitationsPage from "./pages/KnownLimitationsPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
@@ -41,6 +42,10 @@ export default function App() {
         element={<StandaloneApp><AgreementTemplateDetailPage /></StandaloneApp>}
       />
       <Route path="/requests/:id" element={<StandaloneApp><RequestDetailPage /></StandaloneApp>} />
+      <Route
+        path="/dev/components"
+        element={<StandaloneApp><DevComponentsPage /></StandaloneApp>}
+      />
       <Route path="/demo/*" element={<DemoApp />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

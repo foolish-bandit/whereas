@@ -7,7 +7,13 @@ module.exports = {
     "plugin:@typescript-eslint/recommended",
     "plugin:react-hooks/recommended",
   ],
-  ignorePatterns: ["dist", "node_modules", ".eslintrc.cjs", "vite.config.ts"],
+  ignorePatterns: [
+    "dist",
+    "node_modules",
+    ".eslintrc.cjs",
+    "eslint-rules",
+    "vite.config.ts",
+  ],
   parser: "@typescript-eslint/parser",
   parserOptions: { ecmaVersion: "latest", sourceType: "module" },
   plugins: ["@typescript-eslint", "react-refresh"],
@@ -20,13 +26,14 @@ module.exports = {
       "error",
       { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
     ],
+    // Custom rule loaded via --rulesdir (see the `lint` npm script).
+    // Bans raw Tailwind palette literals like bg-rose-50 in favor of
+    // the semantic tokens documented in docs/design-tokens.md.
+    "no-raw-palette": "error",
   },
   overrides: [
     {
       files: ["**/__tests__/**/*.{ts,tsx}", "**/*.test.{ts,tsx}"],
-      // vitest exposes describe/it/expect as globals via its `globals: true`
-      // setting; declare them here so eslint's no-undef rule is happy
-      // without pulling in an extra plugin just for env keys.
       globals: {
         describe: "readonly",
         it: "readonly",
