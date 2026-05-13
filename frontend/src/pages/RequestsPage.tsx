@@ -5,6 +5,8 @@ import EmptyState from "../components/EmptyState";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import Pill from "../components/ui/Pill";
+import PageHeader from "../components/ui/PageHeader";
+import WorkspaceCard from "../components/ui/WorkspaceCard";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection, {
   ConvertedContractLink,
@@ -360,24 +362,20 @@ export default function RequestsPage() {
 
   return (
     <div className="space-y-5" data-testid="requests-page">
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-ink">Requests</h1>
-          <p className="mt-1 text-sm text-ink-muted">
-            The natural place to start work. Create a new request, generate
-            an agreement from a reusable template, or triage the request
-            queue.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-xs text-ink-subtle">
-          <input
-            type="checkbox"
-            checked={includeCancelled}
-            onChange={(e) => setIncludeCancelled(e.target.checked)}
-          />
-          Show cancelled
-        </label>
-      </div>
+      <PageHeader
+        title="Requests"
+        description="The natural place to start work. Create a new request, generate an agreement from a reusable template, or triage the request queue."
+        actions={
+          <label className="flex items-center gap-2 text-xs text-ink-subtle">
+            <input
+              type="checkbox"
+              checked={includeCancelled}
+              onChange={(e) => setIncludeCancelled(e.target.checked)}
+            />
+            Show cancelled
+          </label>
+        }
+      />
 
       <RequestsWorkspaceCards />
 
@@ -800,40 +798,28 @@ function RequestsWorkspaceCards() {
     >
       {WORKSPACE_CARDS.map((card) => {
         const isAnchor = card.to.includes("#");
-        const className = [
-          "group rounded border p-4 transition-colors",
-          card.variant === "primary"
-            ? "border-rule bg-canvas hover:border-rule-strong hover:bg-canvas-subtle"
-            : "border-rule bg-canvas-subtle hover:border-rule-strong hover:bg-canvas",
-        ].join(" ");
-        const body = (
-          <>
-            <p className="text-sm font-medium text-ink">{card.title}</p>
-            <p className="mt-1 text-xs text-ink-muted">{card.description}</p>
-          </>
-        );
-        if (isAnchor) {
-          const hash = card.to.split("#")[1];
+        const hash = isAnchor ? `#${card.to.split("#")[1]}` : undefined;
+        if (isAnchor && hash) {
           return (
-            <a
+            <WorkspaceCard
               key={card.testId}
-              href={`#${hash}`}
-              data-testid={card.testId}
-              className={className}
-            >
-              {body}
-            </a>
+              href={hash}
+              title={card.title}
+              description={card.description}
+              testId={card.testId}
+              variant={card.variant}
+            />
           );
         }
         return (
-          <Link
+          <WorkspaceCard
             key={card.testId}
             to={card.to}
-            data-testid={card.testId}
-            className={className}
-          >
-            {body}
-          </Link>
+            title={card.title}
+            description={card.description}
+            testId={card.testId}
+            variant={card.variant}
+          />
         );
       })}
     </section>

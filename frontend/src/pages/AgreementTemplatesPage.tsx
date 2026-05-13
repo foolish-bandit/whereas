@@ -4,6 +4,9 @@ import { Link, useLocation } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import FilterBar from "../components/ui/FilterBar";
+import PageHeader from "../components/ui/PageHeader";
+import SectionCard from "../components/ui/SectionCard";
 import {
   ApiError,
   MissingDevUserError,
@@ -158,75 +161,70 @@ export default function AgreementTemplatesPage() {
 
   return (
     <div className="space-y-5" data-testid="agreement-templates-page">
-      <nav className="text-xs text-ink-subtle" aria-label="Breadcrumb">
-        <Link
-          to={demoPath("/requests")}
-          className="hover:text-ink"
-          data-testid="agreement-templates-breadcrumb-requests"
-        >
-          Requests
-        </Link>
-        <span className="mx-1">/</span>
-        <span className="text-ink-muted">Agreement Templates</span>
-      </nav>
+      <PageHeader
+        title="Agreement Templates"
+        description="Reusable agreement templates used to start and generate requests. Uploaded template originals are the official source file; a text preview is the lightweight working copy."
+        eyebrow={
+          <nav className="text-xs text-ink-subtle" aria-label="Breadcrumb">
+            <Link
+              to={demoPath("/requests")}
+              className="hover:text-ink"
+              data-testid="agreement-templates-breadcrumb-requests"
+            >
+              Requests
+            </Link>
+            <span className="mx-1">/</span>
+            <span className="text-ink-muted">Agreement Templates</span>
+          </nav>
+        }
+        actions={
+          <label className="flex items-center gap-2 text-xs text-ink-subtle">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(e) => setIncludeArchived(e.target.checked)}
+              data-testid="agreement-templates-include-archived"
+            />
+            Show archived
+          </label>
+        }
+      />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-ink">Agreement Templates</h1>
-          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Reusable agreement templates used to start and generate requests.
-            Uploaded template originals are the official source file; a text
-            preview is the lightweight working copy.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-xs text-ink-subtle">
+      <SectionCard title="New template" testId="agreement-templates-create">
+        <div className="grid gap-2">
           <input
-            type="checkbox"
-            checked={includeArchived}
-            onChange={(e) => setIncludeArchived(e.target.checked)}
-            data-testid="agreement-templates-include-archived"
+            className="rounded border border-rule px-2 py-1 text-sm"
+            placeholder="Template name (e.g. Mutual NDA)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
           />
-          Show archived
-        </label>
-      </div>
-
-      <section
-        className="grid gap-2 rounded border border-rule p-3"
-        data-testid="agreement-templates-create"
-      >
-        <h2 className="text-sm font-medium text-ink">New template</h2>
-        <input
-          className="rounded border border-rule px-2 py-1 text-sm"
-          placeholder="Template name (e.g. Mutual NDA)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <input
-          className="rounded border border-rule px-2 py-1 text-sm"
-          placeholder="Template type (NDA, MSA, SOW, ...)"
-          value={templateType}
-          onChange={(e) => setTemplateType(e.target.value)}
-        />
-        <textarea
-          className="min-h-[3rem] rounded border border-rule px-2 py-1 text-sm"
-          placeholder="Description (optional)"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-fit sm:py-1.5"
-            onClick={onCreate}
-            disabled={creating || !name.trim()}
-          >
-            {creating ? "Creating…" : "Create template"}
-          </button>
-          {createError && (
-            <span className="text-xs text-danger">{createError}</span>
-          )}
+          <input
+            className="rounded border border-rule px-2 py-1 text-sm"
+            placeholder="Template type (NDA, MSA, SOW, ...)"
+            value={templateType}
+            onChange={(e) => setTemplateType(e.target.value)}
+          />
+          <textarea
+            className="min-h-[3rem] rounded border border-rule px-2 py-1 text-sm"
+            placeholder="Description (optional)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="w-full rounded border border-ink bg-ink px-3 py-2 text-sm text-canvas disabled:opacity-50 sm:w-fit sm:py-1.5"
+              onClick={onCreate}
+              disabled={creating || !name.trim()}
+            >
+              {creating ? "Creating…" : "Create template"}
+            </button>
+            {createError && (
+              <span className="text-xs text-danger">{createError}</span>
+            )}
+          </div>
         </div>
-      </section>
+      </SectionCard>
 
       {state.kind === "loading" && <LoadingSkeleton rows={3} />}
       {state.kind === "error" && (
@@ -251,7 +249,7 @@ export default function AgreementTemplatesPage() {
 
       {state.kind === "loaded" && state.rows.length > 0 && (
         <div className="space-y-6">
-          <div className="flex flex-wrap items-center gap-2">
+          <FilterBar>
             <input
               type="search"
               className="flex-1 rounded border border-rule px-2 py-1.5 text-sm placeholder:text-ink-subtle"
@@ -287,7 +285,7 @@ export default function AgreementTemplatesPage() {
                 Reset filters
               </button>
             )}
-          </div>
+          </FilterBar>
 
           {filteredRows.length === 0 ? (
             <EmptyState
