@@ -54,19 +54,30 @@ describe("StartNewMenu", () => {
     expect(screen.queryByTestId("start-new-menu")).not.toBeInTheDocument();
   });
 
-  it("renders all seven menu items with labels", () => {
+  it("renders all four core menu items with labels", () => {
     renderMenu();
     fireEvent.click(screen.getByTestId("start-new-trigger"));
     for (const label of [
+      "New Request",
       "Upload to Repository",
-      "Start Request",
       "Start from Agreement Template",
-      "Open Inbox Intake",
+      "Open Intake",
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  it("does not surface secondary actions like Playbooks or Clause Manager", () => {
+    // These are still reachable from the sidebar; the Start New menu
+    // stays focused on the four ways to begin a new piece of work.
+    renderMenu();
+    fireEvent.click(screen.getByTestId("start-new-trigger"));
+    for (const label of [
       "View Approval Tasks",
       "Add Playbook Rule",
       "Add Clause",
     ]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
@@ -74,13 +85,10 @@ describe("StartNewMenu", () => {
     renderMenu();
     fireEvent.click(screen.getByTestId("start-new-trigger"));
     for (const hint of [
-      "Add a signed Repository record or document",
       "Kick off a new contract request",
+      "Add a signed Repository record or document",
       "Use a saved template to draft faster",
-      "Process an incoming contract",
-      "See contracts awaiting your review",
-      "Define a new deviation check",
-      "Extend the clause library",
+      "Pick how to bring a contract into Whereas",
     ]) {
       expect(screen.getByText(hint)).toBeInTheDocument();
     }
@@ -98,16 +106,13 @@ describe("StartNewMenu", () => {
     fireEvent.click(screen.getByTestId("start-new-trigger"));
 
     const cases: [string, string][] = [
+      ["start-new-new-request", "/demo/requests#new-request"],
       ["start-new-upload", "/demo/upload"],
-      ["start-new-start-request", "/demo/requests#new-request"],
       [
         "start-new-start-from-agreement-template",
         "/demo/requests/templates",
       ],
-      ["start-new-open-inbox-intake", "/demo/inbox"],
-      ["start-new-view-approval-tasks", "/demo/approvals/tasks"],
-      ["start-new-add-playbook-rule", "/demo/playbooks"],
-      ["start-new-add-clause", "/demo/clause-manager"],
+      ["start-new-open-intake", "/demo/intake"],
     ];
 
     for (const [testId, href] of cases) {
@@ -120,16 +125,13 @@ describe("StartNewMenu", () => {
     fireEvent.click(screen.getByTestId("start-new-trigger"));
 
     const cases: [string, string][] = [
+      ["start-new-new-request", "/requests#new-request"],
       ["start-new-upload", "/upload"],
-      ["start-new-start-request", "/requests#new-request"],
       [
         "start-new-start-from-agreement-template",
         "/requests/templates",
       ],
-      ["start-new-open-inbox-intake", "/inbox"],
-      ["start-new-view-approval-tasks", "/approvals/tasks"],
-      ["start-new-add-playbook-rule", "/playbooks"],
-      ["start-new-add-clause", "/clause-manager"],
+      ["start-new-open-intake", "/intake"],
     ];
 
     for (const [testId, href] of cases) {
