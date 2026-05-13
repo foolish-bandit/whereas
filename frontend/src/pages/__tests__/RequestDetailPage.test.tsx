@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -208,6 +208,12 @@ describe("RequestDetailPage", () => {
     expect(await screen.findByTestId("activity-timeline")).toBeInTheDocument();
     expect(screen.getByTestId("activity-export-csv")).toBeInTheDocument();
     expect(screen.getByTestId("activity-export-json")).toBeInTheDocument();
+    expect(screen.getByTestId("request-detail-next-steps")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("request-detail-next-steps")).getByRole("link", {
+        name: "Open Playbooks",
+      }),
+    ).toHaveAttribute("href", "/playbooks");
 
     const body = document.body.textContent ?? "";
     for (const forbidden of [
