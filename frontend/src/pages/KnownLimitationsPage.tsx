@@ -9,58 +9,77 @@ interface LimitationGroup {
 
 const GROUPS: LimitationGroup[] = [
   {
-    id: "auth",
-    heading: "Authentication and identity",
-    body: "The deployment does not yet ship a full authentication or user-management story. The backend identifies requests by a header that points at a row in the users table.",
+    id: "mvp-demo",
+    heading: "MVP and demo boundaries",
+    body: "Whereas currently ships as a pre-v0.1 evaluator experience. Core CLM workflow surfaces are usable, but parts of the UX are demo/session oriented.",
     items: [
       {
-        area: "Sign-in",
-        note: "Sign-in via the user dropdown is a placeholder in demo mode; production deployments configure their identity provider out-of-band.",
+        area: "Demo data",
+        note: "Seeded records are fictional and intended for walkthroughs only.",
       },
       {
-        area: "User picker UX",
-        note: "Workflow steps and policies currently identify users by ID rather than a typeahead. A user picker is planned for a later release.",
-      },
-    ],
-  },
-  {
-    id: "playbooks",
-    heading: "Playbooks",
-    body: "Playbooks ship as YAML you author and load into the backend. The web app reads playbooks and renders rule results; it does not yet edit them.",
-    items: [
-      {
-        area: "In-app authoring",
-        note: "Adding, editing, or reordering playbook rules from the Playbooks UI is read-only today; round-trip through the YAML source.",
-      },
-      {
-        area: "Clause Manager linkage",
-        note: "Cross-referencing a playbook rule to a managed clause from the rule editor is not wired yet. Both surfaces ship today; the integration is planned.",
-      },
-    ],
-  },
-  {
-    id: "history",
-    heading: "Document History and templates",
-    body: "Version diff is word-level. Paragraph-aware diff, redline-accept/reject, and template per-version download require additional work that is not part of v0.1.",
-    items: [
-      {
-        area: "Per-version template download",
-        note: "Each template tracks an active version and the body it produces. A standalone per-version download endpoint is planned.",
-      },
-      {
-        area: "Redline accept/reject",
-        note: "The diff view is read-only. Accepting or rejecting individual changes is a planned v0.2 negotiation feature.",
+        area: "Session state",
+        note: "Some edits and workflow states may persist only in local browser/session context in demo mode.",
       },
     ],
   },
   {
     id: "integrations",
-    heading: "Integrations",
-    body: "Integrations are intentionally limited in this MVP. The Integrations page marks each connector as Available now or Planned (not connected yet).",
+    heading: "Integrations and external systems",
+    body: "The Integrations page distinguishes available-now behavior from planned connectors. Planned connectors are roadmap items, not active syncs.",
     items: [
       {
-        area: "Inbound email",
-        note: "Watching an inbox for contract attachments is on the roadmap; today, contracts arrive via upload only.",
+        area: "Email/chat/CRM",
+        note: "Outlook, Gmail, Slack, Teams, Salesforce, and related connectors are not fully wired in this MVP.",
+      },
+      {
+        area: "Calendar/reminders",
+        note: "Automated reminder and calendar sync behavior is planned, not currently implemented.",
+      },
+    ],
+  },
+  {
+    id: "review-ai",
+    heading: "Review guidance and AI boundaries",
+    body: "Supporting questions, metadata extraction, and workflow guidance help organize review work. They are operational aids and require human validation.",
+    items: [
+      {
+        area: "Structured answers",
+        note: "Supporting-question answers are summarized into existing request text fields; a full structured backend answer model is not shipped yet.",
+      },
+      {
+        area: "Legal judgment",
+        note: "Whereas does not provide legal advice. Users remain responsible for legal interpretation and decisions.",
+      },
+    ],
+  },
+  {
+    id: "document-signature",
+    heading: "Document conversion and e-signature",
+    body: "Repository record and artifact workflows are implemented, with practical MVP constraints around comparison and signature-adjacent handling.",
+    items: [
+      {
+        area: "Redline workflows",
+        note: "Compare/history tools exist, but advanced negotiation UX (for example full accept/reject-at-scale flows) remains limited.",
+      },
+      {
+        area: "DocuSeal scope",
+        note: "DocuSeal integration behavior follows the current shipped flow; broader enterprise signing orchestration is out of scope for this MVP.",
+      },
+    ],
+  },
+  {
+    id: "platform",
+    heading: "Browser, PWA, and self-hosting",
+    body: "Whereas is optimized for local/self-host evaluation. Production-hardening concerns should be reviewed before wider deployment.",
+    items: [
+      {
+        area: "PWA caching",
+        note: "Service worker behavior is expected to exclude `/api/*` caching paths.",
+      },
+      {
+        area: "Enterprise controls",
+        note: "Full enterprise auth/RBAC/SSO and production certification posture are not represented by this pre-v0.1 release.",
       },
     ],
   },
@@ -74,10 +93,13 @@ export default function KnownLimitationsPage() {
           Known limitations
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          A plain-English list of what is available now, what is
-          demo/session-only, and what is planned. Whereas surfaces
-          information about agreements; it does not provide legal advice.
-          Machine-generated metadata and extracted text must be reviewed.
+          This page explains what works today, what remains demo/session-only,
+          and what is still planned. For a recommended evaluator path, start on{" "}
+          <Link to="/demo/dashboard" className="underline hover:text-ink">
+            Dashboard
+          </Link>{" "}
+          and follow the workflow through Intake, Requests, Repository, and
+          Approvals.
         </p>
       </header>
 
@@ -113,14 +135,8 @@ export default function KnownLimitationsPage() {
         >
           GitHub
         </a>
-        , or open the{" "}
-        <Link
-          to="/demo/integrations"
-          className="underline hover:text-ink"
-        >
-          Integrations
-        </Link>{" "}
-        page for the planned external connectors.
+        , review <Link to="/demo/integrations" className="underline hover:text-ink">Integrations</Link>,
+        and check the root README for the current MVP release notes.
       </p>
     </div>
   );
