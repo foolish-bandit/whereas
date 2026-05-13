@@ -484,17 +484,31 @@ function ConversionSection({
   onConverted: (response: ConvertRequestToContractResponse) => void;
   onUploaded: (response: ConvertRequestUploadResponse) => void;
 }) {
+  const location = useLocation();
+
   if (request.linked_contract_id) {
     return (
       <section
         className="rounded border border-rule p-4"
         data-testid="request-detail-conversion-disabled"
       >
-        <h2 className="text-sm font-medium text-ink">Conversion actions</h2>
+        <h2 className="text-sm font-medium text-ink">Move to Repository</h2>
         <p className="mt-1 text-sm text-ink-muted">
-          This Request already has a linked Repository record, so generation and
-          upload conversion actions are closed for this workspace.
+          This request is linked to a Repository record. Generation and upload
+          actions are not available once a Repository record exists.
         </p>
+        <div className="mt-3">
+          <Link
+            to={mountedPath(
+              `/repository/${encodeURIComponent(request.linked_contract_id)}`,
+              location.pathname,
+            )}
+            className="inline-flex w-fit items-center justify-center rounded border border-ink bg-ink px-3 py-1.5 text-xs text-canvas hover:opacity-90"
+            data-testid="request-conversion-repository-link"
+          >
+            Open Repository record
+          </Link>
+        </div>
       </section>
     );
   }
@@ -505,9 +519,9 @@ function ConversionSection({
         className="rounded border border-rule p-4"
         data-testid="request-detail-conversion-disabled"
       >
-        <h2 className="text-sm font-medium text-ink">Conversion actions</h2>
+        <h2 className="text-sm font-medium text-ink">Move to Repository</h2>
         <p className="mt-1 text-sm text-ink-muted">
-          Cancelled Requests cannot be converted.
+          Cancelled requests cannot be converted to a Repository record.
         </p>
       </section>
     );
@@ -518,9 +532,10 @@ function ConversionSection({
       className="rounded border border-rule p-4"
       data-testid="request-detail-conversion"
     >
-      <h2 className="text-sm font-medium text-ink">Conversion actions</h2>
+      <h2 className="text-sm font-medium text-ink">Move to Repository</h2>
       <p className="mt-1 text-xs text-ink-subtle">
-        Generate from a linked Agreement Template or upload third-party paper.
+        Create a Repository record by generating from an Agreement Template or
+        by uploading an existing source document.
       </p>
       {request.linked_template_id ? (
         <RequestConvertSection request={request} onConverted={onConverted} />
@@ -529,8 +544,9 @@ function ConversionSection({
           className="mt-3 text-xs text-ink-subtle"
           data-testid="request-detail-no-template"
         >
-          No Agreement Template is linked. Upload third-party paper to create a
-          Repository record from the source file.
+          No Agreement Template is linked. Link one to generate a draft, or
+          upload an existing source file below to create a Repository record
+          directly.
         </p>
       )}
       <RequestUploadConvertSection request={request} onConverted={onUploaded} />

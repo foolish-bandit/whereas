@@ -255,6 +255,103 @@ describe("RequestDetailPage", () => {
     expect(await screen.findByTestId("activity-timeline-empty")).toBeInTheDocument();
   });
 
+  describe("conversion panel — Move to Repository", () => {
+    it("shows 'Move to Repository' heading for an active unconverted request", async () => {
+      mockDetail();
+      renderPage();
+
+      const section = await screen.findByTestId("request-detail-conversion");
+      expect(section).toHaveTextContent("Move to Repository");
+    });
+
+    it("shows 'Move to Repository' heading when request is already converted", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: true,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      const section = await screen.findByTestId("request-detail-conversion-disabled");
+      expect(section).toHaveTextContent("Move to Repository");
+    });
+
+    it("shows Open Repository record link when linked_contract_id is set", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: true,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      const link = await screen.findByTestId("request-conversion-repository-link");
+      expect(link).toHaveAttribute("href", "/repository/contract-1");
+    });
+
+    it("Repository link uses /repository/:id not /contracts/:id", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: true,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      const link = await screen.findByTestId("request-conversion-repository-link");
+      expect(link.getAttribute("href")).toMatch(/^\/repository\//);
+      expect(link.getAttribute("href")).not.toMatch(/^\/contracts\//);
+    });
+
+    it("cancelled request shows unavailable copy and no Open Repository link", async () => {
+      mockDetail({ ...BASE_REQUEST, status: "cancelled" });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-conversion-disabled")).toBeInTheDocument();
+      expect(screen.getByTestId("request-detail-conversion-disabled")).toHaveTextContent(
+        /cancelled/i,
+      );
+      expect(screen.queryByTestId("request-conversion-repository-link")).toBeNull();
+    });
+
+    it("shows honest guidance when no Agreement Template is linked", async () => {
+      mockDetail({ ...BASE_REQUEST, linked_template_id: null });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-no-template")).toBeInTheDocument();
+      expect(screen.getByTestId("request-detail-no-template")).toHaveTextContent(
+        /Agreement Template/i,
+      );
+    });
+
+    it("still renders the generate form when an Agreement Template is linked", async () => {
+      mockDetail({ ...BASE_REQUEST, linked_template_id: "tpl-1" });
+      renderPage();
+
+      expect(await screen.findByTestId("request-convert-section")).toBeInTheDocument();
+      expect(screen.queryByTestId("request-detail-no-template")).toBeNull();
+    });
+  });
+
   it("renders blocking approval state safely", async () => {
     mockDetail(
       LINKED_REQUEST,

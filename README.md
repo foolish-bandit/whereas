@@ -202,6 +202,12 @@ Top-level navigation:
   *Ready for signature*, *Converted to Repository*. The Request Detail
   page surfaces the same stage as a prominent panel near the top, with
   an explanation and a next-action link where one applies.
+  The *Move to Repository* section on Request Detail makes the
+  conversion path explicit: it shows an "Open Repository record" button
+  if a record already exists, honest guidance if no template or source
+  file is available, and the generate/upload actions otherwise.
+  Conversion semantics (endpoints, payload shape, approval gates,
+  DocuSeal send) are unchanged.
   Demo mode ships eight seeded requests covering NDA review, vendor
   agreement, MSA review, DPA / privacy review, and employment agreement
   — each pre-filled with guided supporting-question answers so the
