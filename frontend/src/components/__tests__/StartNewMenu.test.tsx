@@ -74,7 +74,7 @@ describe("StartNewMenu", () => {
     renderMenu();
     fireEvent.click(screen.getByTestId("start-new-trigger"));
     for (const hint of [
-      "Add a signed contract or document",
+      "Add a signed Repository record or document",
       "Kick off a new contract request",
       "Use a saved template to draft faster",
       "Process an incoming contract",

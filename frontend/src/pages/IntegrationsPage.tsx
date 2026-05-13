@@ -161,8 +161,9 @@ export default function IntegrationsPage() {
         <h1 className="font-serif text-xl text-ink sm:text-2xl">Integrations</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Integrations are explicit, optional, and admin-controlled. "Available"
-          means you can configure it now in this MVP. "Planned" means the
-          connector is listed for roadmap visibility and is not connected yet.
+          means the current shipped integration flow is present in this MVP
+          (for example, DocuSeal in the self-hosted setup). "Planned" means
+          the connector is listed for roadmap visibility and is not connected yet.
         </p>
       </header>
 

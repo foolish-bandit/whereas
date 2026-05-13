@@ -20,7 +20,7 @@ describe("IntegrationsPage", () => {
 
   it("renders the integration availability explanation", () => {
     renderPage();
-    expect(screen.getByText(/\"Available\" means you can configure it now/i)).toBeInTheDocument();
+    expect(screen.getByText(/\"Available\" means the current shipped integration flow is present in this MVP/i)).toBeInTheDocument();
     expect(screen.getByText(/admin-controlled/i)).toBeInTheDocument();
   });
 
