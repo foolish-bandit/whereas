@@ -64,7 +64,10 @@ interface CountTile {
   demoTrend?: { pct: number; invert?: boolean };
 }
 
-const PIPELINE_TILES: CountTile[] = [
+// Primary Pipeline Snapshot — the four numbers a contracts lead
+// glances at first. Everything else lives below "More operational
+// detail" so the top of the page stays scannable.
+const PIPELINE_SNAPSHOT_TILES: CountTile[] = [
   {
     key: "open_requests",
     label: "Open requests",
@@ -72,6 +75,30 @@ const PIPELINE_TILES: CountTile[] = [
     to: demoPath("/requests"),
     demoTrend: { pct: 12 },
   },
+  {
+    key: "pending_approval_steps",
+    label: "Pending approvals",
+    hint: "Steps awaiting a decision on active workflows",
+    to: demoPath("/approvals/tasks"),
+  },
+  {
+    key: "contracts_total",
+    label: "Repository records",
+    hint: "Every contract in this org",
+    to: demoPath("/repository"),
+  },
+  {
+    key: "contracts_sent_for_signature",
+    label: "Out for signature",
+    hint: "Status sent_for_signature",
+    to: demoPath("/repository"),
+  },
+];
+
+// Secondary tiles — still useful, just not part of the daily glance.
+// They render below the page fold inside a "More operational detail"
+// disclosure.
+const DETAIL_PIPELINE_TILES: CountTile[] = [
   {
     key: "in_progress_requests",
     label: "In progress",
@@ -86,19 +113,7 @@ const PIPELINE_TILES: CountTile[] = [
   },
 ];
 
-const REPOSITORY_TILES: CountTile[] = [
-  {
-    key: "contracts_total",
-    label: "Repository total",
-    hint: "Every contract in this org",
-    to: demoPath("/repository"),
-  },
-  {
-    key: "contracts_sent_for_signature",
-    label: "Out for signature",
-    hint: "Status sent_for_signature",
-    to: demoPath("/repository"),
-  },
+const DETAIL_REPOSITORY_TILES: CountTile[] = [
   {
     key: "contracts_executed",
     label: "Executed contracts",
@@ -108,13 +123,7 @@ const REPOSITORY_TILES: CountTile[] = [
   },
 ];
 
-const APPROVAL_COUNT_TILES: CountTile[] = [
-  {
-    key: "pending_approval_steps",
-    label: "Pending approvals",
-    hint: "Steps awaiting a decision on active workflows",
-    to: demoPath("/approvals/tasks"),
-  },
+const DETAIL_APPROVAL_TILES: CountTile[] = [
   {
     key: "overdue_approval_steps",
     label: "Overdue approvals",
@@ -137,7 +146,7 @@ const APPROVAL_COUNT_TILES: CountTile[] = [
   },
 ];
 
-const INBOX_AND_TEMPLATE_TILES: CountTile[] = [
+const DETAIL_INBOX_AND_TEMPLATE_TILES: CountTile[] = [
   {
     key: "open_inbox_items",
     label: "Open inbox items",
@@ -182,7 +191,7 @@ export default function DashboardPage() {
     <div className="space-y-6" data-testid="dashboard-page">
       <PageHeader
         title="Dashboard"
-        description="Your MVP workspace summary: what needs attention now, what is moving through Requests, Repository, Inbox, and Approvals, and what changed recently. Metrics are operational signals only and should be reviewed by your team."
+        description="What needs attention, and what's moving through Whereas."
       />
 
       {state.kind === "loading" && (
@@ -209,57 +218,21 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
     <>
       <AttentionNeeded counts={summary.counts} />
 
-      <QuickActions />
+      <StartWork />
 
-      <section data-testid="dashboard-counts" className="space-y-5">
-        <CountGroup
-          heading="Request pipeline"
-          tiles={PIPELINE_TILES}
-          counts={summary.counts}
-        />
-        <CountGroup
-          heading="Repository"
-          tiles={REPOSITORY_TILES}
-          counts={summary.counts}
-        />
-        <CountGroup
-          heading="Approvals"
-          tiles={APPROVAL_COUNT_TILES}
-          counts={summary.counts}
-        />
-        <CountGroup
-          heading="Inbox & templates"
-          tiles={INBOX_AND_TEMPLATE_TILES}
-          counts={summary.counts}
-        />
-      </section>
-
-      <AgreementMix
-        requests={[
-          ...summary.upcoming.requests_due_soon,
-          ...summary.recent_activity.recent_requests,
-        ]}
-      />
+      <PipelineSnapshot counts={summary.counts} />
 
       <section
-        className="grid gap-4 lg:grid-cols-2"
-        data-testid="dashboard-upcoming"
-      >
-        <UpcomingRequests rows={summary.upcoming.requests_due_soon} />
-        <UpcomingInboxItems rows={summary.upcoming.inbox_items_due_soon} />
-      </section>
-
-      <section
-        className="grid gap-4 lg:grid-cols-2"
+        className="grid gap-4 lg:grid-cols-3"
         data-testid="dashboard-recent"
       >
+        <RecentRequests rows={summary.recent_activity.recent_requests} />
         <RecentContracts
           title="Recent contracts"
           testId="recent-contracts"
           rows={summary.recent_activity.recent_contracts}
           emptyHint="No contracts yet. Upload one or generate from a template."
         />
-        <RecentRequests rows={summary.recent_activity.recent_requests} />
         <RecentContracts
           title="Recently signed contracts"
           testId="recent-signed-contracts"
@@ -268,25 +241,73 @@ function DashboardContent({ summary }: { summary: DashboardSummary }) {
         />
       </section>
 
-      <ApprovalAnalyticsSection analytics={summary.approval_analytics} />
+      <MoreOperationalDetail summary={summary} />
     </>
   );
 }
 
-/* -------------------------------------------------------------------- */
-/* PR #124 — contract-ops command-center polish.                        */
-/*                                                                      */
-/*   • AttentionNeeded wraps the existing overdue ActionBanner with     */
-/*     an always-on "what needs attention" rollup (urgent requests,     */
-/*     overdue inbox, overdue approvals). When nothing is hot, we      */
-/*     render an honest "all clear" state instead of leaving the       */
-/*     viewer wondering whether the dashboard is broken.                */
-/*   • QuickActions surfaces the six top-of-mind navigation targets    */
-/*     so users don't have to discover them in the sidebar.             */
-/*   • AgreementMix tallies the contract-type field on request         */
-/*     summaries we already fetch. Honest empty state when neither     */
-/*     upcoming nor recent requests carry a contract_type.             */
-/* -------------------------------------------------------------------- */
+/**
+ * Secondary surfaces live in a single disclosure so the top of the
+ * dashboard stays focused on attention + primary actions + pipeline.
+ * Open it to see additional pipeline counts, upcoming queues, the
+ * agreement-type mix, and the approval-analytics rollup.
+ */
+function MoreOperationalDetail({ summary }: { summary: DashboardSummary }) {
+  return (
+    <details
+      className="rounded border border-rule bg-canvas"
+      data-testid="dashboard-more-detail"
+    >
+      <summary
+        className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-ink hover:bg-canvas-subtle"
+        data-testid="dashboard-more-detail-summary"
+      >
+        More operational detail
+      </summary>
+      <div className="space-y-6 border-t border-rule p-4">
+        <section data-testid="dashboard-counts-detail" className="space-y-5">
+          <CountGroup
+            heading="Request pipeline"
+            tiles={DETAIL_PIPELINE_TILES}
+            counts={summary.counts}
+          />
+          <CountGroup
+            heading="Repository"
+            tiles={DETAIL_REPOSITORY_TILES}
+            counts={summary.counts}
+          />
+          <CountGroup
+            heading="Approvals"
+            tiles={DETAIL_APPROVAL_TILES}
+            counts={summary.counts}
+          />
+          <CountGroup
+            heading="Inbox & templates"
+            tiles={DETAIL_INBOX_AND_TEMPLATE_TILES}
+            counts={summary.counts}
+          />
+        </section>
+
+        <section
+          className="grid gap-4 lg:grid-cols-2"
+          data-testid="dashboard-upcoming"
+        >
+          <UpcomingRequests rows={summary.upcoming.requests_due_soon} />
+          <UpcomingInboxItems rows={summary.upcoming.inbox_items_due_soon} />
+        </section>
+
+        <AgreementMix
+          requests={[
+            ...summary.upcoming.requests_due_soon,
+            ...summary.recent_activity.recent_requests,
+          ]}
+        />
+
+        <ApprovalAnalyticsSection analytics={summary.approval_analytics} />
+      </div>
+    </details>
+  );
+}
 
 function AttentionNeeded({ counts }: { counts: DashboardCounts }) {
   const urgent = counts.urgent_or_high_priority_requests;
@@ -326,18 +347,27 @@ interface QuickAction {
   to: string;
 }
 
-const QUICK_ACTIONS: QuickAction[] = [
+// Start / Continue Work — the five ways a user opens new or in-flight
+// work from the dashboard. Surfaces that live in the sidebar (Clause
+// Manager, Playbooks) intentionally aren't duplicated here.
+const START_WORK_ACTIONS: QuickAction[] = [
   {
-    key: "open-inbox",
-    label: "Open Inbox",
-    hint: "Triaging intake items, classifications, and reviews",
-    to: demoPath("/inbox"),
+    key: "start-intake",
+    label: "Start Intake",
+    hint: "Pick how to bring a contract into Whereas",
+    to: demoPath("/intake"),
   },
   {
-    key: "start-request",
-    label: "Start a Request",
+    key: "new-request",
+    label: "New Request",
     hint: "Kick off a new contract request",
     to: demoPath("/requests"),
+  },
+  {
+    key: "upload-to-repository",
+    label: "Upload to Repository",
+    hint: "Add a signed contract or document",
+    to: demoPath("/upload"),
   },
   {
     key: "view-approvals",
@@ -351,35 +381,23 @@ const QUICK_ACTIONS: QuickAction[] = [
     hint: "Search the executed contract record",
     to: demoPath("/repository"),
   },
-  {
-    key: "open-clause-manager",
-    label: "Open Clause Manager",
-    hint: "Approved clauses, fallback language, drafting guidance",
-    to: demoPath("/clause-manager"),
-  },
-  {
-    key: "open-playbooks",
-    label: "Open Playbooks",
-    hint: "Review standards, fallback positions, deviation rules",
-    to: demoPath("/playbooks"),
-  },
 ];
 
-function QuickActions() {
+function StartWork() {
   return (
     <section
       data-testid="dashboard-quick-actions"
-      aria-labelledby="dashboard-quick-actions-heading"
+      aria-labelledby="dashboard-start-work-heading"
       className="space-y-2"
     >
       <h2
-        id="dashboard-quick-actions-heading"
+        id="dashboard-start-work-heading"
         className="text-sm font-medium text-ink"
       >
-        Quick actions
+        Start work
       </h2>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {QUICK_ACTIONS.map((qa) => (
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {START_WORK_ACTIONS.map((qa) => (
           <WorkspaceCard
             key={qa.key}
             to={qa.to}
@@ -389,6 +407,41 @@ function QuickActions() {
             variant="primary"
           />
         ))}
+      </div>
+    </section>
+  );
+}
+
+function PipelineSnapshot({ counts }: { counts: DashboardCounts }) {
+  return (
+    <section
+      data-testid="dashboard-counts"
+      aria-labelledby="dashboard-pipeline-heading"
+      className="space-y-2"
+    >
+      <h2
+        id="dashboard-pipeline-heading"
+        className="text-sm font-medium text-ink"
+      >
+        Pipeline snapshot
+      </h2>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {PIPELINE_SNAPSHOT_TILES.map((tile) => {
+          const value = counts[tile.key];
+          const danger = tile.tone === "danger" && Number(value) > 0;
+          return (
+            <KpiTile
+              key={tile.key}
+              testId={`count-${tile.key}`}
+              to={tile.to}
+              label={tile.label}
+              value={value}
+              description={tile.hint}
+              danger={danger}
+              trend={tile.demoTrend ?? null}
+            />
+          );
+        })}
       </div>
     </section>
   );
