@@ -77,6 +77,15 @@ const INTEGRATIONS: Integration[] = [
     description:
       "Associate contracts with HubSpot Deals and keep both systems in sync as a deal progresses.",
   },
+
+  // AI providers
+  {
+    name: "Local model providers",
+    category: "Local AI providers",
+    status: "planned",
+    description:
+      "Future self-hosted/local model configuration only. Planned / Not connected in this MVP; no live provider toggle is exposed.",
+  },
   // Storage
   {
     name: "Google Drive",
@@ -145,7 +154,7 @@ function IntegrationCard({ integration }: { integration: Integration }) {
               Planned
             </button>
             <p className="text-xs text-ink-muted" data-testid={`integration-caveat-${slug}`}>
-              Roadmap item. Not connected in this MVP.
+              Roadmap item. Planned / Not connected in this MVP.
             </p>
           </div>
         )}
