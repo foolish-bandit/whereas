@@ -82,7 +82,7 @@ function deriveApprovalStage(approvalGate?: ContractApprovalGate | null): Lifecy
       id: "approval",
       label: "Approval",
       status: "blocked",
-      description: approvalGate.reason ?? "Required approvals are currently blocking signature.",
+      description: "Required approvals are currently blocking signature.",
     };
   }
   return {
