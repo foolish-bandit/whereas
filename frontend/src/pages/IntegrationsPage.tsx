@@ -1,33 +1,158 @@
-import EmptyState from "../components/EmptyState";
 import Pill from "../components/ui/Pill";
 
-const PLANNED = [
+type IntegrationStatus = "available" | "planned";
+
+interface Integration {
+  name: string;
+  category: string;
+  status: IntegrationStatus;
+  description: string;
+}
+
+const INTEGRATIONS: Integration[] = [
+  // E-signature
   {
-    name: "Nango",
+    name: "DocuSeal",
+    category: "E-signature",
+    status: "available",
     description:
-      "OAuth + connector hub for the SaaS-app integrations below. Self-hostable.",
+      "Self-hostable e-signature engine that runs alongside Whereas in the same Docker Compose. Send contracts for signature directly from the repository.",
+  },
+  // Document editing
+  {
+    name: "Microsoft Word",
+    category: "Document editing",
+    status: "planned",
+    description:
+      "Round-trip contract drafts between Whereas and Word. Import .docx files and push redlines back without leaving your editor.",
   },
   {
-    name: "Outlook",
+    name: "Google Docs",
+    category: "Document editing",
+    status: "planned",
     description:
-      "Pull inbound contract attachments from a watched mailbox into the Repository.",
+      "Edit contracts in Google Docs and sync versions back to the Whereas repository automatically.",
+  },
+  // Communication
+  {
+    name: "Outlook",
+    category: "Communication",
+    status: "planned",
+    description:
+      "Pull inbound contract attachments from a watched mailbox into the repository and trigger intake workflows.",
+  },
+  {
+    name: "Gmail",
+    category: "Communication",
+    status: "planned",
+    description:
+      "Watch a Gmail label or inbox for contract-related attachments and route them into the intake queue.",
   },
   {
     name: "Slack",
+    category: "Communication",
+    status: "planned",
     description:
-      "Notify on approval-step assignment, gate blocks, and signature completion.",
+      "Notify on approval-step assignment, gate blocks, and signature completion. Mentions route back to the contract record.",
   },
   {
-    name: "Salesforce",
+    name: "Microsoft Teams",
+    category: "Communication",
+    status: "planned",
     description:
-      "Link a Repository record to an Opportunity; mirror status back to the CRM.",
+      "Post contract status updates and approval requests as adaptive cards in Teams channels.",
+  },
+  // CRM / business systems
+  {
+    name: "Salesforce",
+    category: "CRM / Business systems",
+    status: "planned",
+    description:
+      "Link a repository record to an Opportunity and mirror contract status back to the CRM without manual entry.",
   },
   {
     name: "HubSpot",
+    category: "CRM / Business systems",
+    status: "planned",
     description:
-      "Link a Repository record to a HubSpot Deal; mirror status back to the CRM.",
+      "Associate contracts with HubSpot Deals and keep both systems in sync as a deal progresses.",
+  },
+  // Storage
+  {
+    name: "Google Drive",
+    category: "Storage",
+    status: "planned",
+    description:
+      "Import executed contracts from a Drive folder and keep a mirrored archive alongside your Whereas repository.",
+  },
+  {
+    name: "SharePoint / OneDrive",
+    category: "Storage",
+    status: "planned",
+    description:
+      "Sync contracts with a SharePoint document library or OneDrive folder for teams that manage files there.",
   },
 ];
+
+const CATEGORIES = Array.from(new Set(INTEGRATIONS.map((i) => i.category)));
+
+function StatusPill({ status }: { status: IntegrationStatus }) {
+  if (status === "available") {
+    return (
+      <Pill tone="success" variant="soft" data-testid="integration-status-available">
+        Available
+      </Pill>
+    );
+  }
+  return (
+    <Pill tone="neutral" variant="soft" data-testid="integration-status-planned">
+      Planned
+    </Pill>
+  );
+}
+
+function IntegrationCard({ integration }: { integration: Integration }) {
+  const slug = integration.name.toLowerCase().replace(/[\s/]+/g, "-");
+  return (
+    <article
+      className="rounded-lg border border-rule bg-canvas p-4"
+      data-testid={`integration-card-${slug}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">{integration.name}</h3>
+          <p className="mt-0.5 text-xs text-ink-muted">{integration.category}</p>
+        </div>
+        <StatusPill status={integration.status} />
+      </div>
+      <p className="mt-2 text-xs text-ink-muted">{integration.description}</p>
+      <div className="mt-3">
+        {integration.status === "available" ? (
+          <a
+            href="/demo/settings"
+            className="inline-flex items-center rounded px-2.5 py-1 text-xs font-medium bg-accent text-canvas hover:bg-accent/90 transition-colors"
+            data-testid={`integration-cta-${slug}`}
+          >
+            Open settings
+          </a>
+        ) : (
+          <div className="space-y-1">
+            <button
+              disabled
+              className="inline-flex items-center rounded px-2.5 py-1 text-xs font-medium border border-rule text-ink-muted cursor-not-allowed opacity-60"
+              data-testid={`integration-cta-${slug}`}
+            >
+              Planned
+            </button>
+            <p className="text-xs text-ink-muted" data-testid={`integration-caveat-${slug}`}>
+              Roadmap item. Not connected in this MVP.
+            </p>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
 
 export default function IntegrationsPage() {
   return (
@@ -35,31 +160,30 @@ export default function IntegrationsPage() {
       <header className="mb-6">
         <h1 className="font-serif text-xl text-ink sm:text-2xl">Integrations</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Integrations are not available in this release. The list below
-          is the planned target set — none of them ship today.
+          Whereas is self-hosted and local-first in spirit. Integrations are
+          explicit, optional, and admin-controlled — your contracts never leave
+          your infrastructure unless you configure a connection.
         </p>
       </header>
-      <EmptyState
-        title="Coming soon"
-        description="Whereas focuses on the contract workspace itself for v0.1. SaaS-app integrations will land behind a self-hostable Nango deployment so credentials never leave your infrastructure."
-      />
-      <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {PLANNED.map((p) => (
-          <article
-            key={p.name}
-            className="rounded-lg border border-rule bg-canvas p-4"
-            data-testid={`integration-stub-${p.name.toLowerCase()}`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-ink">{p.name}</h2>
-              <Pill tone="neutral" variant="soft">
-                Coming soon
-              </Pill>
-            </div>
-            <p className="mt-2 text-xs text-ink-muted">{p.description}</p>
-          </article>
-        ))}
-      </section>
+
+      <div className="space-y-8" data-testid="integrations-categories">
+        {CATEGORIES.map((category) => {
+          const items = INTEGRATIONS.filter((i) => i.category === category);
+          const categorySlug = category.toLowerCase().replace(/[\s/]+/g, "-");
+          return (
+            <section key={category} data-testid={`integration-category-${categorySlug}`}>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-muted">
+                {category}
+              </h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {items.map((integration) => (
+                  <IntegrationCard key={integration.name} integration={integration} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
