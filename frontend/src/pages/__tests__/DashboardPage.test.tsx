@@ -177,31 +177,50 @@ describe("DashboardPage", () => {
     clearDevUserId();
   });
 
-  it("renders metric cards from the summary response", async () => {
+  it("renders the primary Pipeline snapshot tiles from the summary response", async () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
 
     const counts = await screen.findByTestId("dashboard-counts");
+    // The primary snapshot row is now four focused tiles: open
+    // requests, pending approvals, repository records, and out for
+    // signature. Other counts live under "More operational detail".
     expect(
       within(counts).getByTestId("count-open_requests").textContent,
     ).toContain("3");
     expect(
-      within(counts).getByTestId("count-overdue_inbox_items").textContent,
-    ).toContain("1");
-    expect(
-      within(counts).getByTestId("count-contracts_executed").textContent,
-    ).toContain("4");
-    expect(
-      within(counts).getByTestId("count-templates_active").textContent,
-    ).toContain("3");
-    expect(
-      within(counts).getByTestId("count-active_approval_workflows").textContent,
-    ).toContain("2");
-    expect(
       within(counts).getByTestId("count-pending_approval_steps").textContent,
     ).toContain("4");
     expect(
-      within(counts).getByTestId("count-overdue_approval_steps").textContent,
+      within(counts).getByTestId("count-contracts_total").textContent,
+    ).toContain("12");
+    expect(
+      within(counts).getByTestId("count-contracts_sent_for_signature")
+        .textContent,
+    ).toContain("2");
+  });
+
+  it("keeps secondary count tiles in the DOM under More operational detail", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+
+    const detail = await screen.findByTestId("dashboard-counts-detail");
+    // The full breakdown is still available — just demoted out of the
+    // primary scan line so the top of the page stays focused.
+    expect(
+      within(detail).getByTestId("count-overdue_inbox_items").textContent,
+    ).toContain("1");
+    expect(
+      within(detail).getByTestId("count-contracts_executed").textContent,
+    ).toContain("4");
+    expect(
+      within(detail).getByTestId("count-templates_active").textContent,
+    ).toContain("3");
+    expect(
+      within(detail).getByTestId("count-active_approval_workflows").textContent,
+    ).toContain("2");
+    expect(
+      within(detail).getByTestId("count-overdue_approval_steps").textContent,
     ).toContain("1");
   });
 
@@ -496,6 +515,7 @@ describe("DashboardPage", () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
     await screen.findByTestId("dashboard-counts");
+    // Primary Pipeline snapshot tiles.
     expect(screen.getByTestId("count-open_requests")).toHaveAttribute(
       "href",
       "/demo/requests",
@@ -504,6 +524,14 @@ describe("DashboardPage", () => {
       "href",
       "/demo/approvals/tasks",
     );
+    expect(screen.getByTestId("count-contracts_total")).toHaveAttribute(
+      "href",
+      "/demo/repository",
+    );
+    expect(
+      screen.getByTestId("count-contracts_sent_for_signature"),
+    ).toHaveAttribute("href", "/demo/repository");
+    // Secondary tiles under More operational detail still link.
     expect(screen.getByTestId("count-overdue_approval_steps")).toHaveAttribute(
       "href",
       "/demo/approvals/tasks",
@@ -584,30 +612,50 @@ describe("DashboardPage", () => {
     ).toBeNull();
   });
 
-  it("renders Quick Actions cards pointing at the expected demo routes", async () => {
+  it("renders Start work cards pointing at the expected demo routes", async () => {
     fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
     renderPage();
+    // The wrapper test id stays `dashboard-quick-actions` so external
+    // consumers (sidebar overdue badges, tests) keep working; the
+    // heading now reads "Start work" and the menu narrows to the five
+    // ways a user actually begins or resumes work.
     const qa = await screen.findByTestId("dashboard-quick-actions");
-    expect(qa).toHaveTextContent(/quick actions/i);
-    expect(within(qa).getByTestId("quick-action-open-inbox")).toHaveAttribute(
+    expect(qa).toHaveTextContent(/start work/i);
+    expect(within(qa).getByTestId("quick-action-start-intake")).toHaveAttribute(
       "href",
-      "/demo/inbox",
+      "/demo/intake",
+    );
+    expect(within(qa).getByTestId("quick-action-new-request")).toHaveAttribute(
+      "href",
+      "/demo/requests",
     );
     expect(
-      within(qa).getByTestId("quick-action-start-request"),
-    ).toHaveAttribute("href", "/demo/requests");
+      within(qa).getByTestId("quick-action-upload-to-repository"),
+    ).toHaveAttribute("href", "/demo/upload");
     expect(
       within(qa).getByTestId("quick-action-view-approvals"),
     ).toHaveAttribute("href", "/demo/approvals/tasks");
     expect(
       within(qa).getByTestId("quick-action-open-repository"),
     ).toHaveAttribute("href", "/demo/repository");
+  });
+
+  it("does not duplicate sidebar-only surfaces in the Start work menu", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(SAMPLE_SUMMARY));
+    renderPage();
+    const qa = await screen.findByTestId("dashboard-quick-actions");
+    // Clause Manager and Playbooks live in the sidebar; the dashboard
+    // doesn't need a second entry point. Open Inbox is covered by the
+    // Attention needed banner and the sidebar.
     expect(
-      within(qa).getByTestId("quick-action-open-clause-manager"),
-    ).toHaveAttribute("href", "/demo/clause-manager");
+      within(qa).queryByTestId("quick-action-open-inbox"),
+    ).toBeNull();
     expect(
-      within(qa).getByTestId("quick-action-open-playbooks"),
-    ).toHaveAttribute("href", "/demo/playbooks");
+      within(qa).queryByTestId("quick-action-open-clause-manager"),
+    ).toBeNull();
+    expect(
+      within(qa).queryByTestId("quick-action-open-playbooks"),
+    ).toBeNull();
   });
 
   it("renders the Agreement mix tally from request contract_type fields", async () => {
