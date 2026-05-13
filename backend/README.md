@@ -54,3 +54,18 @@ Current status:
   but this repository does **not** bundle model files and this module
   does **not** download or execute any model.
 - No vectors are persisted yet.
+
+## Local-command small-model providers (scaffold only)
+
+The backend now includes a validation-only scaffold in
+`app/services/local_command_provider.py` for future self-hosted,
+admin-controlled local command tools (embeddings, extraction,
+reranking, explanation writing).
+
+Current status:
+- **Disabled by default** (`enabled = false`).
+- Validation-only scaffold; command execution is intentionally not wired.
+- No bundled models.
+- No automatic model downloads.
+- No cloud calls are made by this scaffold.
+- Any future use requires explicit admin configuration.
