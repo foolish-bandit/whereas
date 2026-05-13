@@ -37,3 +37,20 @@ binary being on `PATH` (DOCX → PDF preview). The conversion path is
 gated by a runtime `shutil.which` check; the unit tests for the
 preview service stub the converter so they do not require LibreOffice
 to be installed locally.
+
+## Embeddings status (architecture-only)
+
+The backend includes an internal embeddings abstraction in
+`app/services/embeddings.py` to support future semantic features
+(similar clause search, related approved clauses, playbook rule
+matching, similar repository records, and future text preview search).
+
+Current status:
+- Embeddings are **disabled by default**.
+- Provider modes are placeholders only: `disabled`,
+  `local_command_placeholder`, and
+  `future_python_service_placeholder`.
+- Planned default local model target is **`BAAI/bge-small-en-v1.5`**,
+  but this repository does **not** bundle model files and this module
+  does **not** download or execute any model.
+- No vectors are persisted yet.
