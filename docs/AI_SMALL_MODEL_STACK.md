@@ -68,16 +68,16 @@ Recommended defaults for the small-model stack:
 - It may not create new findings, legal conclusions, or legal advice.
 - It must rely only on supplied source excerpts/spans, playbook basis, and approved fallback language.
 
-## 4) What AI may do
+## 4) What AI may do (planned capabilities, not all active)
 
-Within the architecture, AI may:
+Within this architecture roadmap, AI may eventually:
 
 - Extract entities with source spans.
 - Classify clauses.
 - Retrieve similar clauses and playbook rules.
 - Rerank relevant approved clauses.
 - Suggest playbook-grounded findings.
-- Draft short reviewer explanations from structured findings.
+- Draft short reviewer explanations from structured findings (when explicitly enabled in a future phase).
 - Suggest fallback language from Clause Manager content.
 
 ## 5) What AI must not do by default
