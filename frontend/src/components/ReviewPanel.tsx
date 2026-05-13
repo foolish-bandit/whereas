@@ -16,6 +16,8 @@ import type {
   ReviewerFindingStatus,
 } from "../types/findings";
 import type { PlaybookSummary } from "../types/playbooks";
+import { runDeterministicReview, type DeterministicReviewRule } from "../lib/deterministicReview";
+import type { Clause, ExtractedField } from "../types/contracts";
 import type { PlaybookRuleMatchResult } from "../types/review";
 import Pill from "./ui/Pill";
 import SeverityTag, { type Severity } from "./ui/SeverityTag";
@@ -51,6 +53,8 @@ interface ReviewPanelProps {
    * `review:<rule_id>` selection keys back to evidence spans.
    */
   onRunChange?: (run: ReviewRunDetail | null) => void;
+  clauses?: Clause[];
+  extractedFields?: ExtractedField[];
 }
 
 type PlaybookListState =
@@ -62,6 +66,13 @@ type RunsState =
   | { kind: "loading" }
   | { kind: "loaded"; runs: ReviewRunSummary[] }
   | { kind: "error"; message: string };
+
+
+const DEFAULT_DETERMINISTIC_RULES: DeterministicReviewRule[] = [
+  { id: "required-governing-law", title: "Governing law clause required", rule_type: "required_clause", severity: "high", clause_type: "governing_law" },
+  { id: "preferred-governing-law", title: "Preferred governing law", rule_type: "preferred_value", severity: "medium", metadata_field: "governing_law", expected_value: "Delaware" },
+  { id: "high-risk-manual-review", title: "High-risk checklist item", rule_type: "manual_review", severity: "high" },
+];
 
 type ActiveRunState =
   | { kind: "idle" }
@@ -75,6 +86,8 @@ export default function ReviewPanel({
   selectedKey,
   onSelect,
   onRunChange,
+  clauses = [],
+  extractedFields = [],
 }: ReviewPanelProps) {
   const [playbookListState, setPlaybookListState] = useState<PlaybookListState>(
     { kind: "loading" },
@@ -196,6 +209,8 @@ export default function ReviewPanel({
     }
   }
 
+  const deterministic = useMemo(() => runDeterministicReview({ clauses, extractedFields, rules: DEFAULT_DETERMINISTIC_RULES }), [clauses, extractedFields]);
+
   async function onUpdateFinding(
     findingId: string,
     status: ReviewerFindingStatus,
@@ -238,6 +253,20 @@ export default function ReviewPanel({
       </div>
 
       <div className="space-y-3 px-4 py-3">
+        <section data-testid="deterministic-review-findings" className="rounded border border-rule bg-canvas-subtle p-3">
+          <h3 className="text-xs font-medium text-ink">Deterministic review findings</h3>
+          <p className="mt-1 text-xs text-ink-subtle">Generated from Playbook rules and extracted clauses/metadata. No LLM used.</p>
+          {deterministic.warnings.length > 0 && (
+            <ul className="mt-2 list-disc pl-4 text-xs text-ink-muted">{deterministic.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+          )}
+          <ul className="mt-2 space-y-1 text-xs text-ink">
+            {deterministic.findings.map((f) => (
+              <li key={f.id} data-testid={`deterministic-finding-${f.rule_id}`}>
+                <span className="font-medium">{f.title}:</span> {f.message} <span className="text-ink-subtle">Basis: {f.basis}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
         <PlaybookPicker
           state={playbookListState}
           selectedPlaybookId={selectedPlaybookId}
