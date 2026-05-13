@@ -22,12 +22,16 @@ describe("Sidebar", () => {
     renderSidebar();
     const expected: { label: string; href: string }[] = [
       { label: "Dashboard", href: "/demo/dashboard" },
-      { label: "Repository", href: "/demo/repository" },
+      { label: "Intake", href: "/demo/intake" },
+      { label: "Inbox", href: "/demo/inbox" },
       { label: "Requests", href: "/demo/requests" },
+      { label: "Approvals", href: "/demo/approvals" },
+      { label: "Repository", href: "/demo/repository" },
+      { label: "Agreement Templates", href: "/demo/requests/templates" },
       { label: "Playbooks", href: "/demo/playbooks" },
       { label: "Clause Manager", href: "/demo/clause-manager" },
-      { label: "Approvals", href: "/demo/approvals" },
       { label: "Settings", href: "/demo/settings" },
+      { label: "Known Limitations", href: "/demo/known-limitations" },
     ];
     for (const { label, href } of expected) {
       const matching = linksFor(label).filter(
@@ -37,12 +41,12 @@ describe("Sidebar", () => {
     }
   });
 
-  it("does not surface former sub-surfaces as top-level entries", () => {
+  it("does not surface former sub-surfaces or secondary pages as top-level entries", () => {
     renderSidebar();
     // These used to be top-level sidebar items. They now live under
-    // their respective workspaces (Requests, Approvals, Repository).
-    // Inbox is now a top-level entry under the WORK section (Prompt 7);
-    // the others still live behind their workspace landing pages.
+    // their respective workspaces (Requests, Approvals, Repository),
+    // or — in Analytics' case — are reachable via direct URL and the
+    // command palette but not promoted in the primary nav.
     for (const label of [
       "Contracts",
       "Approval Workflows",
@@ -50,6 +54,7 @@ describe("Sidebar", () => {
       "Approval Policies",
       "Upload",
       "Clause Library",
+      "Analytics",
     ]) {
       expect(linksFor(label)).toHaveLength(0);
     }
@@ -80,10 +85,13 @@ describe("Sidebar", () => {
     { path: "/demo/contracts/abc-123", activeLabel: "Repository" },
     { path: "/demo/upload", activeLabel: "Repository" },
     { path: "/demo/clause-library", activeLabel: "Clause Manager" },
-    { path: "/demo/agreement-templates", activeLabel: "Requests" },
-    { path: "/demo/agreement-templates/tmpl-1", activeLabel: "Requests" },
-    { path: "/demo/requests/templates", activeLabel: "Requests" },
-    { path: "/demo/inbox", activeLabel: "Approvals" },
+    { path: "/demo/agreement-templates", activeLabel: "Agreement Templates" },
+    {
+      path: "/demo/agreement-templates/tmpl-1",
+      activeLabel: "Agreement Templates",
+    },
+    { path: "/demo/requests/templates", activeLabel: "Agreement Templates" },
+    { path: "/demo/inbox", activeLabel: "Inbox" },
     { path: "/demo/approval-workflows", activeLabel: "Approvals" },
     { path: "/demo/approval-templates", activeLabel: "Approvals" },
     { path: "/demo/approval-policies", activeLabel: "Approvals" },

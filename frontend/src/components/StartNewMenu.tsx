@@ -10,18 +10,22 @@ interface MenuItem {
   testId: string;
 }
 
+// The Start New menu is intentionally narrow: it covers the four
+// ways a user begins a new piece of work. Secondary surfaces
+// (Approval Tasks, Playbooks, Clause Manager) are still reachable
+// from the sidebar so they don't need to be duplicated here.
 const MENU_ITEMS: MenuItem[] = [
+  {
+    label: "New Request",
+    hint: "Kick off a new contract request",
+    path: "/requests#new-request",
+    testId: "start-new-new-request",
+  },
   {
     label: "Upload to Repository",
     hint: "Add a signed Repository record or document",
     path: "/upload",
     testId: "start-new-upload",
-  },
-  {
-    label: "Start Request",
-    hint: "Kick off a new contract request",
-    path: "/requests#new-request",
-    testId: "start-new-start-request",
   },
   {
     label: "Start from Agreement Template",
@@ -30,28 +34,10 @@ const MENU_ITEMS: MenuItem[] = [
     testId: "start-new-start-from-agreement-template",
   },
   {
-    label: "Open Inbox Intake",
-    hint: "Process an incoming contract",
-    path: "/inbox",
-    testId: "start-new-open-inbox-intake",
-  },
-  {
-    label: "View Approval Tasks",
-    hint: "See contracts awaiting your review",
-    path: "/approvals/tasks",
-    testId: "start-new-view-approval-tasks",
-  },
-  {
-    label: "Add Playbook Rule",
-    hint: "Define a new deviation check",
-    path: "/playbooks",
-    testId: "start-new-add-playbook-rule",
-  },
-  {
-    label: "Add Clause",
-    hint: "Extend the clause library",
-    path: "/clause-manager",
-    testId: "start-new-add-clause",
+    label: "Open Intake",
+    hint: "Pick how to bring a contract into Whereas",
+    path: "/intake",
+    testId: "start-new-open-intake",
   },
 ];
 

@@ -5,10 +5,13 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { getDashboardSummary } from "../lib/api";
 import { demoPath } from "../lib/routes";
 
-// Top-level navigation grouped into four sections so the rail still
-// reads cleanly as History, Analytics, Integrations, and Audit log
-// land. Sub-surfaces (Inbox, Approval Workflows, Upload) are reachable
-// from their respective workspace landings rather than the sidebar.
+// Top-level navigation grouped by user intent: Work (day-to-day
+// queues), Library (stored artifacts), Knowledge (reusable rules and
+// language), and Admin (configuration and help). Sub-surfaces
+// (Upload, Approval Workflows, Approval Policies) stay reachable from
+// their workspace landings rather than the sidebar. Analytics is
+// still routed at /demo/analytics for direct links and the command
+// palette, but is not promoted to a primary nav item.
 interface NavItem {
   to: string;
   label: string;
@@ -27,9 +30,9 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Work",
     items: [
       { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
-      { to: demoPath("/analytics"), label: "Analytics", Icon: AnalyticsIcon },
       { to: demoPath("/intake"), label: "Intake", Icon: IntakeIcon },
       { to: demoPath("/inbox"), label: "Inbox", Icon: InboxIcon },
+      { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
       {
         to: demoPath("/approvals"),
         label: "Approvals",
@@ -43,7 +46,6 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Library",
     items: [
       { to: demoPath("/repository"), label: "Repository", Icon: RepositoryIcon },
-      { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
       {
         to: demoPath("/requests/templates"),
         label: "Agreement Templates",
@@ -74,6 +76,11 @@ const NAV_SECTIONS: NavSection[] = [
         Icon: IntegrationsIcon,
         badge: "soon",
       },
+      {
+        to: demoPath("/known-limitations"),
+        label: "Known Limitations",
+        Icon: HelpIcon,
+      },
     ],
   },
 ];
@@ -92,7 +99,7 @@ function InboxIcon({ className }: IconProps) { return <BaseIcon className={class
 function IntakeIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3v10M7 10l3 3 3-3" /><path d="M4 15h12" /></BaseIcon>; }
 function TemplatesIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M5 3h7l3 3v11H5z" /><path d="M12 3v3h3" /><path d="M7 9h6M7 12h6M7 15h4" /></BaseIcon>; }
 function IntegrationsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="5" cy="10" r="2" /><circle cx="15" cy="6" r="2" /><circle cx="15" cy="14" r="2" /><path d="M7 10l6-4M7 10l6 4" /></BaseIcon>; }
-function AnalyticsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 17V7M9 17V11M15 17V5M3 17h16" /></BaseIcon>; }
+function HelpIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="10" cy="10" r="7" /><path d="M8 8.2c.2-1.1 1-1.7 2-1.7 1.2 0 2 .8 2 1.8 0 1.7-2 1.6-2 3.2" /><circle cx="10" cy="14.2" r="0.4" fill="currentColor" stroke="none" /></BaseIcon>; }
 
 interface SidebarProps {
   /**
@@ -273,12 +280,10 @@ const NAV_EXTRA_MATCHES: Record<string, string[]> = {
     demoPath("/contracts"),
     demoPath("/upload"),
   ],
-  [demoPath("/requests")]: [
+  [demoPath("/requests/templates")]: [
     demoPath("/agreement-templates"),
-    demoPath("/requests/templates"),
   ],
   [demoPath("/approvals")]: [
-    demoPath("/inbox"),
     demoPath("/approval-workflows"),
     demoPath("/approval-templates"),
     demoPath("/approval-policies"),
