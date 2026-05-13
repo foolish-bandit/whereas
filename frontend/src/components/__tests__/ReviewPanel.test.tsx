@@ -332,4 +332,20 @@ describe("ReviewPanel — playbook guidance", () => {
     expect(section).toHaveTextContent(/Matched terms:/);
     expect(section).toHaveTextContent("consent");
   });
+
+  it("renders deterministic review findings section with no LLM copy", async () => {
+    render(
+      <ReviewPanel
+        contractId={CONTRACT_ID}
+        selectedKey={null}
+        onSelect={() => {}}
+        clauses={[]}
+        extractedFields={[]}
+      />,
+    );
+
+    expect(await screen.findByTestId("deterministic-review-findings")).toBeInTheDocument();
+    expect(screen.getByText(/No LLM used/i)).toBeInTheDocument();
+  });
+
 });

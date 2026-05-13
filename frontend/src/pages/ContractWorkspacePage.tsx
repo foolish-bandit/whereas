@@ -940,6 +940,8 @@ function Sidebar({
             selectedKey={selectedKey}
             onSelect={onSelect}
             onRunChange={onReviewRunChange}
+            clauses={contract.clauses}
+            extractedFields={contract.extracted_fields}
           />
         )}
       </div>
