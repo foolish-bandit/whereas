@@ -20,6 +20,13 @@ interface Props {
    * `getQuestionSetFor(requestType, contractType)`.
    */
   set?: SupportingQuestionSet | null;
+  /**
+   * Optional short helper line rendered under the panel subtitle. Used
+   * by callers to disclose when the question set is tailored from a
+   * selected Agreement Template, so users understand why the prompts
+   * changed when they picked a template. Skipped when not provided.
+   */
+  hint?: string | null;
   /** Test-id prefix so the same panel can be used in multiple surfaces. */
   testIdPrefix?: string;
 }
@@ -43,6 +50,7 @@ export default function SupportingQuestionsPanel({
   answers,
   onChange,
   set: setOverride,
+  hint,
   testIdPrefix = "supporting-questions",
 }: Props) {
   const set =
@@ -85,6 +93,14 @@ export default function SupportingQuestionsPanel({
           business context before review begins. All fields are
           optional.
         </p>
+        {hint && (
+          <p
+            className="mt-1 text-xs text-ink-subtle"
+            data-testid={`${testIdPrefix}-hint`}
+          >
+            {hint}
+          </p>
+        )}
       </div>
       <div className="grid gap-2">
         {set.questions.map((q) => (

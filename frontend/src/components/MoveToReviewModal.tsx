@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import SupportingQuestionsPanel from "./SupportingQuestionsPanel";
 import {
   composeDescription,
-  getQuestionSetFor,
+  resolveQuestionSet,
   summarizeAnswers,
   type SupportingAnswers,
 } from "../lib/supportingQuestions";
@@ -131,6 +131,22 @@ export default function MoveToReviewModal(props: Props) {
     () => templates.filter((t) => t.status === "active"),
     [templates],
   );
+  const selectedTemplate = useMemo(
+    () =>
+      templateId
+        ? activeTemplates.find((t) => t.id === templateId) ?? null
+        : null,
+    [activeTemplates, templateId],
+  );
+  const resolvedQuestionSet = useMemo(
+    () =>
+      resolveQuestionSet({
+        template: selectedTemplate,
+        requestType,
+        contractType: null,
+      }),
+    [selectedTemplate, requestType],
+  );
 
   if (!open) return null;
 
@@ -156,8 +172,16 @@ export default function MoveToReviewModal(props: Props) {
     // existing free-text `supportingInfo` field. The parent will map
     // that to the request's `description`, so this stays inside the
     // existing backend contract — no new schema, no new endpoint.
+    //
+    // Template-Aware Supporting Questions: when an Agreement Template
+    // is selected and it carries a confident type signal, the summary
+    // label reflects the template-derived set (e.g. "NDA review")
+    // even if the request type is generic. The summary stays
+    // compatible with Request Detail pretty-printing because it
+    // continues to use the stable "Supporting questions (…)" header
+    // and `• ` bullet rows.
     const summary = summarizeAnswers(
-      getQuestionSetFor(requestType, null),
+      resolvedQuestionSet.set,
       supportingAnswers,
     );
     const composedSupportingInfo = composeDescription(
@@ -341,6 +365,12 @@ export default function MoveToReviewModal(props: Props) {
                 contractType={null}
                 answers={supportingAnswers}
                 onChange={setSupportingAnswers}
+                set={resolvedQuestionSet.set}
+                hint={
+                  resolvedQuestionSet.source === "template"
+                    ? "Questions are tailored from the selected Agreement Template."
+                    : null
+                }
                 testIdPrefix="move-to-review-supporting-questions"
               />
             </div>

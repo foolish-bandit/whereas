@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
@@ -17,6 +17,7 @@ import {
   MissingDevUserError,
   cancelRequest,
   createRequest,
+  listAgreementTemplates,
   listRequests,
   updateRequest,
 } from "../lib/api";
@@ -26,10 +27,11 @@ import {
 } from "../lib/deepLinkHighlight";
 import {
   composeDescription,
-  getQuestionSetFor,
+  resolveQuestionSet,
   summarizeAnswers,
   type SupportingAnswers,
 } from "../lib/supportingQuestions";
+import type { AgreementTemplate } from "../types/agreementTemplates";
 import type {
   ContractRequest,
   ConvertRequestToContractResponse,
@@ -85,6 +87,14 @@ export default function RequestsPage() {
   const [supportingAnswers, setSupportingAnswers] = useState<SupportingAnswers>(
     {},
   );
+  // Template-aware supporting questions: the selected template is
+  // used only as a *signal* for which question set to render. We do
+  // not forward `linked_template_id` from this form — that stays the
+  // job of the existing post-create RequestConvertSection so the
+  // submit payload shape is unchanged.
+  const [templateId, setTemplateId] = useState("");
+  const [templates, setTemplates] = useState<AgreementTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
 
   useEffect(() => {
     let aborted = false;
@@ -112,6 +122,50 @@ export default function RequestsPage() {
     setTitle(next);
   }, [counterparty, contractType, titleTouched]);
 
+  // Best-effort lazy load of active Agreement Templates so the
+  // intake form can offer a template selector. The selector only
+  // drives supporting-question matching; we tolerate failures by
+  // leaving the list empty (the selector simply doesn't render
+  // additional options).
+  useEffect(() => {
+    let aborted = false;
+    setTemplatesLoading(true);
+    listAgreementTemplates({ include_archived: false })
+      .then((rows) => {
+        if (!aborted) setTemplates(rows);
+      })
+      .catch(() => {
+        // Optional helper — silent fail keeps the form usable.
+      })
+      .finally(() => {
+        if (!aborted) setTemplatesLoading(false);
+      });
+    return () => {
+      aborted = true;
+    };
+  }, []);
+
+  const activeTemplates = useMemo(
+    () => templates.filter((t) => t.status === "active"),
+    [templates],
+  );
+  const selectedTemplate = useMemo(
+    () =>
+      templateId
+        ? activeTemplates.find((t) => t.id === templateId) ?? null
+        : null,
+    [activeTemplates, templateId],
+  );
+  const resolvedQuestionSet = useMemo(
+    () =>
+      resolveQuestionSet({
+        template: selectedTemplate,
+        requestType,
+        contractType,
+      }),
+    [selectedTemplate, requestType, contractType],
+  );
+
   function applyDueDateOffset(days: number) {
     const d = new Date();
     d.setDate(d.getDate() + days);
@@ -127,8 +181,14 @@ export default function RequestsPage() {
       // existing description field. The backend doesn't have a typed
       // surface for these answers, so we summarise them so reviewers
       // see them in the Request detail without inventing new schema.
+      //
+      // The Template-Aware Supporting Questions PR resolves the set
+      // through the same precedence the panel renders, so the summary
+      // label matches whatever the user saw (e.g. an NDA template
+      // selection produces an "NDA review" summary even when the
+      // request type is generic).
       const summary = summarizeAnswers(
-        getQuestionSetFor(requestType, contractType),
+        resolvedQuestionSet.set,
         supportingAnswers,
       );
       const composed = composeDescription(summary, description);
@@ -149,6 +209,7 @@ export default function RequestsPage() {
       setDueDate("");
       setDescription("");
       setSupportingAnswers({});
+      setTemplateId("");
       setState((prev) =>
         prev.kind === "loaded"
           ? { kind: "loaded", rows: [row, ...prev.rows] }
@@ -417,6 +478,25 @@ export default function RequestsPage() {
             <button type="button" className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted" onClick={() => applyDueDateOffset(7)}>+1w</button>
             <button type="button" className="rounded border border-rule px-2 py-1 hover:bg-canvas-muted" onClick={() => applyDueDateOffset(14)}>+2w</button>
           </div>
+          <select
+            className="rounded border border-rule px-2 py-1 text-sm sm:col-span-2"
+            value={templateId}
+            onChange={(e) => setTemplateId(e.target.value)}
+            data-testid="requests-create-template"
+            disabled={templatesLoading && activeTemplates.length === 0}
+            aria-label="Agreement template (tailors supporting questions)"
+          >
+            <option value="">
+              {templatesLoading && activeTemplates.length === 0
+                ? "Loading agreement templates…"
+                : "Agreement template (optional — tailors supporting questions)"}
+            </option>
+            {activeTemplates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
         </div>
         <textarea
           className="rounded border border-rule px-2 py-1 text-sm"
@@ -430,6 +510,12 @@ export default function RequestsPage() {
           contractType={contractType}
           answers={supportingAnswers}
           onChange={setSupportingAnswers}
+          set={resolvedQuestionSet.set}
+          hint={
+            resolvedQuestionSet.source === "template"
+              ? "Questions are tailored from the selected Agreement Template."
+              : null
+          }
           testIdPrefix="requests-create-supporting-questions"
         />
         <div className="flex items-center gap-3">
