@@ -369,7 +369,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByTestId("docuseal-approval-override-checkbox"));
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
     fireEvent.change(screen.getByTestId("docuseal-override-reason"), { target: { value: "Urgent close" } });
     expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
@@ -549,7 +549,7 @@ describe("ContractWorkspacePage markdown integration", () => {
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByTestId("docuseal-approval-override-checkbox"));
     expect(screen.getByTestId("docuseal-send-submit")).toBeDisabled();
     fireEvent.change(screen.getByTestId("docuseal-override-reason"), { target: { value: "CFO unreachable; closing today" } });
     expect(screen.getByTestId("docuseal-send-submit")).not.toBeDisabled();
@@ -2472,5 +2472,85 @@ describe("ContractWorkspacePage lifecycle status banner (PR #83)", () => {
     expect(text).not.toContain("signer@example.com");
     expect(text).not.toContain("docuseal_secret");
     expect(text).not.toContain("shhh");
+  });
+
+  describe("suggested review checklist", () => {
+    it("renders the checklist section on the Repository Detail page", async () => {
+      setupFetch(fetchMock);
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      expect(
+        screen.getByTestId("suggested-review-checklist"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: /suggested review checklist/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/workflow aid, not legal advice/i),
+      ).toBeInTheDocument();
+    });
+
+    it("renders default checklist when metadata has no contract type", async () => {
+      setupFetch(fetchMock);
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      const labels = screen
+        .getAllByTestId("checklist-item-label")
+        .map((el) => el.textContent);
+      expect(labels).toContain("Parties");
+      expect(labels).toContain("Governing law");
+    });
+
+    it("renders contract-type checklist when metadata has a known contract type", async () => {
+      setupFetch(fetchMock, {
+        metadata: { ...METADATA_VIEW, contract_type: "MSA" },
+      });
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      const labels = screen
+        .getAllByTestId("checklist-item-label")
+        .map((el) => el.textContent);
+      expect(labels).toContain("SOW linkage");
+      expect(labels).toContain("Payment terms");
+      expect(labels).toContain("Termination");
+    });
+
+    it("renders Playbooks and Clause Manager links", async () => {
+      setupFetch(fetchMock);
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      expect(
+        screen.getByTestId("checklist-link-playbooks"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("checklist-link-clause-manager"),
+      ).toBeInTheDocument();
+    });
+
+    it("renders Open Review tab button on Repository Detail", async () => {
+      setupFetch(fetchMock);
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      expect(
+        screen.getByTestId("checklist-open-review-tab"),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Open Review tab button switches sidebar to Review tab", async () => {
+      setupFetch(fetchMock);
+      renderPage();
+
+      await screen.findByRole("heading", { level: 1, name: "Workspace markdown" });
+      fireEvent.click(screen.getByTestId("checklist-open-review-tab"));
+      expect(screen.getByRole("tab", { name: /review/i })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
   });
 });
