@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import EmptyState from "../components/EmptyState";
+import Pill from "../components/ui/Pill";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
@@ -18,6 +19,7 @@ import {
 } from "../lib/api";
 import { formatDateTime, humanizeFieldName } from "../lib/format";
 import { mountedPath } from "../lib/routes";
+import { getRequestStage } from "../lib/requestStage";
 import { parseSupportingQuestionsBlock } from "../lib/supportingQuestions";
 import type { ContractListItem } from "../types/contracts";
 import type { RequestApprovalStatus } from "../types/requestApprovalStatus";
@@ -191,6 +193,7 @@ export default function RequestDetailPage() {
   return (
     <div className="space-y-5" data-testid="request-detail-page">
       <RequestHeader request={request} />
+      <StagePanel request={request} approvalState={approvalState} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
         <div className="space-y-4">
@@ -291,12 +294,53 @@ function RequestHeader({ request }: { request: ContractRequest }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={request.status} />
-          {request.priority && <Pill label={humanize(request.priority)} />}
-          {request.request_type && <Pill label={humanize(request.request_type)} />}
-          {request.contract_type && <Pill label={request.contract_type} />}
+          {request.priority && <TagPill label={humanize(request.priority)} />}
+          {request.request_type && <TagPill label={humanize(request.request_type)} />}
+          {request.contract_type && <TagPill label={request.contract_type} />}
         </div>
       </div>
     </header>
+  );
+}
+
+function StagePanel({
+  request,
+  approvalState,
+}: {
+  request: ContractRequest;
+  approvalState: ApprovalState;
+}) {
+  const location = useLocation();
+  const approvalSignal =
+    approvalState.kind === "loaded" ? approvalState.status.summary : null;
+  const stage = getRequestStage(request, approvalSignal);
+
+  return (
+    <div
+      className="flex flex-col gap-3 rounded border border-rule bg-canvas-subtle p-4 sm:flex-row sm:items-start sm:justify-between"
+      data-testid="request-stage-panel"
+    >
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-medium text-ink-subtle">Current stage</p>
+          <Pill tone={stage.tone} variant="soft" data-testid="request-stage-pill">
+            {stage.label}
+          </Pill>
+        </div>
+        <p className="text-sm text-ink-muted" data-testid="request-stage-explanation">
+          {stage.explanation}
+        </p>
+      </div>
+      {stage.nextActionLabel && stage.nextActionSuffix && (
+        <Link
+          to={mountedPath(stage.nextActionSuffix, location.pathname)}
+          className="inline-flex w-fit shrink-0 items-center justify-center rounded border border-ink bg-ink px-3 py-1.5 text-xs text-canvas hover:opacity-90"
+          data-testid="request-stage-next-action"
+        >
+          {stage.nextActionLabel}
+        </Link>
+      )}
+    </div>
   );
 }
 
@@ -617,7 +661,7 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Pill({ label }: { label: string }) {
+function TagPill({ label }: { label: string }) {
   return (
     <span className="rounded-full border border-rule px-2 py-0.5 text-xs text-ink-muted">
       {label}
