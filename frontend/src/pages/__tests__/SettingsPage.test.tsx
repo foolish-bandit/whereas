@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import SettingsPage from "../SettingsPage";
@@ -26,6 +26,9 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Small-model explanation writer")).toBeInTheDocument();
     expect(screen.getByText("Cloud AI providers")).toBeInTheDocument();
     expect(screen.getByText("Not enabled")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("settings-ai-capability-embeddings"),
+    ).toBeInTheDocument();
   });
 
   it("states cloud AI is not used by default", () => {
@@ -39,5 +42,17 @@ describe("SettingsPage", () => {
   it("does not leak forbidden internal tokens", () => {
     renderPage();
     expect(() => expectNoForbiddenTokens(document.body.textContent)).not.toThrow();
+  });
+
+  it("links to small-model stack docs and known limitations", () => {
+    renderPage();
+    const aiSection = screen.getByTestId("settings-ai-local-intelligence");
+
+    expect(
+      within(aiSection).getByRole("link", { name: /small model stack notes/i }),
+    ).toHaveAttribute("href", "/docs/AI_SMALL_MODEL_STACK.md");
+    expect(
+      within(aiSection).getByRole("link", { name: /known limitations/i }),
+    ).toHaveAttribute("href", "/demo/known-limitations#review-ai");
   });
 });

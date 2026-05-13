@@ -11,6 +11,15 @@ import {
 } from "../lib/devUser";
 import { isDemoMode } from "../lib/env";
 
+const AI_CAPABILITIES: Array<{ capability: string; status: string }> = [
+  { capability: "Embeddings", status: "Planned / Disabled" },
+  { capability: "Clause similarity", status: "Planned" },
+  { capability: "Entity extraction", status: "Planned" },
+  { capability: "Playbook-grounded findings", status: "Planned" },
+  { capability: "Small-model explanation writer", status: "Planned" },
+  { capability: "Cloud AI providers", status: "Not enabled" },
+];
+
 export default function SettingsPage() {
   const demo = isDemoMode();
   const [value, setValue] = useState<string>(() => getDevUserId() ?? "");
@@ -155,16 +164,10 @@ export default function SettingsPage() {
         </p>
 
         <ul className="mt-4 space-y-2 text-sm text-ink">
-          {[
-            ["Embeddings", "Planned / Disabled"],
-            ["Clause similarity", "Planned"],
-            ["Entity extraction", "Planned"],
-            ["Playbook-grounded findings", "Planned"],
-            ["Small-model explanation writer", "Planned"],
-            ["Cloud AI providers", "Not enabled"],
-          ].map(([capability, status]) => (
+          {AI_CAPABILITIES.map(({ capability, status }) => (
             <li
               key={capability}
+              data-testid={`settings-ai-capability-${capability.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`}
               className="flex items-center justify-between gap-3 rounded border border-rule bg-canvas-subtle px-3 py-2"
             >
               <span>{capability}</span>
