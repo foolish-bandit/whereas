@@ -744,6 +744,13 @@ export default function ContractWorkspacePage() {
         </div>
       </div>
 
+      <KeyTermsPanel
+        contract={state.contract}
+        metadata={metadataView}
+        artifacts={artifacts}
+        onReviewMetadata={() => setActiveTab("metadata")}
+      />
+
       <DetailsSection
         contract={state.contract}
         metadata={metadataView}
