@@ -135,3 +135,18 @@ Clear boundaries:
 - Product status snapshot: [project-status.md](project-status.md)
 - Security boundaries: [security-notes.md](security-notes.md)
 - Evaluator workflow context: [../README.md](../README.md)
+
+
+## 9) Extraction schema contract (planned, not active)
+
+To support future GLiNER-style small-model extraction, Whereas defines a typed extraction contract in backend schemas. This is architecture preparation only and does not execute models.
+
+Requirements for extraction outputs:
+
+- Outputs must be **span-grounded** (`span_start`, `span_end`, `text`) against source text.
+- Entity provenance must be explicit (`rule | gliner | manual | unknown`).
+- Confidence values must remain in the `0..1` range.
+- Human review remains required for operational/legal use.
+- PII detection should run local/self-hosted by default.
+- No cloud AI is enabled by default for extraction workflows.
+- Raw document bytes must never be included in extraction payloads.
