@@ -146,6 +146,54 @@ export default function SettingsPage() {
 
       <BrowserCapabilitiesCard />
 
+      <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5" data-testid="settings-ai-local-intelligence">
+        <h2 className="text-sm font-medium text-ink">AI &amp; local intelligence</h2>
+        <p className="mt-1 text-xs text-ink-muted">
+          Whereas is designed for small, local/self-hostable models. Default AI
+          models must stay under 2B parameters. No contract text is sent to
+          cloud AI providers by default.
+        </p>
+
+        <ul className="mt-4 space-y-2 text-sm text-ink">
+          {[
+            ["Embeddings", "Planned / Disabled"],
+            ["Clause similarity", "Planned"],
+            ["Entity extraction", "Planned"],
+            ["Playbook-grounded findings", "Planned"],
+            ["Small-model explanation writer", "Planned"],
+            ["Cloud AI providers", "Not enabled"],
+          ].map(([capability, status]) => (
+            <li
+              key={capability}
+              className="flex items-center justify-between gap-3 rounded border border-rule bg-canvas-subtle px-3 py-2"
+            >
+              <span>{capability}</span>
+              <span className="rounded-full border border-rule bg-canvas px-2 py-0.5 text-xs text-ink-muted">
+                {status}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <p className="mt-4 text-xs text-ink-muted">
+          Read more in the{" "}
+          <a
+            href="/docs/AI_SMALL_MODEL_STACK.md"
+            className="underline hover:text-ink"
+          >
+            small model stack notes
+          </a>{" "}
+          and see{" "}
+          <Link
+            to="/demo/known-limitations#review-ai"
+            className="underline hover:text-ink"
+          >
+            known limitations
+          </Link>
+          .
+        </p>
+      </div>
+
       <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas-subtle p-5 text-xs text-ink-muted">
         <h2 className="text-sm font-medium text-ink">A reminder</h2>
         <p className="mt-1">
