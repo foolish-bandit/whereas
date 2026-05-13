@@ -7,12 +7,16 @@ import {
   clauseTypeLabel,
 } from "../lib/clauses";
 import type { Clause } from "../types/contracts";
+import SimilarClausesPanel, {
+  type SimilarClauseMatch,
+} from "./SimilarClausesPanel";
 
 interface ClausesPanelProps {
   clauses: Clause[];
   fullText: string | null;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
+  similarityMatches?: SimilarClauseMatch[];
 }
 
 export default function ClausesPanel({
@@ -20,6 +24,7 @@ export default function ClausesPanel({
   fullText,
   selectedKey,
   onSelect,
+  similarityMatches,
 }: ClausesPanelProps) {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [search, setSearch] = useState<string>("");
@@ -47,6 +52,13 @@ export default function ClausesPanel({
     }
     return labelled;
   }, [sorted]);
+
+
+  const selectedClause = useMemo(() => {
+    if (!selectedKey?.startsWith("clause:")) return null;
+    const id = selectedKey.slice("clause:".length);
+    return clauses.find((c) => c.id === id) ?? null;
+  }, [clauses, selectedKey]);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -76,7 +88,8 @@ export default function ClausesPanel({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-lg border border-rule bg-canvas">
       <div className="border-b border-rule bg-canvas-subtle px-4 py-2.5">
         <h2 className="text-sm font-medium text-ink">
           Clauses ({clauses.length} found)
@@ -167,6 +180,14 @@ export default function ClausesPanel({
           })}
         </ul>
       )}
+      </div>
+      {selectedClause ? (
+        <SimilarClausesPanel
+          sourceClauseTitle={selectedClause.heading ?? `Clause #${selectedClause.ordinal + 1}`}
+          sourceClauseText={selectedClause.text}
+          matches={similarityMatches}
+        />
+      ) : null}
     </div>
   );
 }
