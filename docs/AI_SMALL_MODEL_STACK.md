@@ -59,6 +59,15 @@ Recommended defaults for the small-model stack:
   - `Qwen2.5-1.5B-Instruct`, or
   - `SmolLM2-1.7B-Instruct`
 
+
+### Explanation writer guardrails (planned, disabled by default)
+
+- The ≤2B explanation writer interface is planned and **disabled by default**.
+- Default future models remain limited to ≤2B parameters (for example `Qwen2.5-1.5B-Instruct` or `SmolLM2-1.7B-Instruct`).
+- The explanation writer may only explain **already grounded findings**.
+- It may not create new findings, legal conclusions, or legal advice.
+- It must rely only on supplied source excerpts/spans, playbook basis, and approved fallback language.
+
 ## 4) What AI may do
 
 Within the architecture, AI may:
