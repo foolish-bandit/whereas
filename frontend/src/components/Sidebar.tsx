@@ -46,7 +46,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: demoPath("/requests"), label: "Requests", Icon: RequestsIcon },
       {
         to: demoPath("/requests/templates"),
-        label: "Templates",
+        label: "Agreement Templates",
         Icon: TemplatesIcon,
       },
     ],

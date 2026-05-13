@@ -13,7 +13,7 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   {
     label: "Upload to Repository",
-    hint: "Add a signed contract or document",
+    hint: "Add a signed Repository record or document",
     path: "/upload",
     testId: "start-new-upload",
   },
