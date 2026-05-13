@@ -53,6 +53,30 @@ const GROUPS: LimitationGroup[] = [
       },
     ],
   },
+
+  {
+    id: "small-model-ai-roadmap",
+    heading: "Small-model AI roadmap",
+    body: "Whereas plans local/self-hostable AI workflow aids with deterministic, playbook-grounded review support. These capabilities are roadmap items and require human review.",
+    items: [
+      {
+        area: "Model strategy",
+        note: "Planned AI uses local/self-hostable models under 2B parameters by default.",
+      },
+      {
+        area: "Planned capabilities",
+        note: "Embeddings, extraction, reranking, and playbook-grounded explanations are planned as workflow aids.",
+      },
+      {
+        area: "Current boundaries",
+        note: "No large-model legal review is enabled, no cloud AI provider is enabled by default, and human review remains required.",
+      },
+      {
+        area: "Legal posture",
+        note: "AI outputs are workflow aids, not legal advice.",
+      },
+    ],
+  },
   {
     id: "document-signature",
     heading: "Document conversion and e-signature",

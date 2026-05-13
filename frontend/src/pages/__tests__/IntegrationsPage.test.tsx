@@ -24,24 +24,23 @@ describe("IntegrationsPage", () => {
     expect(screen.getByText(/admin-controlled/i)).toBeInTheDocument();
   });
 
-  it("renders all four integration categories", () => {
+  it("renders all integration categories including local AI roadmap", () => {
     renderPage();
     const categories = screen.getByTestId("integrations-categories");
-    expect(
-      within(categories).getByTestId("integration-category-e-signature"),
-    ).toBeInTheDocument();
-    expect(
-      within(categories).getByTestId("integration-category-document-editing"),
-    ).toBeInTheDocument();
-    expect(
-      within(categories).getByTestId("integration-category-communication"),
-    ).toBeInTheDocument();
-    expect(
-      within(categories).getByTestId("integration-category-crm-business-systems"),
-    ).toBeInTheDocument();
-    expect(
-      within(categories).getByTestId("integration-category-storage"),
-    ).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-e-signature")).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-document-editing")).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-communication")).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-crm-business-systems")).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-storage")).toBeInTheDocument();
+    expect(within(categories).getByTestId("integration-category-local-ai-providers")).toBeInTheDocument();
+  });
+
+  it("renders local model providers as planned and not connected", () => {
+    renderPage();
+    const card = screen.getByTestId("integration-card-local-model-providers");
+    expect(within(card).getByText(/Local AI providers/i)).toBeInTheDocument();
+    expect(within(card).getByText(/Future self-hosted\/local model configuration only/i)).toBeInTheDocument();
+    expect(within(card).getByTestId("integration-caveat-local-model-providers")).toHaveTextContent(/Planned \/ Not connected/i);
   });
 
   it("renders DocuSeal as available with an active settings CTA", () => {
@@ -53,74 +52,26 @@ describe("IntegrationsPage", () => {
     expect(cta).toHaveAttribute("href", "/demo/settings");
   });
 
-  it("renders DocuSeal without the planned-item caveat", () => {
-    renderPage();
-    const card = screen.getByTestId("integration-card-docuseal");
-    expect(
-      within(card).queryByTestId("integration-caveat-docuseal"),
-    ).toBeNull();
-  });
-
   it("renders planned integrations with a disabled CTA", () => {
     renderPage();
-    const plannedSlugs = [
-      "microsoft-word",
-      "google-docs",
-      "outlook",
-      "gmail",
-      "slack",
-      "microsoft-teams",
-      "salesforce",
-      "hubspot",
-      "google-drive",
-      "sharepoint-onedrive",
-    ];
+    const plannedSlugs = ["microsoft-word", "google-docs", "outlook", "gmail", "slack", "microsoft-teams", "salesforce", "hubspot", "google-drive", "sharepoint-onedrive", "local-model-providers"];
     for (const slug of plannedSlugs) {
       const card = screen.getByTestId(`integration-card-${slug}`);
-      expect(
-        within(card).getByTestId("integration-status-planned"),
-        `${slug} should have a Planned status pill`,
-      ).toBeInTheDocument();
+      expect(within(card).getByTestId("integration-status-planned")).toBeInTheDocument();
       const cta = within(card).getByTestId(`integration-cta-${slug}`);
-      expect(cta, `${slug} CTA should be disabled`).toBeDisabled();
+      expect(cta).toBeDisabled();
     }
   });
 
   it("renders the roadmap caveat for every planned integration", () => {
     renderPage();
-    const caveats = screen.getAllByText(/Roadmap item\. Not connected in this MVP\./i);
-    // 10 planned integrations
-    expect(caveats.length).toBe(10);
-  });
-
-  it("renders all expected integration cards", () => {
-    renderPage();
-    const expectedSlugs = [
-      "docuseal",
-      "microsoft-word",
-      "google-docs",
-      "outlook",
-      "gmail",
-      "slack",
-      "microsoft-teams",
-      "salesforce",
-      "hubspot",
-      "google-drive",
-      "sharepoint-onedrive",
-    ];
-    for (const slug of expectedSlugs) {
-      expect(
-        screen.getByTestId(`integration-card-${slug}`),
-        `card for ${slug} should be present`,
-      ).toBeInTheDocument();
-    }
+    const caveats = screen.getAllByText(/Roadmap item\. Planned \/ Not connected in this MVP\./i);
+    expect(caveats.length).toBe(11);
   });
 
   it("does not render fake OAuth or live connection toggles", () => {
     renderPage();
-    // No inputs of type checkbox or toggle-style controls should appear
     expect(screen.queryByRole("checkbox")).toBeNull();
-    // No text suggesting OAuth flow or live connection
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/connect your account/i);
     expect(text).not.toMatch(/authorize/i);

@@ -39,6 +39,12 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("states the <=2B model cap and no cloud AI enabled by default", () => {
+    renderPage();
+    expect(screen.getByText(/at or below 2B parameters/i)).toBeInTheDocument();
+    expect(screen.getByText(/No cloud AI provider is enabled by default/i)).toBeInTheDocument();
+  });
+
   it("does not leak forbidden internal tokens", () => {
     renderPage();
     expect(() => expectNoForbiddenTokens(document.body.textContent)).not.toThrow();

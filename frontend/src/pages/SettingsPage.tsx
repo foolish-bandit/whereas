@@ -159,8 +159,9 @@ export default function SettingsPage() {
         <h2 className="text-sm font-medium text-ink">AI &amp; local intelligence</h2>
         <p className="mt-1 text-xs text-ink-muted">
           Whereas is designed for small, local/self-hostable models. Default AI
-          models must stay under 2B parameters. No contract text is sent to
-          cloud AI providers by default.
+          models must stay at or below 2B parameters. No cloud AI provider is
+          enabled by default, and no contract text is sent to cloud AI providers
+          by default.
         </p>
 
         <ul className="mt-4 space-y-2 text-sm text-ink">
@@ -184,7 +185,7 @@ export default function SettingsPage() {
             href="/docs/AI_SMALL_MODEL_STACK.md"
             className="underline hover:text-ink"
           >
-            small model stack notes
+            AI_SMALL_MODEL_STACK
           </a>{" "}
           and see{" "}
           <Link

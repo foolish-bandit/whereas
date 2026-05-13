@@ -69,6 +69,7 @@ The following are intentionally out of scope for the current MVP state:
 - Slack / Teams / CRM connector execution (roadmap visibility exists, wiring does not).
 - Calendar/reminder sync and notification automation.
 - LLM-powered legal judgment/reasoning features beyond existing extraction/workflow aids.
+- Small-model AI roadmap details live in [`docs/AI_SMALL_MODEL_STACK.md`](docs/AI_SMALL_MODEL_STACK.md) and in-app Known limitations (`/demo/known-limitations#small-model-ai-roadmap`).
 - Full backend Clause ↔ Playbook relational linkage and authoring loop.
 - Enterprise-grade RBAC/SSO deployment story.
 - Advanced reporting/export beyond current shipped workspace and activity surfaces.
