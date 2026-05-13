@@ -364,7 +364,7 @@ export default function RequestsPage() {
     <div className="space-y-5" data-testid="requests-page">
       <PageHeader
         title="Requests"
-        description="The natural place to start work. Create a new request, generate an agreement from a reusable template, or triage the request queue."
+        description="The natural place to start work. Requests is for intake and triage, Inbox is for mixed operational follow-up, Repository is for signed/managed records, and Agreement Templates are reusable starting points."
         actions={
           <label className="flex items-center gap-2 text-xs text-ink-subtle">
             <input
@@ -386,6 +386,10 @@ export default function RequestsPage() {
         data-testid="requests-create"
       >
         <h2 className="text-sm font-medium text-ink">New request</h2>
+        <p className="text-xs text-ink-subtle">
+          Not sure where to begin? Start here for new legal intake, then move the
+          work through review and into Repository.
+        </p>
         <input
           className="rounded border border-rule px-2 py-1 text-sm"
           placeholder="Title (e.g. NDA with Acme Corp)"

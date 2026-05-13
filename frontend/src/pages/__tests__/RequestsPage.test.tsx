@@ -74,6 +74,13 @@ describe("RequestsPage", () => {
     expect(screen.getByText(/Counterparty: Acme/)).toBeInTheDocument();
   });
 
+  it("clarifies workspace boundaries in the header copy", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    expect(await screen.findByText(/Requests is for intake and triage/i)).toBeInTheDocument();
+    expect(screen.getByText(/Inbox is for mixed operational follow-up/i)).toBeInTheDocument();
+  });
+
   it("links each request title and View action to the detail route", async () => {
     fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
     renderPage();

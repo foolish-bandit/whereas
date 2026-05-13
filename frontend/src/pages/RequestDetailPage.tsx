@@ -216,6 +216,27 @@ export default function RequestDetailPage() {
         <LifecycleProgress stages={lifecycleStages} />
       </section>
       <StagePanel request={request} approvalState={approvalState} />
+      <section
+        className="rounded border border-rule bg-canvas-subtle p-4"
+        data-testid="request-detail-next-steps"
+      >
+        <h2 className="text-sm font-medium text-ink">What to do next</h2>
+        <p className="mt-1 text-xs text-ink-subtle">
+          Use the stage panel above for the immediate action, then use these
+          shortcuts for review and fallback paths.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <Link to={mountedPath("/playbooks", location.pathname)} className="underline">
+            Open Playbooks
+          </Link>
+          <Link to={mountedPath("/clause-manager", location.pathname)} className="underline">
+            Open Clause Manager
+          </Link>
+          <Link to={mountedPath("/repository", location.pathname)} className="underline">
+            Open Repository list
+          </Link>
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
         <div className="space-y-4">
