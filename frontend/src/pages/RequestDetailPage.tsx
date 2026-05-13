@@ -9,6 +9,7 @@ import RequestApprovalStatusSection from "../components/RequestApprovalStatusSec
 import RequestConvertSection from "../components/RequestConvertSection";
 import RequestUploadConvertSection from "../components/RequestUploadConvertSection";
 import StatusBadge from "../components/StatusBadge";
+import SuggestedReviewChecklist from "../components/SuggestedReviewChecklist";
 import UploadReviewPanel from "../components/UploadReviewPanel";
 import {
   ApiError,
@@ -208,6 +209,7 @@ export default function RequestDetailPage() {
             onConverted={onConverted}
             onUploaded={onUploaded}
           />
+          <SuggestedReviewChecklist contractType={request.contract_type} />
           {uploadFeedback && (
             <UploadReviewPanel
               contract={{
