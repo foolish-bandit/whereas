@@ -128,6 +128,7 @@ For a maintained snapshot of done/next/later scope, see:
 
 - [`docs/project-status.md`](docs/project-status.md)
 - `/demo/integrations` (planned connector visibility)
+- [`docs/AI_SMALL_MODEL_STACK.md`](docs/AI_SMALL_MODEL_STACK.md) (canonical small-model AI architecture)
 
 ## Known limitations
 
