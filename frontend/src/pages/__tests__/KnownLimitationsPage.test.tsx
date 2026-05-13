@@ -13,26 +13,25 @@ describe("KnownLimitationsPage", () => {
     );
   }
 
-  it("renders four limitation groups (auth, playbooks, history, integrations)", () => {
+  it("renders evaluator-facing limitation groups", () => {
     renderPage();
-    for (const id of ["auth", "playbooks", "history", "integrations"]) {
+    for (const id of ["mvp-demo", "integrations", "review-ai", "document-signature", "platform"]) {
       expect(
         screen.getByTestId(`known-limitations-${id}`),
       ).toBeInTheDocument();
     }
   });
 
-  it("anchors each group with an id so the deep link from Settings reaches it", () => {
+  it("anchors groups with ids so deep links can target sections", () => {
     renderPage();
-    expect(
-      document.getElementById("auth"),
-    ).toBeInTheDocument();
+    expect(document.getElementById("mvp-demo")).toBeInTheDocument();
+    expect(document.getElementById("platform")).toBeInTheDocument();
   });
 
-  it("does not pretend to give legal advice", () => {
+  it("states that Whereas does not provide legal advice", () => {
     renderPage();
     expect(
-      screen.getByText(/it does not provide legal advice/i),
+      screen.getByText(/whereas does not provide legal advice/i),
     ).toBeInTheDocument();
   });
 });
