@@ -20,6 +20,17 @@ const SAMPLE_TEMPLATES: AgreementTemplate[] = [
     metadata_json: null,
   },
   {
+    id: "tpl-dpa",
+    organization_id: "org-1",
+    name: "Data Processing Addendum",
+    description: null,
+    template_type: null,
+    status: "active",
+    created_at: "2026-04-02T10:00:00Z",
+    updated_at: "2026-04-15T10:00:00Z",
+    metadata_json: { contract_type: "dpa" },
+  },
+  {
     id: "tpl-archived",
     organization_id: "org-1",
     name: "Archived legacy NDA",
@@ -318,5 +329,100 @@ describe("MoveToReviewModal", () => {
     expect(
       screen.getByTestId("move-to-review-multi-notice"),
     ).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // Template-Aware Supporting Questions
+  // ---------------------------------------------------------------------
+
+  it("switches the question set to NDA when an NDA template is selected, even with a generic request type", () => {
+    setup();
+    // Default request type is "review_existing", which would map to
+    // the generic OTHER question set on its own.
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "tpl-active" },
+    });
+    const panel = screen.getByTestId("move-to-review-supporting-questions");
+    expect(panel.getAttribute("data-supporting-question-group")).toBe("nda");
+    // Helper hint surfaces only when the template drove the match.
+    expect(
+      screen.getByTestId("move-to-review-supporting-questions-hint"),
+    ).toHaveTextContent(/tailored from the selected agreement template/i);
+  });
+
+  it("switches to DPA questions when a DPA template (via metadata.contract_type) is selected", () => {
+    setup();
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "tpl-dpa" },
+    });
+    expect(
+      screen
+        .getByTestId("move-to-review-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("dpa");
+  });
+
+  it("falls back to request-type matching when the template is cleared", () => {
+    setup();
+    fireEvent.change(screen.getByTestId("move-to-review-request-type"), {
+      target: { value: "vendor_agreement" },
+    });
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "tpl-active" },
+    });
+    expect(
+      screen
+        .getByTestId("move-to-review-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("nda");
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "" },
+    });
+    expect(
+      screen
+        .getByTestId("move-to-review-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("vendor");
+    // No template means no template-driven hint.
+    expect(
+      screen.queryByTestId("move-to-review-supporting-questions-hint"),
+    ).toBeNull();
+  });
+
+  it("summarises template-derived answers with the template-aware label", () => {
+    const { onSubmit } = setup();
+    // Generic request type, NDA template — summary should still
+    // carry the NDA heading.
+    fireEvent.change(screen.getByTestId("move-to-review-template"), {
+      target: { value: "tpl-active" },
+    });
+    const inputs = screen.getAllByTestId(
+      "move-to-review-supporting-questions-input",
+    );
+    const direction = inputs.find(
+      (el) =>
+        el.getAttribute("data-supporting-question-input") === "nda_direction",
+    )!;
+    fireEvent.change(direction, { target: { value: "Mutual" } });
+    fireEvent.click(screen.getByTestId("move-to-review-submit"));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0] as MoveToReviewValues;
+    expect(submitted.supportingInfo).toContain(
+      "Supporting questions (NDA review)",
+    );
+    expect(submitted.supportingInfo).toContain("Mutual");
+    // The submitted values object MUST still only contain the
+    // existing supported fields — no structured side-channel.
+    expect(Object.keys(submitted).sort()).toEqual(
+      [
+        "department",
+        "name",
+        "owner",
+        "priority",
+        "requestType",
+        "supportingInfo",
+        "templateId",
+      ].sort(),
+    );
   });
 });

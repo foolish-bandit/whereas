@@ -1283,4 +1283,260 @@ describe("RequestsPage", () => {
       expect(text).not.toContain(needle);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // Template-Aware Supporting Questions
+  // ---------------------------------------------------------------------
+
+  const SAMPLE_TEMPLATES = [
+    {
+      id: "tpl-nda",
+      organization_id: "org-1",
+      name: "Mutual NDA template",
+      description: null,
+      template_type: "NDA",
+      status: "active",
+      created_at: "2026-04-01T10:00:00Z",
+      updated_at: "2026-04-15T10:00:00Z",
+      metadata_json: null,
+    },
+    {
+      id: "tpl-dpa",
+      organization_id: "org-1",
+      name: "Data Processing Addendum",
+      description: null,
+      template_type: null,
+      status: "active",
+      created_at: "2026-04-02T10:00:00Z",
+      updated_at: "2026-04-15T10:00:00Z",
+      metadata_json: { contract_type: "dpa" },
+    },
+  ];
+
+  function mockWithTemplates(handler?: (url: string, init: RequestInit) => Response | undefined) {
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      const custom = handler?.(url, init);
+      if (custom) return custom;
+      if (url.includes("/api/agreement-templates")) {
+        return jsonResponse(SAMPLE_TEMPLATES);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+  }
+
+  it("switches the supporting-question set when an NDA template is selected (even with no request_type)", async () => {
+    mockWithTemplates();
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    // Wait for templates to load into the selector.
+    await waitFor(() => {
+      const opts = Array.from(
+        screen
+          .getByTestId("requests-create-template")
+          .querySelectorAll("option"),
+      ).map((o) => o.textContent ?? "");
+      expect(opts).toContain("Mutual NDA template");
+    });
+
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "tpl-nda" },
+    });
+    const panel = screen.getByTestId("requests-create-supporting-questions");
+    expect(panel.getAttribute("data-supporting-question-group")).toBe("nda");
+    expect(
+      screen.getByTestId("requests-create-supporting-questions-hint"),
+    ).toHaveTextContent(/tailored from the selected agreement template/i);
+  });
+
+  it("switches to DPA questions when a DPA template (via metadata.contract_type) is selected", async () => {
+    mockWithTemplates();
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    await waitFor(() => {
+      const opts = Array.from(
+        screen
+          .getByTestId("requests-create-template")
+          .querySelectorAll("option"),
+      ).map((o) => o.textContent ?? "");
+      expect(opts).toContain("Data Processing Addendum");
+    });
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "tpl-dpa" },
+    });
+    expect(
+      screen
+        .getByTestId("requests-create-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("dpa");
+  });
+
+  it("falls back to request/contract type behavior when the template is cleared", async () => {
+    mockWithTemplates();
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    await waitFor(() => {
+      const opts = Array.from(
+        screen
+          .getByTestId("requests-create-template")
+          .querySelectorAll("option"),
+      ).map((o) => o.textContent ?? "");
+      expect(opts).toContain("Mutual NDA template");
+    });
+
+    // Set vendor in contract type first, then pick an NDA template
+    // (template should win), then clear template (should revert to
+    // vendor).
+    fireEvent.change(screen.getByPlaceholderText(/Contract type/i), {
+      target: { value: "Vendor agreement" },
+    });
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "tpl-nda" },
+    });
+    expect(
+      screen
+        .getByTestId("requests-create-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("nda");
+
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "" },
+    });
+    expect(
+      screen
+        .getByTestId("requests-create-supporting-questions")
+        .getAttribute("data-supporting-question-group"),
+    ).toBe("vendor");
+    expect(
+      screen.queryByTestId("requests-create-supporting-questions-hint"),
+    ).toBeNull();
+  });
+
+  it("submits the template-derived summary label without leaking linked_template_id or other unsupported fields", async () => {
+    let postBody: Record<string, unknown> | null = null;
+    mockWithTemplates((url, init) => {
+      if (url.endsWith("/api/requests") && init?.method === "POST") {
+        postBody = JSON.parse(init.body as string);
+        return jsonResponse({
+          ...SAMPLE_REQUEST,
+          id: "req-new",
+          title: postBody!.title as string,
+          description: postBody!.description as string | null,
+        });
+      }
+      return undefined;
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    await waitFor(() => {
+      const opts = Array.from(
+        screen
+          .getByTestId("requests-create-template")
+          .querySelectorAll("option"),
+      ).map((o) => o.textContent ?? "");
+      expect(opts).toContain("Mutual NDA template");
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Title/i), {
+      target: { value: "NDA with Globex" },
+    });
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "tpl-nda" },
+    });
+    const inputs = screen.getAllByTestId(
+      "requests-create-supporting-questions-input",
+    );
+    const directionInput = inputs.find(
+      (el) =>
+        el.getAttribute("data-supporting-question-input") === "nda_direction",
+    )!;
+    fireEvent.change(directionInput, { target: { value: "Mutual" } });
+    fireEvent.click(screen.getByTestId("requests-create-submit"));
+    await waitFor(() => expect(postBody).not.toBeNull());
+    // Existing allowed-key set — `linked_template_id` is intentionally
+    // not included because the template here drives only supporting
+    // questions, not the request's linked template.
+    const allowedKeys = new Set([
+      "title",
+      "description",
+      "contract_type",
+      "request_type",
+      "priority",
+      "counterparty_name",
+      "due_date",
+    ]);
+    for (const key of Object.keys(postBody!)) {
+      expect(allowedKeys.has(key)).toBe(true);
+    }
+    expect(postBody).not.toHaveProperty("linked_template_id");
+    expect(postBody).not.toHaveProperty("supporting_answers");
+    expect(postBody).not.toHaveProperty("metadata_json");
+    expect(postBody!.description as string).toContain(
+      "Supporting questions (NDA review)",
+    );
+    expect(postBody!.description as string).toContain("Mutual");
+  });
+
+  it("preserves the existing free-text supporting info alongside template-driven questions", async () => {
+    let postBody: Record<string, unknown> | null = null;
+    mockWithTemplates((url, init) => {
+      if (url.endsWith("/api/requests") && init?.method === "POST") {
+        postBody = JSON.parse(init.body as string);
+        return jsonResponse({
+          ...SAMPLE_REQUEST,
+          id: "req-new",
+          description: postBody!.description as string | null,
+        });
+      }
+      return undefined;
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    await waitFor(() => {
+      const opts = Array.from(
+        screen
+          .getByTestId("requests-create-template")
+          .querySelectorAll("option"),
+      ).map((o) => o.textContent ?? "");
+      expect(opts).toContain("Mutual NDA template");
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Title/i), {
+      target: { value: "NDA with Globex" },
+    });
+    fireEvent.change(screen.getByTestId("requests-create-template"), {
+      target: { value: "tpl-nda" },
+    });
+    fireEvent.change(screen.getByTestId("requests-create-description"), {
+      target: { value: "Counterparty wants quick turnaround." },
+    });
+    fireEvent.click(screen.getByTestId("requests-create-submit"));
+    await waitFor(() => expect(postBody).not.toBeNull());
+    expect(postBody!.description as string).toContain(
+      "Counterparty wants quick turnaround.",
+    );
+  });
+
+  it("tolerates a failed agreement-template fetch — form still works", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/api/agreement-templates")) {
+        return jsonResponse({ detail: "boom" }, 500);
+      }
+      if (url.includes("/api/requests")) {
+        return jsonResponse([SAMPLE_REQUEST]);
+      }
+      return jsonResponse({ detail: "unexpected " + url }, 500);
+    });
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    // Template selector is present but only has the placeholder option.
+    const select = screen.getByTestId("requests-create-template");
+    expect(select).toBeInTheDocument();
+    expect(select.querySelectorAll("option")).toHaveLength(1);
+    // Without a template, the pending state still applies until the
+    // user picks a request/contract type — unchanged behavior.
+    expect(
+      screen.getByTestId("requests-create-supporting-questions-pending"),
+    ).toBeInTheDocument();
+  });
 });

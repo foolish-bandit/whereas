@@ -284,6 +284,30 @@ carries fields the endpoint already accepts. Clause/playbook
 integration remains future work and no LLM-based intake extraction
 is added.
 
+##### Template-aware supporting questions
+
+Both surfaces also accept an **Agreement Template** signal: when the
+user selects a template from the Requests *New request* form or the
+Move-to-Review modal, the supporting-question set is chosen from the
+template's existing type information rather than the request type
+alone. Precedence is
+
+1. `metadata_json.contract_type` / `agreement_type` on the selected
+   template (when curators set an explicit slug),
+2. the long-standing free-text `template_type` field (e.g. `"NDA"`,
+   `"MSA"`),
+3. conservative name/title inference for well-known phrases (e.g.
+   *Mutual NDA*, *Data Processing Agreement*),
+4. then `request_type` / `contract_type`, and finally the general
+   fallback.
+
+A small helper line ("Questions are tailored from the selected
+Agreement Template.") is surfaced under the panel heading only when
+the template actually drove the match — picking a request type still
+behaves exactly as before. The matching is frontend-only and no
+backend Request field is added; structured answers continue to fold
+into the existing `description` / `supportingInfo` path.
+
 ### Playbooks grid foundation (PR #118)
 
 The top-level **Playbooks** page is now a structured workspace. The

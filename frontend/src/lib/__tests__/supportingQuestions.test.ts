@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   composeDescription,
   getQuestionSetFor,
+  getQuestionSetForTemplate,
   parseSupportingQuestionsBlock,
+  resolveQuestionSet,
   summarizeAnswers,
 } from "../supportingQuestions";
 
@@ -166,6 +168,195 @@ describe("supportingQuestions", () => {
       expect(result!.label).toBe("NDA review");
       expect(result!.rows).toHaveLength(2);
       expect(result!.remainingDescription).toBe(freeText);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Template-Aware Supporting Questions
+  // -------------------------------------------------------------------------
+
+  describe("getQuestionSetForTemplate", () => {
+    it("returns null for nullish or empty templates", () => {
+      expect(getQuestionSetForTemplate(null)).toBeNull();
+      expect(getQuestionSetForTemplate(undefined)).toBeNull();
+      expect(getQuestionSetForTemplate({})).toBeNull();
+      expect(
+        getQuestionSetForTemplate({ name: "", template_type: "" }),
+      ).toBeNull();
+    });
+
+    it("matches NDA from template_type='NDA' or 'mutual_nda' slug", () => {
+      expect(
+        getQuestionSetForTemplate({ template_type: "NDA" })?.key,
+      ).toBe("nda");
+      expect(
+        getQuestionSetForTemplate({ template_type: "mutual_nda" })?.key,
+      ).toBe("nda");
+    });
+
+    it("matches NDA from metadata_json.contract_type taking precedence over template_type", () => {
+      // The explicit contract_type slug on metadata_json should win
+      // even when template_type is set to something else.
+      const set = getQuestionSetForTemplate({
+        template_type: "Other",
+        metadata_json: { contract_type: "mutual_nda" },
+      });
+      expect(set?.key).toBe("nda");
+    });
+
+    it("matches DPA from contract_type='dpa' or template_type='DPA'", () => {
+      expect(
+        getQuestionSetForTemplate({
+          metadata_json: { contract_type: "dpa" },
+        })?.key,
+      ).toBe("dpa");
+      expect(
+        getQuestionSetForTemplate({ template_type: "DPA" })?.key,
+      ).toBe("dpa");
+    });
+
+    it("matches MSA from contract_type='msa' or template_type='MSA'", () => {
+      expect(
+        getQuestionSetForTemplate({
+          metadata_json: { contract_type: "msa" },
+        })?.key,
+      ).toBe("msa");
+      expect(
+        getQuestionSetForTemplate({ template_type: "MSA" })?.key,
+      ).toBe("msa");
+    });
+
+    it("matches Vendor from contract_type='vendor_agreement'", () => {
+      expect(
+        getQuestionSetForTemplate({
+          metadata_json: { contract_type: "vendor_agreement" },
+        })?.key,
+      ).toBe("vendor");
+    });
+
+    it("matches Employment from contract_type='employment_agreement'", () => {
+      expect(
+        getQuestionSetForTemplate({
+          metadata_json: { contract_type: "employment_agreement" },
+        })?.key,
+      ).toBe("employment");
+    });
+
+    it("uses conservative name inference only when no explicit type field is present", () => {
+      // Explicit type wins over name.
+      const ndaByType = getQuestionSetForTemplate({
+        template_type: "DPA",
+        name: "Mutual NDA",
+      });
+      expect(ndaByType?.key).toBe("dpa");
+
+      // Name-only inference accepted for well-known phrases.
+      expect(
+        getQuestionSetForTemplate({ name: "Mutual NDA" })?.key,
+      ).toBe("nda");
+      expect(
+        getQuestionSetForTemplate({ name: "Non-Disclosure Agreement" })?.key,
+      ).toBe("nda");
+      expect(
+        getQuestionSetForTemplate({ name: "Data Processing Addendum" })?.key,
+      ).toBe("dpa");
+      expect(
+        getQuestionSetForTemplate({ name: "Master Services Agreement" })?.key,
+      ).toBe("msa");
+      expect(
+        getQuestionSetForTemplate({ name: "Standard Vendor Agreement" })?.key,
+      ).toBe("vendor");
+      expect(
+        getQuestionSetForTemplate({ name: "Employment Agreement" })?.key,
+      ).toBe("employment");
+    });
+
+    it("returns null for ambiguous template names with no type signal", () => {
+      // Conservative — random names should not be force-classified.
+      expect(
+        getQuestionSetForTemplate({ name: "General Template" }),
+      ).toBeNull();
+      expect(
+        getQuestionSetForTemplate({ name: "Side Letter Template" }),
+      ).toBeNull();
+      expect(
+        getQuestionSetForTemplate({ name: "Standard Form" }),
+      ).toBeNull();
+    });
+
+    it("ignores non-string contract_type values on metadata_json", () => {
+      expect(
+        getQuestionSetForTemplate({
+          metadata_json: { contract_type: 42 as unknown as string },
+        }),
+      ).toBeNull();
+    });
+  });
+
+  describe("resolveQuestionSet", () => {
+    it("returns source='none' when no signals are present", () => {
+      const result = resolveQuestionSet({});
+      expect(result.set).toBeNull();
+      expect(result.source).toBe("none");
+    });
+
+    it("prefers the template signal over request_type/contract_type", () => {
+      const result = resolveQuestionSet({
+        template: { template_type: "NDA" },
+        requestType: "vendor_agreement",
+        contractType: "Vendor agreement",
+      });
+      expect(result.set?.key).toBe("nda");
+      expect(result.source).toBe("template");
+    });
+
+    it("falls back to request_type when no template signal is available", () => {
+      const result = resolveQuestionSet({
+        template: null,
+        requestType: "nda_review",
+      });
+      expect(result.set?.key).toBe("nda");
+      expect(result.source).toBe("request");
+    });
+
+    it("falls back to request_type when the template provides no confident signal", () => {
+      // Template has no recognisable type fields and an ambiguous name.
+      const result = resolveQuestionSet({
+        template: { name: "General Template" },
+        requestType: "vendor_agreement",
+      });
+      expect(result.set?.key).toBe("vendor");
+      expect(result.source).toBe("request");
+    });
+
+    it("falls back to OTHER_SET (source='request') when request_type/contract_type are set but unrecognized", () => {
+      const result = resolveQuestionSet({
+        requestType: "new_contract",
+        contractType: "Side letter",
+      });
+      expect(result.set?.key).toBe("other");
+      expect(result.source).toBe("request");
+    });
+  });
+
+  describe("summary remains compatible with parser when set comes from template", () => {
+    it("renders the labelled summary using the template-derived set heading", () => {
+      // Pretend a vendor template was selected but the request type is
+      // still the generic 'new_contract'. The summary should reflect
+      // the template-derived set, not the request type.
+      const resolved = resolveQuestionSet({
+        template: { template_type: "vendor_agreement" },
+        requestType: "new_contract",
+      });
+      const text = summarizeAnswers(resolved.set, {
+        vendor_product: "Cloud hosting",
+      });
+      expect(text).toContain("Supporting questions (Vendor agreement):");
+      // Round-trips through the existing parser used by Request Detail.
+      const parsed = parseSupportingQuestionsBlock(text);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.label).toBe("Vendor agreement");
+      expect(parsed!.rows[0].answer).toBe("Cloud hosting");
     });
   });
 

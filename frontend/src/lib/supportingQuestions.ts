@@ -248,6 +248,169 @@ export function getQuestionSetFor(
   return OTHER_SET;
 }
 
+/**
+ * Subset of the AgreementTemplate shape that carries useful type
+ * signal. Accepting a structural type here keeps this module
+ * independent of the full agreement-template type and trivial to
+ * call from tests.
+ */
+export interface TemplateLikeSignal {
+  template_type?: string | null;
+  name?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+}
+
+function matchExplicitType(value: string): SupportingQuestionSet | null {
+  const v = value.toLowerCase().trim();
+  if (!v) return null;
+  // Slug or label forms: `nda`, `mutual_nda`, `one_way_nda`, "NDA",
+  // "Non-disclosure", "Non-Disclosure Agreement", …
+  if (
+    v === "nda" ||
+    v.includes("nda") ||
+    v.includes("non_disclosure") ||
+    v.includes("non-disclosure") ||
+    v.includes("nondisclosure")
+  ) {
+    return NDA_SET;
+  }
+  if (v === "dpa" || v.includes("dpa") || v.includes("data_processing")) {
+    return DPA_SET;
+  }
+  if (v === "msa" || v.includes("msa") || v.includes("master_service")) {
+    return MSA_SET;
+  }
+  if (v.includes("vendor")) return VENDOR_SET;
+  if (v.includes("employment")) return EMPLOYMENT_SET;
+  return null;
+}
+
+function matchNameSignal(name: string): SupportingQuestionSet | null {
+  // Conservative: only well-known phrases that strongly imply a
+  // single agreement type. Anything else is left to fall through to
+  // request_type / contract_type / OTHER. Avoid matching plain words
+  // like "Vendor" alone? — we *do* match it, but only when it
+  // appears in the template's display name, which is curator-set.
+  const v = name.toLowerCase();
+  if (!v) return null;
+  if (v.includes("non-disclosure") || v.includes("non disclosure")) {
+    return NDA_SET;
+  }
+  if (/\bnda\b/.test(v)) return NDA_SET;
+  if (v.includes("data processing")) return DPA_SET;
+  if (/\bdpa\b/.test(v)) return DPA_SET;
+  if (v.includes("master service") || v.includes("master services")) {
+    return MSA_SET;
+  }
+  if (/\bmsa\b/.test(v)) return MSA_SET;
+  if (v.includes("vendor agreement") || v.includes("vendor contract")) {
+    return VENDOR_SET;
+  }
+  if (v.includes("employment agreement") || v.includes("employment offer")) {
+    return EMPLOYMENT_SET;
+  }
+  return null;
+}
+
+/**
+ * Derive a question set from an Agreement Template, if the template
+ * carries enough signal. Templates often have the clearest signal of
+ * what kind of agreement the user is working from — when a curator
+ * picks the "Mutual NDA" template, the request is an NDA review even
+ * if the request_type is generic.
+ *
+ * Precedence:
+ *   1. `metadata_json.contract_type` — explicit slug from the
+ *      template curator (most authoritative).
+ *   2. `template_type` — the existing free-text type field.
+ *   3. `metadata_json.agreement_type` — alternative slug some
+ *      callers may use.
+ *   4. Conservative name/title inference (only for well-known
+ *      phrases like "NDA" or "Data Processing Agreement").
+ *
+ * Returns null when no confident match can be made. The caller falls
+ * back to request_type/contract_type matching in that case so the
+ * panel still renders useful prompts.
+ */
+export function getQuestionSetForTemplate(
+  template: TemplateLikeSignal | null | undefined,
+): SupportingQuestionSet | null {
+  if (!template) return null;
+
+  // Explicit fields on the template metadata bag, if present. The
+  // backend metadata_json is opaque, so we accept either of two slug
+  // names that template curators reasonably reach for.
+  const metadata = template.metadata_json ?? null;
+  if (metadata) {
+    const contractTypeRaw = metadata["contract_type"];
+    if (typeof contractTypeRaw === "string") {
+      const match = matchExplicitType(contractTypeRaw);
+      if (match) return match;
+    }
+    const agreementTypeRaw = metadata["agreement_type"];
+    if (typeof agreementTypeRaw === "string") {
+      const match = matchExplicitType(agreementTypeRaw);
+      if (match) return match;
+    }
+  }
+
+  // `template_type` is the long-standing typed field on the
+  // AgreementTemplate row (e.g. "NDA", "MSA").
+  if (template.template_type) {
+    const match = matchExplicitType(template.template_type);
+    if (match) return match;
+  }
+
+  // No explicit type field gave us a confident answer — fall back to
+  // conservative name inference. Curator-set names like "Mutual NDA"
+  // or "Data Processing Agreement" are reliable; random titles fall
+  // through to null so we don't misclassify a template.
+  if (template.name) {
+    const match = matchNameSignal(template.name);
+    if (match) return match;
+  }
+
+  return null;
+}
+
+export interface ResolvedQuestionSet {
+  set: SupportingQuestionSet | null;
+  /**
+   * Which signal produced the match. Callers use this to surface a
+   * helper line like "Tailored from the selected Agreement Template"
+   * only when the template actually influenced the question set.
+   */
+  source: "template" | "request" | "none";
+}
+
+/**
+ * Resolve a question set across all available signals, applying the
+ * precedence chain that the Template-Aware Supporting Questions PR
+ * documents:
+ *
+ *   1. Selected Agreement Template (explicit type fields, then
+ *      conservative name inference).
+ *   2. Request `contract_type` / `request_type`.
+ *   3. OTHER_SET fallback, only when *some* request signal exists.
+ *
+ * Returns `{ set: null, source: 'none' }` when no signal is present —
+ * callers render the "pick a request type or contract type" pending
+ * state for that.
+ */
+export function resolveQuestionSet(input: {
+  template?: TemplateLikeSignal | null;
+  requestType?: string | null;
+  contractType?: string | null;
+}): ResolvedQuestionSet {
+  const templateSet = getQuestionSetForTemplate(input.template);
+  if (templateSet) return { set: templateSet, source: "template" };
+
+  const requestSet = getQuestionSetFor(input.requestType, input.contractType);
+  if (requestSet) return { set: requestSet, source: "request" };
+
+  return { set: null, source: "none" };
+}
+
 export type SupportingAnswers = Record<string, string>;
 
 export interface ParsedSupportingBlock {
