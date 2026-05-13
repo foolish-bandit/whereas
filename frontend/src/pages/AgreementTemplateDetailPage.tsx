@@ -687,6 +687,7 @@ export default function AgreementTemplateDetailPage() {
       </section>
 
       <section
+        id="generate"
         className="rounded border border-rule p-4"
         data-testid="agreement-template-generate"
       >

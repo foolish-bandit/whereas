@@ -208,12 +208,17 @@ describe("AgreementTemplatesPage", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("Mutual NDA")).toBeInTheDocument();
-    // PR #87: "MSA" appears both as the row title and the type chip,
-    // so we disambiguate via the row-link testId.
-    const links = screen.getAllByTestId("agreement-templates-row-link");
-    expect(links.map((l) => l.textContent)).toEqual(
+    // The catalog redesign uses agreement-templates-row-name for the template
+    // name text and agreement-templates-row-link for the "Open template" action.
+    // Disambiguate MSA (name vs type chip) via the name testId.
+    const names = screen.getAllByTestId("agreement-templates-row-name");
+    expect(names.map((n) => n.textContent)).toEqual(
       expect.arrayContaining(["Mutual NDA", "MSA"]),
     );
+    // "Open template" links exist for each row.
+    const openLinks = screen.getAllByTestId("agreement-templates-row-link");
+    expect(openLinks).toHaveLength(2);
+    expect(openLinks[0]).toHaveTextContent(/open template/i);
   });
 
   it("shows an empty state when no templates exist", async () => {
@@ -225,7 +230,139 @@ describe("AgreementTemplatesPage", () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText(/No templates yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Create a template, then upload its DOCX/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows 'No archived templates' when archived view is empty", async () => {
+    // Return empty list on every call so both the initial fetch and the
+    // re-fetch triggered by the archived toggle produce empty results.
+    fetchMock.mockImplementation(async () => jsonResponse([]));
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Create a template, then upload its DOCX/i);
+    // Switch to archived view
+    fireEvent.click(screen.getByTestId("agreement-templates-include-archived"));
+    const matches = await screen.findAllByText(/No archived templates/i);
+    expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("groups templates by template_type into labeled catalog sections", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+    const headings = screen.getAllByTestId("agreement-templates-group-heading");
+    const labels = headings.map((h) => h.textContent);
+    expect(labels).toContain("NDA");
+    expect(labels).toContain("MSA");
+  });
+
+  it("search by name filters the catalog", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+
+    fireEvent.change(screen.getByTestId("agreement-templates-search"), {
+      target: { value: "Mutual" },
+    });
+    // The MSA group heading should disappear; the dropdown option may still
+    // exist but the card/group heading should not.
+    const headings = screen.queryAllByTestId("agreement-templates-group-heading");
+    expect(headings.map((h) => h.textContent)).not.toContain("MSA");
+    expect(screen.getByText("Mutual NDA")).toBeInTheDocument();
+  });
+
+  it("filter by type narrows the catalog", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+
+    fireEvent.change(screen.getByTestId("agreement-templates-filter-type"), {
+      target: { value: "NDA" },
+    });
+    expect(screen.getByText("Mutual NDA")).toBeInTheDocument();
+    // MSA group heading should be gone
+    const headings = screen.getAllByTestId("agreement-templates-group-heading");
+    expect(headings.map((h) => h.textContent)).not.toContain("MSA");
+  });
+
+  it("reset filters button restores full catalog", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+
+    fireEvent.change(screen.getByTestId("agreement-templates-search"), {
+      target: { value: "nothing-matches" },
+    });
+    expect(screen.queryByText("Mutual NDA")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("agreement-templates-reset-filters"));
+    expect(await screen.findByText("Mutual NDA")).toBeInTheDocument();
+  });
+
+  it("'Use this template' links to the detail page with #generate hash", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+    const useLinks = screen.getAllByTestId("agreement-templates-card-use");
+    // Each use link should end with the template id and #generate
+    expect(useLinks[0]).toHaveAttribute(
+      "href",
+      `/requests/templates/${NDA_ID}#generate`,
+    );
+  });
+
+  it("'Open template' links to the detail page", async () => {
+    setupListFetch(fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/agreement-templates"]}>
+        <Routes>
+          <Route path="/agreement-templates" element={<AgreementTemplatesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Mutual NDA");
+    const openLinks = screen.getAllByTestId("agreement-templates-row-link");
+    expect(openLinks[0]).toHaveAttribute(
+      "href",
+      `/requests/templates/${NDA_ID}`,
+    );
   });
 
   it("creates a template through the form", async () => {
