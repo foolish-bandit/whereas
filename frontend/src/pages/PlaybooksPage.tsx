@@ -209,9 +209,9 @@ export default function PlaybooksPage() {
         <div>
           <h1 className="font-serif text-xl text-ink sm:text-2xl">Playbooks</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Review standards, fallback positions, and deviation rules.
-            Whereas surfaces information about agreements; it does not
-            provide legal advice.
+            Define review standards, fallback positions, and deviation rules
+            your team uses during review. Playbook output is guidance for
+            humans to review; it is not legal advice.
           </p>
         </div>
         <button

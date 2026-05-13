@@ -163,7 +163,7 @@ export default function AgreementTemplatesPage() {
     <div className="space-y-5" data-testid="agreement-templates-page">
       <PageHeader
         title="Agreement Templates"
-        description="Reusable agreement templates used to start and generate requests. Uploaded template originals are the official source file; a text preview is the lightweight working copy."
+        description="Reusable starting points for common agreements. Use templates to generate draft language for Requests and Repository records. Template output should always be reviewed by your team."
         eyebrow={
           <nav className="text-xs text-ink-subtle" aria-label="Breadcrumb">
             <Link

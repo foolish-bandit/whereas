@@ -160,9 +160,9 @@ export default function IntegrationsPage() {
       <header className="mb-6">
         <h1 className="font-serif text-xl text-ink sm:text-2xl">Integrations</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Whereas is self-hosted and local-first in spirit. Integrations are
-          explicit, optional, and admin-controlled — your contracts never leave
-          your infrastructure unless you configure a connection.
+          Integrations are explicit, optional, and admin-controlled. "Available"
+          means you can configure it now in this MVP. "Planned" means the
+          connector is listed for roadmap visibility and is not connected yet.
         </p>
       </header>
 

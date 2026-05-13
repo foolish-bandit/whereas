@@ -22,7 +22,7 @@ describe("IntakePage", () => {
       screen.getByRole("heading", { name: /intake/i, level: 1 }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/start contract work from one guided front door/i),
+      screen.getByText(/start new agreement work from one guided front door/i),
     ).toBeInTheDocument();
   });
 

@@ -551,7 +551,7 @@ export default function RequestsPage() {
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
           title="No requests yet"
-          description="Create a request above to start the intake flow. New requests appear here first, then move into approvals and the Repository as work progresses."
+          description="Create a request above to start guided intake. New requests are reviewed here first, then move into Approvals and the Repository as work progresses."
         />
       )}
       {state.kind === "loaded" && state.rows.length > 0 && (

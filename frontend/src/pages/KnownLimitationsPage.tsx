@@ -56,7 +56,7 @@ const GROUPS: LimitationGroup[] = [
   {
     id: "integrations",
     heading: "Integrations",
-    body: "No external integrations ship in v0.1. The Integrations page lists the planned target set (Nango, Outlook, Slack, Salesforce, HubSpot).",
+    body: "Integrations are intentionally limited in this MVP. The Integrations page marks each connector as Available now or Planned (not connected yet).",
     items: [
       {
         area: "Inbound email",
@@ -74,11 +74,10 @@ export default function KnownLimitationsPage() {
           Known limitations
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Areas the v0.1 release intentionally leaves rough. Whereas
-          surfaces information about agreements; it does not provide
-          legal advice, and it does not yet ship every feature a mature
-          CLM stack covers. This page lists the gaps so they are
-          obvious to evaluators.
+          A plain-English list of what is available now, what is
+          demo/session-only, and what is planned. Whereas surfaces
+          information about agreements; it does not provide legal advice.
+          Machine-generated metadata and extracted text must be reviewed.
         </p>
       </header>
 

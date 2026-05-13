@@ -356,8 +356,8 @@ export default function InboxPage() {
         <div>
           <h1 className="text-lg font-semibold text-ink">Inbox</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            The intake front door. New uploads and review work appear
-            here first, then route to Repository or Requests.
+            The triage queue for incoming work. New uploads and review items
+            appear here first, then move to Repository or Requests.
             Approval tasks stay in the approval workflow and live on{" "}
             <Link
               to={mountedPath("/approvals/tasks", location.pathname)}

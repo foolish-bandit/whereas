@@ -57,11 +57,10 @@ export default function SettingsPage() {
     <div data-testid="settings-page">
       <h1 className="font-serif text-2xl text-ink">Settings</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        The backend identifies callers by an{" "}
+        The backend currently identifies callers by an{" "}
         <code className="font-mono text-xs">X-Whereas-Dev-User</code> header.
-        Store the UUID of an existing user here; it is kept in your
-        browser only. Full authentication arrives with the production
-        deployment — see{" "}
+        Store the UUID of an existing user here (browser-only). Full sign-in
+        and user management are planned beyond this MVP — see{" "}
         <Link
           to="/demo/known-limitations#auth"
           className="underline hover:text-ink"
@@ -152,7 +151,8 @@ export default function SettingsPage() {
         <p className="mt-1">
           Whereas surfaces information about contracts. It does not provide
           legal advice and does not replace human legal review. Extracted
-          metadata is machine-generated and must be reviewed.
+          metadata is machine-generated and must be reviewed before decisions
+          are made.
         </p>
       </div>
     </div>

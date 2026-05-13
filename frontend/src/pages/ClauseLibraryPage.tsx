@@ -308,10 +308,10 @@ export default function ClauseLibraryPage() {
         <div>
           <h1 className="text-lg font-semibold text-ink">Clause Manager</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Approved clauses, fallback language, and reusable drafting
-            guidance. Organized by contract type so curators can grow each
-            library independently. Clause/playbook integration is future
-            work.
+            Manage approved clauses, fallback language, and drafting guidance
+            by agreement type. This library supports human drafting and review;
+            Clause Manager and Playbooks are available now, with deeper linking
+            between them planned.
           </p>
         </div>
         <label className="flex items-center gap-2 text-xs text-ink-subtle">

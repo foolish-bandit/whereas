@@ -119,9 +119,9 @@ export default function ApprovalsLandingPage() {
       <div>
         <h1 className="text-lg font-semibold text-ink">Approvals</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          One place to manage the approval surface of CLM — what's waiting on
-          you, what's in flight, the templates you reuse, and the policies that
-          attach approvals to incoming requests.
+          Manage approval work in one place: what is waiting on you, what is in
+          flight, and which templates and policies are active. Approval routing
+          supports process control, not legal advice.
         </p>
       </div>
 
