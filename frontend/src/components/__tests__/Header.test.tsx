@@ -68,20 +68,11 @@ describe("Header", () => {
     ).toBeInTheDocument();
   });
 
-  it("the +New menu surfaces every required item", () => {
+  it("the Start new trigger is visible in the header", () => {
     renderHeader();
-    fireEvent.click(screen.getByTestId("header-new-trigger"));
-    for (const label of [
-      "New request",
-      "Upload to repository",
-      "Start from template",
-      "New playbook rule",
-      "New clause",
-    ]) {
-      expect(
-        screen.getByText(label, { selector: "button" }),
-      ).toBeInTheDocument();
-    }
+    expect(screen.getByTestId("start-new-trigger")).toHaveTextContent(
+      "Start new",
+    );
   });
 
   it("the notification bell shows a badge with the overdue count", async () => {

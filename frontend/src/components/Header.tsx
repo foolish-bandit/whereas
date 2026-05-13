@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 import CommandPalette from "./CommandPalette";
 import DemoModePill from "./DemoModePill";
+import StartNewMenu from "./StartNewMenu";
 import { getDashboardSummary } from "../lib/api";
 import { demoPath } from "../lib/routes";
 
@@ -11,14 +12,6 @@ interface HeaderProps {
   demoMode?: boolean;
   onOpenSidebar: () => void;
 }
-
-const NEW_ITEMS: { label: string; to: string }[] = [
-  { label: "New request", to: demoPath("/requests?new=1") },
-  { label: "Upload to repository", to: demoPath("/upload") },
-  { label: "Start from template", to: demoPath("/requests/templates") },
-  { label: "New playbook rule", to: demoPath("/playbooks?new=rule") },
-  { label: "New clause", to: demoPath("/clause-manager?new=1") },
-];
 
 function isModifier(e: KeyboardEvent): boolean {
   return e.metaKey || e.ctrlKey;
@@ -29,9 +22,7 @@ export default function Header({
   demoMode,
   onOpenSidebar,
 }: HeaderProps) {
-  const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [overdue, setOverdue] = useState(0);
@@ -44,7 +35,6 @@ export default function Header({
         setPaletteOpen(true);
       } else if (e.key === "Escape") {
         setPaletteOpen(false);
-        setNewOpen(false);
         setBellOpen(false);
         setUserOpen(false);
       }
@@ -125,34 +115,7 @@ export default function Header({
         </button>
 
         <div className="flex shrink-0 items-center gap-2 text-xs sm:gap-3">
-          <Dropdown
-            open={newOpen}
-            setOpen={setNewOpen}
-            label="+ New"
-            testIdRoot="header-new"
-            buttonClassName="rounded border border-ink bg-ink px-2.5 py-1 text-canvas hover:bg-accent-ring"
-          >
-            <ul role="menu" className="py-1">
-              {NEW_ITEMS.map((it) => (
-                <li key={it.label}>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setNewOpen(false);
-                      navigate(it.to);
-                    }}
-                    className="block w-full px-3 py-1.5 text-left text-sm text-ink hover:bg-canvas-subtle"
-                    data-testid={`header-new-${it.label
-                      .toLowerCase()
-                      .replace(/\s+/g, "-")}`}
-                  >
-                    {it.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Dropdown>
+          <StartNewMenu />
 
           <Dropdown
             open={bellOpen}
