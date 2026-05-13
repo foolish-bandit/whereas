@@ -630,4 +630,70 @@ describe("RequestDetailPage", () => {
       expect(screen.queryByTestId("request-additional-context")).toBeNull();
     });
   });
+
+  describe("suggested review checklist", () => {
+    it("renders the checklist section for a request with a known contract type", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("suggested-review-checklist"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: /suggested review checklist/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/workflow aid, not legal advice/i),
+      ).toBeInTheDocument();
+    });
+
+    it("renders NDA checklist items when contract_type is NDA", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      const labels = screen
+        .getAllByTestId("checklist-item-label")
+        .map((el) => el.textContent);
+      expect(labels).toContain("Confidentiality scope");
+      expect(labels).toContain("Term / survival");
+      expect(labels).toContain("Return/destruction of materials");
+    });
+
+    it("renders default checklist when contract_type is null", async () => {
+      mockDetail({ ...BASE_REQUEST, contract_type: null });
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      const labels = screen
+        .getAllByTestId("checklist-item-label")
+        .map((el) => el.textContent);
+      expect(labels).toContain("Parties");
+      expect(labels).toContain("Governing law");
+    });
+
+    it("renders Playbooks and Clause Manager links", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("checklist-link-playbooks"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("checklist-link-clause-manager"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not render Open Review tab button on Request Detail", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-detail-page")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("checklist-open-review-tab"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

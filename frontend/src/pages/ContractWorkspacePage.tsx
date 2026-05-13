@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
-import KeyTermsPanel from "../components/KeyTermsPanel";
+import SuggestedReviewChecklist from "../components/SuggestedReviewChecklist";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import DuplicateMergePanel from "../components/DuplicateMergePanel";
@@ -756,6 +756,11 @@ export default function ContractWorkspacePage() {
         metadata={metadataView}
         onMetadataSaved={setMetadataView}
         artifacts={artifacts}
+      />
+
+      <SuggestedReviewChecklist
+        contractType={metadataView?.contract_type ?? null}
+        onOpenReviewTab={() => setActiveTab("review")}
       />
 
       {state.contract.merged_into_contract_id ? null : (
@@ -2245,7 +2250,7 @@ function SendToDocusealPanel({ contractId }: { contractId: string }) {
               )}
               <ApprovalGateRemediation gate={gate} />
               <label className="mt-2 flex items-center gap-2">
-                <input type="checkbox" checked={approvalOverride} onChange={(e) => setApprovalOverride(e.target.checked)} />
+                <input type="checkbox" checked={approvalOverride} onChange={(e) => setApprovalOverride(e.target.checked)} data-testid="docuseal-approval-override-checkbox" />
                 Override approval gate
               </label>
               {approvalOverride && (

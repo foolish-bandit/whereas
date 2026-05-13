@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import EmptyState from "../components/EmptyState";
@@ -19,9 +19,55 @@ type LoadState =
   | { kind: "loaded"; rows: AgreementTemplate[] }
   | { kind: "error"; message: string };
 
+// Canonical group order for the catalog layout
+const CANONICAL_GROUPS = [
+  "NDA",
+  "MSA",
+  "DPA",
+  "SOW",
+  "Vendor",
+  "Employment",
+] as const;
+
+function resolveGroup(templateType: string | null): string {
+  if (!templateType) return "Other";
+  const up = templateType.trim().toUpperCase();
+  for (const g of CANONICAL_GROUPS) {
+    if (up === g.toUpperCase()) return g;
+  }
+  return templateType.trim();
+}
+
+function buildGroups(
+  rows: AgreementTemplate[],
+): { label: string; rows: AgreementTemplate[] }[] {
+  const map = new Map<string, AgreementTemplate[]>();
+  for (const row of rows) {
+    const g = resolveGroup(row.template_type);
+    if (!map.has(g)) map.set(g, []);
+    map.get(g)!.push(row);
+  }
+  const result: { label: string; rows: AgreementTemplate[] }[] = [];
+  for (const g of CANONICAL_GROUPS) {
+    if (map.has(g)) {
+      result.push({ label: g, rows: map.get(g)! });
+      map.delete(g);
+    }
+  }
+  for (const [label, groupRows] of map) {
+    result.push({
+      label: label === "Other" ? "Other / Unspecified" : label,
+      rows: groupRows,
+    });
+  }
+  return result;
+}
+
 export default function AgreementTemplatesPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
   const [name, setName] = useState("");
   const [templateType, setTemplateType] = useState("");
   const [description, setDescription] = useState("");
@@ -76,6 +122,40 @@ export default function AgreementTemplatesPage() {
     }
   }
 
+  const distinctTypes = useMemo(() => {
+    if (state.kind !== "loaded") return [];
+    const types = new Set<string>();
+    for (const row of state.rows) {
+      if (row.template_type) types.add(row.template_type);
+    }
+    return Array.from(types).sort();
+  }, [state]);
+
+  const filteredRows = useMemo(() => {
+    if (state.kind !== "loaded") return [];
+    let rows = state.rows;
+    if (filterType) rows = rows.filter((r) => r.template_type === filterType);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter(
+        (r) =>
+          r.name.toLowerCase().includes(q) ||
+          (r.description?.toLowerCase().includes(q) ?? false) ||
+          (r.template_type?.toLowerCase().includes(q) ?? false),
+      );
+    }
+    return rows;
+  }, [state, search, filterType]);
+
+  const groups = useMemo(() => buildGroups(filteredRows), [filteredRows]);
+
+  const hasActiveFilters = search.trim() !== "" || filterType !== "";
+
+  function resetFilters() {
+    setSearch("");
+    setFilterType("");
+  }
+
   return (
     <div className="space-y-5" data-testid="agreement-templates-page">
       <nav className="text-xs text-ink-subtle" aria-label="Breadcrumb">
@@ -89,6 +169,7 @@ export default function AgreementTemplatesPage() {
         <span className="mx-1">/</span>
         <span className="text-ink-muted">Agreement Templates</span>
       </nav>
+
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-ink">Agreement Templates</h1>
@@ -141,7 +222,9 @@ export default function AgreementTemplatesPage() {
           >
             {creating ? "Creating…" : "Create template"}
           </button>
-          {createError && <span className="text-xs text-danger">{createError}</span>}
+          {createError && (
+            <span className="text-xs text-danger">{createError}</span>
+          )}
         </div>
       </section>
 
@@ -152,62 +235,151 @@ export default function AgreementTemplatesPage() {
           description={state.message}
         />
       )}
+
       {state.kind === "loaded" && state.rows.length === 0 && (
         <EmptyState
           title={
-            includeArchived ? "No templates to show" : "No templates yet"
+            includeArchived ? "No archived templates" : "No templates yet"
           }
           description={
             includeArchived
-              ? "Create one above. Templates feed the request intake and agreement-generation flows under Requests."
-              : "Create a template above, then upload its DOCX or PDF source file. Variables, source history, and the text preview appear here once conversion succeeds."
+              ? "No archived templates."
+              : "Create a template, then upload its DOCX source file to make it usable for generation."
           }
         />
       )}
+
       {state.kind === "loaded" && state.rows.length > 0 && (
-        <ul className="space-y-2" data-testid="agreement-templates-list">
-          {state.rows.map((row) => (
-            <li
-              key={row.id}
-              className="rounded border border-rule p-3 text-sm"
-              data-testid="agreement-templates-row"
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              className="flex-1 rounded border border-rule px-2 py-1.5 text-sm placeholder:text-ink-subtle"
+              placeholder="Search by name, description, or type…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search templates"
+              data-testid="agreement-templates-search"
+            />
+            {distinctTypes.length > 0 && (
+              <select
+                className="rounded border border-rule px-2 py-1.5 text-sm"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                aria-label="Filter by template type"
+                data-testid="agreement-templates-filter-type"
+              >
+                <option value="">All types</option>
+                {distinctTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            )}
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="rounded border border-rule px-2 py-1.5 text-xs text-ink-muted hover:text-ink"
+                onClick={resetFilters}
+                data-testid="agreement-templates-reset-filters"
+              >
+                Reset filters
+              </button>
+            )}
+          </div>
+
+          {filteredRows.length === 0 ? (
+            <EmptyState
+              title="No templates match your search"
+              description="Try a different search term or reset the filters."
+            />
+          ) : (
+            <div
+              className="space-y-8"
+              data-testid="agreement-templates-catalog"
             >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <Link
-                      to={mountedPath(
-                        `/requests/templates/${row.id}`,
-                        location.pathname,
-                      )}
-                      className="font-medium text-ink underline hover:text-ink-muted"
-                      data-testid="agreement-templates-row-link"
-                    >
-                      {row.name}
-                    </Link>
-                    <TemplateStatusPill status={row.status} />
-                    {row.template_type && (
-                      <span
-                        className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
-                        data-testid="agreement-templates-row-type"
+              {groups.map((group) => (
+                <section
+                  key={group.label}
+                  data-testid="agreement-templates-group"
+                >
+                  <h2
+                    className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-subtle"
+                    data-testid="agreement-templates-group-heading"
+                  >
+                    {group.label}
+                  </h2>
+                  <ul
+                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                    data-testid="agreement-templates-list"
+                  >
+                    {group.rows.map((row) => (
+                      <li
+                        key={row.id}
+                        className="flex flex-col gap-3 rounded border border-rule p-4 text-sm"
+                        data-testid="agreement-templates-row"
                       >
-                        {row.template_type}
-                      </span>
-                    )}
-                  </div>
-                  {row.description && (
-                    <p className="mt-1 text-sm text-ink-muted">
-                      {row.description}
-                    </p>
-                  )}
-                  <p className="mt-1 text-[11px] text-ink-subtle">
-                    Updated {formatDate(row.updated_at)}
-                  </p>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+                        <div className="flex-1 space-y-1">
+                          <div className="flex flex-wrap items-baseline gap-2">
+                            <span
+                              className="font-medium text-ink"
+                              data-testid="agreement-templates-row-name"
+                            >
+                              {row.name}
+                            </span>
+                            <TemplateStatusPill status={row.status} />
+                            {row.template_type && (
+                              <span
+                                className="rounded border border-rule bg-canvas-subtle px-1.5 py-0.5 text-[10px] text-ink-muted"
+                                data-testid="agreement-templates-row-type"
+                              >
+                                {row.template_type}
+                              </span>
+                            )}
+                          </div>
+                          {row.description && (
+                            <p className="text-sm text-ink-muted">
+                              {row.description}
+                            </p>
+                          )}
+                          <p className="text-[11px] text-ink-subtle">
+                            Updated {formatDate(row.updated_at)}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 border-t border-rule pt-3">
+                          <Link
+                            to={
+                              mountedPath(
+                                `/requests/templates/${row.id}`,
+                                location.pathname,
+                              ) + "#generate"
+                            }
+                            className="flex-1 rounded border border-ink bg-ink px-3 py-1.5 text-center text-xs font-medium text-canvas hover:opacity-90"
+                            data-testid="agreement-templates-card-use"
+                          >
+                            Use this template
+                          </Link>
+                          <Link
+                            to={mountedPath(
+                              `/requests/templates/${row.id}`,
+                              location.pathname,
+                            )}
+                            className="rounded border border-rule px-3 py-1.5 text-xs text-ink-muted hover:text-ink"
+                            data-testid="agreement-templates-row-link"
+                          >
+                            Open template
+                          </Link>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -223,7 +395,11 @@ function TemplateStatusPill({ status }: { status: string }) {
       className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
       data-testid="agreement-templates-status-pill"
     >
-      {status === "active" ? "Active" : status === "archived" ? "Archived" : status}
+      {status === "active"
+        ? "Active"
+        : status === "archived"
+          ? "Archived"
+          : status}
     </span>
   );
 }
