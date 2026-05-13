@@ -28,6 +28,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: demoPath("/dashboard"), label: "Dashboard", Icon: DashboardIcon },
       { to: demoPath("/analytics"), label: "Analytics", Icon: AnalyticsIcon },
+      { to: demoPath("/intake"), label: "Intake", Icon: IntakeIcon },
       { to: demoPath("/inbox"), label: "Inbox", Icon: InboxIcon },
       {
         to: demoPath("/approvals"),
@@ -88,6 +89,7 @@ function ClauseIcon({ className }: IconProps) { return <BaseIcon className={clas
 function ApprovalsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3l6 2v5c0 3.5-2.2 5.8-6 7-3.8-1.2-6-3.5-6-7V5z" /><path d="M7.5 10.5l1.7 1.7 3.3-3.3" /></BaseIcon>; }
 function SettingsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="10" cy="10" r="2.5" /><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.2 5.2l1.4 1.4M13.4 13.4l1.4 1.4M14.8 5.2l-1.4 1.4M6.6 13.4l-1.4 1.4" /></BaseIcon>; }
 function InboxIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 11v5h14v-5l-3-6H6z" /><path d="M3 11h4l1 2h4l1-2h4" /></BaseIcon>; }
+function IntakeIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M10 3v10M7 10l3 3 3-3" /><path d="M4 15h12" /></BaseIcon>; }
 function TemplatesIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M5 3h7l3 3v11H5z" /><path d="M12 3v3h3" /><path d="M7 9h6M7 12h6M7 15h4" /></BaseIcon>; }
 function IntegrationsIcon({ className }: IconProps) { return <BaseIcon className={className}><circle cx="5" cy="10" r="2" /><circle cx="15" cy="6" r="2" /><circle cx="15" cy="14" r="2" /><path d="M7 10l6-4M7 10l6 4" /></BaseIcon>; }
 function AnalyticsIcon({ className }: IconProps) { return <BaseIcon className={className}><path d="M3 17V7M9 17V11M15 17V5M3 17h16" /></BaseIcon>; }
