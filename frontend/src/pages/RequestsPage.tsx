@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
+import Pill from "../components/ui/Pill";
 import RequestApprovalStatusSection from "../components/RequestApprovalStatusSection";
 import RequestConvertSection, {
   ConvertedContractLink,
@@ -12,6 +13,7 @@ import RequestUploadConvertSection from "../components/RequestUploadConvertSecti
 import SupportingQuestionsPanel from "../components/SupportingQuestionsPanel";
 import UploadReviewPanel from "../components/UploadReviewPanel";
 import { demoPath, mountedPath } from "../lib/routes";
+import { getRequestStage } from "../lib/requestStage";
 import {
   ApiError,
   MissingDevUserError,
@@ -562,6 +564,7 @@ export default function RequestsPage() {
         >
           {state.rows.map((row) => {
             const isDeepLinkTarget = row.id === deepLinkRequestId;
+            const stage = getRequestStage(row);
             return (
             <li
               key={row.id}
@@ -592,6 +595,15 @@ export default function RequestsPage() {
                     {row.priority ? ` · ${row.priority}` : ""}
                     {row.due_date ? ` · due ${row.due_date}` : ""}
                   </p>
+                  <div className="mt-1.5" data-testid="request-stage">
+                    <Pill
+                      tone={stage.tone}
+                      variant="soft"
+                      data-testid="request-stage-pill"
+                    >
+                      {stage.label}
+                    </Pill>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
                   {row.status === "open" && (

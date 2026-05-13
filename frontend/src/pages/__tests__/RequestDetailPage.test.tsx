@@ -433,6 +433,100 @@ describe("RequestDetailPage", () => {
     expect(await screen.findByTestId("activity-timeline-empty")).toBeInTheDocument();
   });
 
+  describe("stage panel", () => {
+    it("renders the stage panel with label, explanation, and next action for an open request", async () => {
+      mockDetail();
+      renderPage();
+
+      expect(await screen.findByTestId("request-stage-panel")).toBeInTheDocument();
+      // approval is still loading initially; falls back to status-based stage
+      // Once approval loads (has_active_workflows: true), stage becomes "Waiting on approvals"
+      const pill = await screen.findByTestId("request-stage-pill");
+      expect(pill).toBeInTheDocument();
+      // With the default approvalStatus (has_active_workflows: true), stage = "Waiting on approvals"
+      expect(pill.textContent).toBe("Waiting on approvals");
+      expect(screen.getByTestId("request-stage-explanation")).toBeInTheDocument();
+      expect(screen.getByTestId("request-stage-next-action")).toBeInTheDocument();
+      expect(screen.getByTestId("request-stage-next-action")).toHaveAttribute(
+        "href",
+        expect.stringContaining("/approvals/workflows"),
+      );
+    });
+
+    it("stage panel shows Ready for signature when approval clears and ready_for_signature is true", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: true,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      const pill = await screen.findByTestId("request-stage-pill");
+      expect(pill.textContent).toBe("Ready for signature");
+      expect(screen.getByTestId("request-stage-next-action")).toHaveAttribute(
+        "href",
+        "/repository/contract-1",
+      );
+    });
+
+    it("stage panel shows Blocked when approval has rejected workflows", async () => {
+      mockDetail(
+        BASE_REQUEST,
+        approvalStatus({
+          has_rejected_workflows: true,
+          blocking_reason: "rejected_approval_workflows",
+          blocking_reason_text: "An approval workflow was rejected.",
+        }),
+      );
+      renderPage();
+
+      const pill = await screen.findByTestId("request-stage-pill");
+      expect(pill.textContent).toBe("Blocked");
+      expect(screen.getByTestId("request-stage-next-action")).toHaveAttribute(
+        "href",
+        expect.stringContaining("/approvals/workflows"),
+      );
+    });
+
+    it("stage panel shows Converted to Repository when linked and completed with no blocking approval", async () => {
+      mockDetail(
+        LINKED_REQUEST,
+        approvalStatus({
+          has_active_workflows: false,
+          has_rejected_workflows: false,
+          has_completed_workflows: true,
+          all_required_policy_workflows_completed: true,
+          ready_for_signature: false,
+          blocking_reason: null,
+          blocking_reason_text: null,
+        }),
+        [],
+      );
+      renderPage();
+
+      const pill = await screen.findByTestId("request-stage-pill");
+      // ready_for_signature is false (not true), so approval-aware ready path is skipped.
+      // No rejection/blocking. Falls to linked + completed → "Converted to Repository".
+      expect(pill.textContent).toBe("Converted to Repository");
+    });
+
+    it("stage panel has no next-action link for cancelled requests", async () => {
+      mockDetail({ ...BASE_REQUEST, status: "cancelled" });
+      renderPage();
+
+      const pill = await screen.findByTestId("request-stage-pill");
+      expect(pill.textContent).toBe("Closed");
+      expect(screen.queryByTestId("request-stage-next-action")).toBeNull();
+    });
+  });
+
   describe("demo seed descriptions", () => {
     // These tests use the exact description strings written into MOCK_REQUESTS
     // to verify that the seeded format parses and renders correctly on the

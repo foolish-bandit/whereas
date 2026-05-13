@@ -196,6 +196,12 @@ Top-level navigation:
   from an `AgreementTemplate` (PR #48) or uploading a third-party
   file (PR #65). Both paths set `linked_contract_id` and resolve the
   open `request_review` inbox item in the same transaction.
+  Each request row in the list shows a *Current stage* pill derived
+  from existing `status`, `linked_contract_id`, and approval-summary
+  fields — e.g., *Awaiting review*, *Waiting on approvals*, *Blocked*,
+  *Ready for signature*, *Converted to Repository*. The Request Detail
+  page surfaces the same stage as a prominent panel near the top, with
+  an explanation and a next-action link where one applies.
   Demo mode ships eight seeded requests covering NDA review, vendor
   agreement, MSA review, DPA / privacy review, and employment agreement
   — each pre-filled with guided supporting-question answers so the

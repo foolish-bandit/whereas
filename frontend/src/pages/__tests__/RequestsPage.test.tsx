@@ -1539,4 +1539,58 @@ describe("RequestsPage", () => {
       screen.getByTestId("requests-create-supporting-questions-pending"),
     ).toBeInTheDocument();
   });
+
+  // ---------------------------------------------------------------------
+  // Stage pill in request rows
+  // ---------------------------------------------------------------------
+
+  it("renders a stage pill for each request row", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([SAMPLE_REQUEST]));
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    expect(screen.getByTestId("request-stage")).toBeInTheDocument();
+    const pill = screen.getByTestId("request-stage-pill");
+    expect(pill).toBeInTheDocument();
+    expect(pill.textContent).toBe("Awaiting review");
+  });
+
+  it("stage pill reflects in_progress status", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([{ ...SAMPLE_REQUEST, status: "in_progress" }]),
+    );
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    expect(screen.getByTestId("request-stage-pill").textContent).toBe("In review");
+  });
+
+  it("stage pill shows Converted to Repository for completed + linked", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse([
+        {
+          ...SAMPLE_REQUEST,
+          status: "completed",
+          linked_contract_id: "c-xyz",
+        },
+      ]),
+    );
+    renderPage();
+    await screen.findByText("NDA with Acme");
+    expect(screen.getByTestId("request-stage-pill").textContent).toBe(
+      "Converted to Repository",
+    );
+  });
+
+  it("stage pill shows Closed for cancelled rows", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("include_cancelled=true")) {
+        return jsonResponse([{ ...SAMPLE_REQUEST, status: "cancelled" }]);
+      }
+      return jsonResponse([SAMPLE_REQUEST]);
+    });
+    renderPage();
+    fireEvent.click(screen.getByLabelText(/Show cancelled/i));
+    await waitFor(() => {
+      expect(screen.getByTestId("request-stage-pill").textContent).toBe("Closed");
+    });
+  });
 });
