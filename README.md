@@ -92,15 +92,38 @@ Quickstart:
 ```sh
 git clone https://github.com/foolish-bandit/whereas.git
 cd whereas
-./scripts/generate-secrets.sh
-docker compose up -d
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-stack.ps1
 ```
 
 Default local endpoints:
 
-- App: `http://localhost:8080`
+- Frontend: `http://127.0.0.1:5173`
+- App onboarding: `http://127.0.0.1:5173/demo/welcome`
 - API: `http://localhost:8000`
-- DocuSeal: `http://localhost:8081`
+- Local Postgres: `127.0.0.1:5433`
+- Local S3 mock: `http://127.0.0.1:9000`
+
+Stop everything with:
+
+```sh
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local-stack.ps1
+```
+
+Installable PWA preview against the live local backend:
+
+```sh
+powershell -ExecutionPolicy Bypass -File .\scripts\start-pwa-preview.ps1
+```
+
+PWA preview URL:
+
+- Browser preview root: `http://127.0.0.1:4173`
+- Direct in-app onboarding: `http://127.0.0.1:4173/demo/welcome`
+
+Notes:
+
+- In a normal browser tab, `/` stays on the marketing/demo site.
+- The installable PWA uses the web manifest `start_url` and opens into the app onboarding flow at `/demo/welcome`.
 
 First-run developer setup and optional dependencies:
 

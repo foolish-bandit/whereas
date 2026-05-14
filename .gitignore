@@ -29,3 +29,6 @@ node_modules/
 # Environment files (secrets)
 .env
 .env.local
+
+# Local developer runtime state
+.local/

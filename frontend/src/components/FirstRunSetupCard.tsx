@@ -2,12 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import ErrorState from "./ErrorState";
-import {
-  ApiError,
-  createDevSetup,
-  getSetupStatus,
-} from "../lib/api";
+import { ApiError, createDevSetup, getSetupStatus } from "../lib/api";
 import { setDevUserId } from "../lib/devUser";
+import { demoPath } from "../lib/routes";
 import type { SetupStatus } from "../types/setup";
 
 type StatusState =
@@ -105,8 +102,8 @@ export default function FirstRunSetupCard({
   if (statusState.kind === "loading") {
     return (
       <div className="rounded-lg border border-rule bg-canvas p-5">
-        <h2 className="text-sm font-medium text-ink">First-run setup</h2>
-        <p className="mt-2 text-sm text-ink-muted">Checking workspace…</p>
+        <h2 className="text-sm font-medium text-ink">Set up this workspace</h2>
+        <p className="mt-2 text-sm text-ink-muted">Checking workspace...</p>
       </div>
     );
   }
@@ -128,37 +125,35 @@ export default function FirstRunSetupCard({
           <span className="font-medium text-ink">
             {completed.organization_name}
           </span>{" "}
-          ·{" "}
+          -{" "}
           <span className="font-mono text-xs">{completed.user_email}</span>
         </p>
         <p className="mt-2 text-xs text-ink-muted">
-          The development user ID has been saved in this browser.
+          This browser is now connected to the local workspace.
         </p>
         <div className="mt-4">
           <Link
-            to="/demo/contracts"
+            to={demoPath("/dashboard")}
             className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
           >
-            Go to contracts
+            Open dashboard
           </Link>
         </div>
       </div>
     );
   }
 
-  // Hide the form once setup isn't required and the user already has a
-  // dev id — there is nothing useful to do here.
   if (!statusState.status.setup_required && hasDevUser) {
     return null;
   }
 
   return (
     <div className="rounded-lg border border-rule bg-canvas p-5">
-      <h2 className="text-sm font-medium text-ink">First-run setup</h2>
+      <h2 className="text-sm font-medium text-ink">Set up this workspace</h2>
       <p className="mt-1 text-xs text-ink-muted">
         {statusState.status.setup_required
-          ? "Create a local development workspace. This adds an organization, a wrapped master key, and an active user. It is not real authentication."
-          : "A workspace already exists. Use this to fetch the existing development user ID and store it in this browser."}
+          ? "Create a local workspace and save a local user in this browser. You only need to do this once per browser."
+          : "A workspace already exists on this backend. Use this form to connect this browser to it."}
       </p>
 
       <form onSubmit={onSubmit} className="mt-4 space-y-3">
@@ -167,7 +162,7 @@ export default function FirstRunSetupCard({
             htmlFor="setup-org-name"
             className="block text-xs font-medium text-ink-muted"
           >
-            Organization name (optional)
+            Workspace name (optional)
           </label>
           <input
             id="setup-org-name"
@@ -187,7 +182,7 @@ export default function FirstRunSetupCard({
               htmlFor="setup-user-email"
               className="block text-xs font-medium text-ink-muted"
             >
-              User email (optional)
+              Email (optional)
             </label>
             <input
               id="setup-user-email"
@@ -206,7 +201,7 @@ export default function FirstRunSetupCard({
               htmlFor="setup-user-name"
               className="block text-xs font-medium text-ink-muted"
             >
-              Display name (optional)
+              Name (optional)
             </label>
             <input
               id="setup-user-name"
@@ -235,8 +230,10 @@ export default function FirstRunSetupCard({
             className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-1.5"
           >
             {submitState.kind === "submitting"
-              ? "Setting up…"
-              : "Create local development workspace"}
+              ? "Setting up..."
+              : statusState.status.setup_required
+                ? "Create workspace"
+                : "Connect this browser"}
           </button>
         </div>
       </form>

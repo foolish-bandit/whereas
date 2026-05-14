@@ -66,10 +66,11 @@ export default function SettingsPage() {
     <div data-testid="settings-page">
       <h1 className="font-serif text-2xl text-ink">Settings</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        The backend currently identifies callers by an{" "}
+        Use this page to connect this browser to your local workspace and
+        review technical environment details. Whereas currently identifies
+        callers by an{" "}
         <code className="font-mono text-xs">X-Whereas-Dev-User</code> header.
-        Store the UUID of an existing user here (browser-only). Full sign-in
-        and user management are planned beyond this MVP — see{" "}
+        Full sign-in and user management are planned beyond this MVP - see{" "}
         <Link
           to="/demo/known-limitations#auth"
           className="underline hover:text-ink"
@@ -100,68 +101,76 @@ export default function SettingsPage() {
       </div>
 
       {!demo && (
-      <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5">
-        <h2 className="text-sm font-medium text-ink">Development user ID</h2>
-        <p className="mt-1 text-xs text-ink-muted">
-          Created via the backend's user-seeding flow. Look in your local{" "}
-          <code className="font-mono text-[11px]">users</code> table.
-        </p>
-        <form onSubmit={onSave} className="mt-4 space-y-3">
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              setSaved(false);
-              setError(null);
-            }}
-            placeholder="00000000-0000-0000-0000-000000000000"
-            className="w-full rounded border border-rule bg-canvas-subtle px-3 py-1.5 font-mono text-sm placeholder:text-ink-subtle focus:border-accent-ring focus:outline-none"
-            spellCheck={false}
-            autoComplete="off"
-          />
-          {error && <p className="text-sm text-danger">{error}</p>}
-          {saved && !error && (
-            <p className="text-sm text-success">Saved.</p>
-          )}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <button
-              type="submit"
-              className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
-              className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-rule-strong sm:w-auto sm:py-1.5"
-            >
-              Clear
-            </button>
+        <details className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas">
+          <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-ink hover:bg-canvas-subtle">
+            Advanced: set local user ID manually
+          </summary>
+          <div className="border-t border-rule p-5">
+            <p className="text-xs text-ink-muted">
+              Most users should use the setup card above. Use this only if you
+              need to reconnect this browser manually or troubleshoot a local
+              environment.
+            </p>
+            <form onSubmit={onSave} className="mt-4 space-y-3">
+              <input
+                type="text"
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setSaved(false);
+                  setError(null);
+                }}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                className="w-full rounded border border-rule bg-canvas-subtle px-3 py-1.5 font-mono text-sm placeholder:text-ink-subtle focus:border-accent-ring focus:outline-none"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              {error && <p className="text-sm text-danger">{error}</p>}
+              {saved && !error && <p className="text-sm text-success">Saved.</p>}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded border border-ink bg-ink px-3 py-2 text-sm font-medium text-canvas hover:bg-accent-ring sm:w-auto sm:py-1.5"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className="inline-flex w-full items-center justify-center rounded border border-rule bg-canvas px-3 py-2 text-sm font-medium text-ink hover:border-rule-strong sm:w-auto sm:py-1.5"
+                >
+                  Clear
+                </button>
+              </div>
+            </form>
+            <div className="mt-5 border-t border-rule pt-4 text-xs text-ink-muted">
+              <p>
+                Currently stored:{" "}
+                {stored ? (
+                  <span className="font-mono text-ink">{stored}</span>
+                ) : (
+                  <span className="italic">none</span>
+                )}
+              </p>
+            </div>
           </div>
-        </form>
-        <div className="mt-5 border-t border-rule pt-4 text-xs text-ink-muted">
-          <p>
-            Currently stored:{" "}
-            {stored ? (
-              <span className="font-mono text-ink">{stored}</span>
-            ) : (
-              <span className="italic">none</span>
-            )}
-          </p>
-        </div>
-      </div>
+        </details>
       )}
 
       <BrowserCapabilitiesCard />
 
-      <div className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5" data-testid="settings-ai-local-intelligence">
-        <h2 className="text-sm font-medium text-ink">AI &amp; local intelligence</h2>
+      <div
+        className="mt-6 max-w-2xl rounded-lg border border-rule bg-canvas p-5"
+        data-testid="settings-ai-local-intelligence"
+      >
+        <h2 className="text-sm font-medium text-ink">
+          AI &amp; local intelligence
+        </h2>
         <p className="mt-1 text-xs text-ink-muted">
           Whereas is designed for small, local/self-hostable models. Default AI
           models must stay at or below 2B parameters. No cloud AI provider is
-          enabled by default, and no contract text is sent to cloud AI providers
-          by default.
+          enabled by default, and no contract text is sent to cloud AI
+          providers by default.
         </p>
 
         <ul className="mt-4 space-y-2 text-sm text-ink">

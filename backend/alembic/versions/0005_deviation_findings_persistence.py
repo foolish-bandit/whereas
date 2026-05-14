@@ -66,6 +66,16 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Drop legacy deviation_findings, create the persisted-findings schema."""
+    # Alembic creates alembic_version.version_num as VARCHAR(32) by default,
+    # but this revision id itself is longer than 32 characters.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=64),
+        existing_nullable=False,
+    )
+
     # ------------------------------------------------------------------
     # 1. Drop the legacy deviation_findings policy + table.
     #

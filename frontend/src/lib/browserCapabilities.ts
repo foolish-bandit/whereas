@@ -73,6 +73,24 @@ export function detectBrowserCapabilities(): BrowserCapabilities {
   };
 }
 
+export function isStandaloneDisplayMode(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  if (typeof navigator !== "undefined") {
+    const iosNavigator = navigator as Navigator & { standalone?: boolean };
+    if (iosNavigator.standalone === true) {
+      return true;
+    }
+  }
+
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(display-mode: standalone)").matches
+  );
+}
+
 export function describeCapability(
   key: keyof BrowserCapabilities,
 ): { label: string; description: string } {

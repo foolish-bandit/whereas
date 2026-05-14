@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
 import { getDashboardSummary } from "../lib/api";
-import { demoPath } from "../lib/routes";
+import { DEMO_HOME, demoPath } from "../lib/routes";
 
 // Top-level navigation grouped by user intent: Work (day-to-day
 // queues), Library (stored artifacts), Knowledge (reusable rules and
@@ -179,9 +179,9 @@ function DesktopSidebar({ overdue }: { overdue: OverdueCounts | null }) {
     <aside className="hidden w-60 shrink-0 flex-col border-r border-rule bg-canvas md:flex">
       <div className="flex h-14 items-center border-b border-rule px-5">
         <Link
-          to="/"
+          to={DEMO_HOME}
           className="font-serif text-lg tracking-tight text-ink hover:text-ink-muted"
-          aria-label="Whereas home"
+          aria-label="Whereas app home"
         >
           Whereas
         </Link>
@@ -233,10 +233,10 @@ function MobileDrawer({
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-5">
           <Link
-            to="/"
+            to={DEMO_HOME}
             onClick={onClose}
             className="font-serif text-lg tracking-tight text-ink hover:text-ink-muted"
-            aria-label="Whereas home"
+            aria-label="Whereas app home"
           >
             Whereas
           </Link>

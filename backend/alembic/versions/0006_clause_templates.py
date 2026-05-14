@@ -42,7 +42,10 @@ def upgrade() -> None:
     op.create_index("ix_clause_templates_contract_type", "clause_templates", ["contract_type"])
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("CREATE INDEX ix_clause_templates_tags_gin ON clause_templates USING GIN (tags)")
+        op.execute(
+            "CREATE INDEX ix_clause_templates_tags_gin "
+            "ON clause_templates USING GIN ((tags::jsonb))"
+        )
 
 
 def downgrade() -> None:

@@ -768,10 +768,10 @@ export default function ContractsPage() {
           description={state.description}
           action={
             <Link
-              to="/demo/settings"
+              to="/demo/welcome"
               className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
             >
-              Open settings
+              Finish setup
             </Link>
           }
         />

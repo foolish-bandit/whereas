@@ -1,52 +1,94 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import AppShell from "./components/AppShell";
-import ContractsPage from "./pages/ContractsPage";
-import ContractWorkspacePage from "./pages/ContractWorkspacePage";
-import DashboardPage from "./pages/DashboardPage";
-import PlaybookDetailPage from "./pages/PlaybookDetailPage";
-import PlaybooksPage from "./pages/PlaybooksPage";
-import UploadPage from "./pages/UploadPage";
-import SettingsPage from "./pages/SettingsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
-import ClauseLibraryPage from "./pages/ClauseLibraryPage";
-import IntegrationsPage from "./pages/IntegrationsPage";
-import DevComponentsPage from "./pages/DevComponentsPage";
-import KnownLimitationsPage from "./pages/KnownLimitationsPage";
-import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
-import RequestDetailPage from "./pages/RequestDetailPage";
-import RequestsPage from "./pages/RequestsPage";
-import InboxPage from "./pages/InboxPage";
+import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
+import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
 import ApprovalsLandingPage from "./pages/ApprovalsLandingPage";
 import ApprovalTaskDetailPage from "./pages/ApprovalTaskDetailPage";
 import ApprovalTasksPage from "./pages/ApprovalTasksPage";
 import ApprovalWorkflowDetailPage from "./pages/ApprovalWorkflowDetailPage";
 import ApprovalWorkflowsPage from "./pages/ApprovalWorkflowsPage";
 import ApprovalWorkflowTemplatesPage from "./pages/ApprovalWorkflowTemplatesPage";
-import ApprovalPoliciesPage from "./pages/ApprovalPoliciesPage";
+import ClauseLibraryPage from "./pages/ClauseLibraryPage";
+import ContractWorkspacePage from "./pages/ContractWorkspacePage";
+import ContractsPage from "./pages/ContractsPage";
+import DashboardPage from "./pages/DashboardPage";
+import DevComponentsPage from "./pages/DevComponentsPage";
+import InboxPage from "./pages/InboxPage";
 import IntakePage from "./pages/IntakePage";
+import IntegrationsPage from "./pages/IntegrationsPage";
+import KnownLimitationsPage from "./pages/KnownLimitationsPage";
 import LandingPage from "./pages/marketing/LandingPage";
+import PlaybookDetailPage from "./pages/PlaybookDetailPage";
+import PlaybooksPage from "./pages/PlaybooksPage";
+import PwaWelcomePage from "./pages/PwaWelcomePage";
+import RequestDetailPage from "./pages/RequestDetailPage";
+import RequestsPage from "./pages/RequestsPage";
+import SettingsPage from "./pages/SettingsPage";
+import UploadPage from "./pages/UploadPage";
+import { isStandaloneDisplayMode } from "./lib/browserCapabilities";
 
 export default function App() {
+  const standalone = isStandaloneDisplayMode();
+
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/intake" element={<StandaloneApp><IntakePage /></StandaloneApp>} />
-      <Route path="/requests" element={<StandaloneApp><RequestsPage /></StandaloneApp>} />
+      <Route
+        path="/"
+        element={
+          standalone ? <Navigate to="/demo/welcome" replace /> : <LandingPage />
+        }
+      />
+      <Route
+        path="/intake"
+        element={
+          <StandaloneApp>
+            <IntakePage />
+          </StandaloneApp>
+        }
+      />
+      <Route
+        path="/requests"
+        element={
+          <StandaloneApp>
+            <RequestsPage />
+          </StandaloneApp>
+        }
+      />
       <Route
         path="/requests/templates"
-        element={<StandaloneApp><AgreementTemplatesPage /></StandaloneApp>}
+        element={
+          <StandaloneApp>
+            <AgreementTemplatesPage />
+          </StandaloneApp>
+        }
       />
       <Route
         path="/requests/templates/:id"
-        element={<StandaloneApp><AgreementTemplateDetailPage /></StandaloneApp>}
+        element={
+          <StandaloneApp>
+            <AgreementTemplateDetailPage />
+          </StandaloneApp>
+        }
       />
-      <Route path="/requests/:id" element={<StandaloneApp><RequestDetailPage /></StandaloneApp>} />
+      <Route
+        path="/requests/:id"
+        element={
+          <StandaloneApp>
+            <RequestDetailPage />
+          </StandaloneApp>
+        }
+      />
       <Route
         path="/dev/components"
-        element={<StandaloneApp><DevComponentsPage /></StandaloneApp>}
+        element={
+          <StandaloneApp>
+            <DevComponentsPage />
+          </StandaloneApp>
+        }
       />
       <Route path="/demo/*" element={<DemoApp />} />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -58,31 +100,16 @@ function StandaloneApp({ children }: { children: ReactNode }) {
   return <AppShell>{children}</AppShell>;
 }
 
-/**
- * Mounts the AppShell (sidebar + header + banners) and the demo's own
- * router. All paths inside are relative to `/demo`.
- *
- * Route map after the UI consolidation pass:
- *   - /repository (and legacy /contracts) → ContractsPage
- *   - /requests, /requests/templates → RequestsPage / AgreementTemplatesPage
- *   - /approvals → ApprovalsLandingPage (cards)
- *   - /approvals/{workflows,templates,policies,tasks} → workspace pages
- *   - /clause-manager (and legacy /clause-library) → ClauseLibraryPage
- *
- * Legacy routes (/contracts, /agreement-templates, /approval-workflows,
- * /approval-templates, /approval-policies, /inbox, /clause-library) are
- * kept for existing deep-links and tests.
- */
 function DemoApp() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Navigate to="dashboard" replace />} />
+        <Route path="/" element={<Navigate to="welcome" replace />} />
+        <Route path="welcome" element={<PwaWelcomePage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="intake" element={<IntakePage />} />
 
-        {/* Repository (new label) + legacy /contracts alias. */}
         <Route path="repository" element={<ContractsPage />} />
         <Route path="repository/:id" element={<ContractWorkspacePage />} />
         <Route path="contracts" element={<ContractsPage />} />
@@ -95,22 +122,15 @@ function DemoApp() {
         <Route path="integrations" element={<IntegrationsPage />} />
         <Route path="known-limitations" element={<KnownLimitationsPage />} />
 
-        {/* Clause Manager (new label) + legacy /clause-library alias. */}
         <Route path="clause-manager" element={<ClauseLibraryPage />} />
         <Route path="clause-library" element={<ClauseLibraryPage />} />
 
-        {/* Agreement Templates live under Requests; the original
-            route is kept for stability, and /requests/templates is an
-            alias that nests it under the Requests workspace. */}
         <Route path="agreement-templates" element={<AgreementTemplatesPage />} />
         <Route
           path="agreement-templates/:id"
           element={<AgreementTemplateDetailPage />}
         />
-        <Route
-          path="requests/templates"
-          element={<AgreementTemplatesPage />}
-        />
+        <Route path="requests/templates" element={<AgreementTemplatesPage />} />
         <Route
           path="requests/templates/:id"
           element={<AgreementTemplateDetailPage />}
@@ -119,11 +139,6 @@ function DemoApp() {
         <Route path="requests" element={<RequestsPage />} />
         <Route path="requests/:id" element={<RequestDetailPage />} />
 
-        {/* Approvals workspace. /approvals is now a landing page with
-            cards; /approvals?workflow_id=... is preserved as a deep
-            link by forwarding to /approvals/workflows when the query
-            param is present, so existing remediation links from
-            PR #60–#61 keep working. */}
         <Route path="approvals" element={<ApprovalsEntry />} />
         <Route path="approvals/workflows" element={<ApprovalWorkflowsPage />} />
         <Route
@@ -144,8 +159,6 @@ function DemoApp() {
           element={<ApprovalTaskDetailPage />}
         />
 
-        {/* Legacy approval routes — kept so existing deep links and
-            external bookmarks keep resolving. */}
         <Route path="inbox" element={<InboxPage />} />
         <Route path="approval-workflows" element={<ApprovalWorkflowsPage />} />
         <Route
@@ -160,12 +173,6 @@ function DemoApp() {
   );
 }
 
-/**
- * /approvals shows the landing page by default. PR #60–#61 wired the
- * approval-gate remediation links to /approvals?workflow_id=<id>; we
- * forward those to the workflows view so the deep-link expand-and-
- * scroll behavior keeps working without breaking the new cards UX.
- */
 function ApprovalsEntry() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
