@@ -62,7 +62,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run backend tests
-        run: pytest
+        run: pytest -v --tb=short -rfE
 
       - name: Run backend lint
         run: ruff check .
