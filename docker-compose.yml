@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-whereas}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      POSTGRES_MULTIPLE_DATABASES: whereas,docuseal
+      POSTGRES_MULTIPLE_DATABASES: whereas,docuseal,nango
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
@@ -75,6 +75,13 @@ services:
       DOCUSEAL_BASE_URL: http://docuseal:3000
       DOCUSEAL_AUTH_BRIDGE_SECRET: ${DOCUSEAL_AUTH_BRIDGE_SECRET:?DOCUSEAL_AUTH_BRIDGE_SECRET must be set}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set - generate with: openssl rand -hex 32}
+      NANGO_BASE_URL: http://nango-server:3003
+      NANGO_PUBLIC_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
+      # Both unset disables integrations gracefully. Set the secret +
+      # webhook secret to the same values you pass to nango-server below.
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_WEBHOOK_SECRET: ${NANGO_WEBHOOK_SECRET:-}
+      NANGO_ENABLED_PROVIDERS: ${NANGO_ENABLED_PROVIDERS:-google-drive,microsoft-onedrive,microsoft-sharepoint,gmail,outlook}
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +122,64 @@ services:
       - "127.0.0.1:8081:3000"
     volumes:
       - docuseal_data:/data
+
+  # Nango — open-source unified API for third-party integrations.
+  # Runs as a peer service like DocuSeal; tokens never reach the
+  # Whereas backend. Two containers: ``nango-server`` is the HTTP
+  # surface (Connect UI + REST API + webhook out), ``nango-jobs``
+  # runs the background sync workers. Both share a Postgres database
+  # alongside Whereas / DocuSeal via POSTGRES_MULTIPLE_DATABASES.
+  #
+  # Provider OAuth credentials (Google client id/secret, Microsoft
+  # tenant credentials, etc.) are configured via the Nango admin UI
+  # at NANGO_PUBLIC_URL once the container is up. Until they are,
+  # the Whereas backend reports the corresponding providers as
+  # unavailable.
+  nango-server:
+    image: nangohq/nango-server:latest
+    container_name: whereas-nango-server
+    environment:
+      NANGO_DB_HOST: postgres
+      NANGO_DB_PORT: 5432
+      NANGO_DB_USER: ${POSTGRES_USER:-whereas}
+      NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      NANGO_DB_NAME: nango
+      NANGO_DB_SSL: "false"
+      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY:?NANGO_ENCRYPTION_KEY must be set - generate with: openssl rand -base64 32}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:?NANGO_SECRET_KEY must be set - generate with: openssl rand -hex 32}
+      NANGO_SERVER_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
+      NANGO_PUBLIC_SERVER_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
+      NANGO_WEBHOOK_SECRET: ${NANGO_WEBHOOK_SECRET:?NANGO_WEBHOOK_SECRET must be set - generate with: openssl rand -hex 32}
+      FLAG_AUTH_ENABLED: "false"
+      NANGO_DASHBOARD_USERNAME: ${NANGO_DASHBOARD_USERNAME:-admin}
+      NANGO_DASHBOARD_PASSWORD: ${NANGO_DASHBOARD_PASSWORD:?NANGO_DASHBOARD_PASSWORD must be set}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3003:3003"
+    restart: unless-stopped
+
+  nango-jobs:
+    image: nangohq/nango-jobs:latest
+    container_name: whereas-nango-jobs
+    environment:
+      NANGO_DB_HOST: postgres
+      NANGO_DB_PORT: 5432
+      NANGO_DB_USER: ${POSTGRES_USER:-whereas}
+      NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      NANGO_DB_NAME: nango
+      NANGO_DB_SSL: "false"
+      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
+      NANGO_SERVER_URL: http://nango-server:3003
+      RECORDS_DATABASE_URL: postgres://${POSTGRES_USER:-whereas}:${POSTGRES_PASSWORD}@postgres:5432/nango
+    depends_on:
+      nango-server:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
