@@ -7,15 +7,16 @@ small-model extraction and manual review workflows.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from enum import Enum
-from typing import Any, Mapping, Sequence
+from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ExtractionSource(str, Enum):
+class ExtractionSource(StrEnum):
     """Source of an extracted entity value."""
 
     RULE = "rule"
