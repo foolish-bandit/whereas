@@ -42,9 +42,6 @@ jobs:
 
   backend-test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     defaults:
       run:
         working-directory: backend
@@ -65,28 +62,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run backend tests
-        id: pytest
-        run: |
-          set +e
-          pytest -v --tb=short -rfE 2>&1 | tee /tmp/pytest.log
-          echo "${PIPESTATUS[0]}" > /tmp/pytest.exitcode
-          exit $(cat /tmp/pytest.exitcode)
-
-      - name: Post pytest output on failure
-        if: failure() && steps.pytest.conclusion == 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          {
-            echo "## Backend test failure (last 300 lines of pytest output)"
-            echo
-            echo '```'
-            tail -300 /tmp/pytest.log
-            echo '```'
-          } > /tmp/pytest-comment.md
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} \
-            --body-file /tmp/pytest-comment.md
+        run: pytest
 
       - name: Run backend lint
         run: ruff check .
