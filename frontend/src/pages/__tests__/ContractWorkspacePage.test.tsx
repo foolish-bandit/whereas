@@ -363,8 +363,10 @@ describe("ContractWorkspacePage markdown integration", () => {
     });
     renderPage();
     await screen.findByTestId("docuseal-gate-blocked");
-    // Signers tab now hosts the Send-to-DocuSeal panel; activate it so
-    // accessible roles inside it (the override checkbox) are queryable.
+    // Signers tab now hosts the Send-to-DocuSeal panel. With the two-
+    // tier workspace IA (PR follow-up), Signers lives under Negotiate
+    // mode, which isn't the default Read mode — switch modes first.
+    fireEvent.click(screen.getByTestId("workspace-mode-tab-negotiate"));
     fireEvent.click(screen.getByRole("tab", { name: /signers/i }));
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
@@ -545,6 +547,9 @@ describe("ContractWorkspacePage markdown integration", () => {
     });
     renderPage();
     await screen.findByTestId("docuseal-gate-blocked");
+    // Signers lives under Negotiate mode now — see the two-tier IA
+    // comment in the sibling blocked-gate test above.
+    fireEvent.click(screen.getByTestId("workspace-mode-tab-negotiate"));
     fireEvent.click(screen.getByRole("tab", { name: /signers/i }));
     fireEvent.change(screen.getByTestId("docuseal-signer-email-0"), { target: { value: "signer@example.com" } });
     fireEvent.change(screen.getByTestId("docuseal-signer-name-0"), { target: { value: "Signer One" } });
@@ -1031,25 +1036,46 @@ describe("ContractWorkspacePage Document history (PR #69)", () => {
     ).toHaveTextContent(/document history/i);
   });
 
-  it("renders a two-pane layout with a detail rail and all six tabs", async () => {
+  it("renders a two-pane layout with mode tabs and contextual sub-tabs", async () => {
     setupFetch(fetchMock, { artifacts: [SOURCE_ARTIFACT] });
     renderPage();
     expect(
       await screen.findByTestId("contract-detail-rail"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("contract-document-pane")).toBeInTheDocument();
-    for (const label of [
-      "Metadata",
-      "Clauses",
-      "Review",
-      "Lifecycle",
-      "Signers",
-      "History",
-    ]) {
-      expect(
-        screen.getByRole("tab", { name: new RegExp(label, "i") }),
-      ).toBeInTheDocument();
-    }
+
+    // Three primary mode tabs are always visible.
+    expect(screen.getByTestId("workspace-mode-tab-read")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("workspace-mode-tab-negotiate"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-mode-tab-history")).toBeInTheDocument();
+
+    // Default mode is Read → Metadata + Clauses are the only visible
+    // sub-tabs.
+    expect(
+      screen.getByRole("tab", { name: /metadata/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /clauses/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /signers/i })).toBeNull();
+
+    // Switching to Negotiate reveals Review / Lifecycle / Signers and
+    // hides Metadata / Clauses.
+    fireEvent.click(screen.getByTestId("workspace-mode-tab-negotiate"));
+    expect(screen.getByRole("tab", { name: /review/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /lifecycle/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /signers/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /metadata/i })).toBeNull();
+
+    // History mode shows the single History sub-tab and renders the
+    // History panel content. There are now two tabs named "History"
+    // (the mode tab + the sub-tab); both should be present.
+    fireEvent.click(screen.getByTestId("workspace-mode-tab-history"));
+    expect(screen.getAllByRole("tab", { name: /history/i })).toHaveLength(2);
+    expect(screen.queryByRole("tab", { name: /review/i })).toBeNull();
+    expect(screen.getByTestId("rail-tab-history")).toBeVisible();
   });
 
   it("renders every extracted field as a <mark> citation in the original viewer", async () => {
