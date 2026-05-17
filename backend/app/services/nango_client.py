@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -420,6 +421,274 @@ def verify_webhook(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Folder picker — list a folder's child folders for the UI tree picker.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FolderNode:
+    id: str
+    name: str
+    has_children: bool
+    parent_id: str | None
+
+
+# Sentinel passed in by the frontend / used internally to mean "list
+# the root of the user's drive". Both Google Drive and Microsoft Graph
+# happen to use the literal string "root" as the well-known id, so the
+# constant doubles as the wire value.
+ROOT_FOLDER_ID = "root"
+
+
+_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+_PROXY_PAGE_SIZE = 100
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(_RETRYABLE),
+    reraise=True,
+)
+async def list_child_folders(
+    *,
+    connection_id: str,
+    provider: str,
+    parent_id: str | None,
+    settings: Settings | None = None,
+) -> list[FolderNode]:
+    """List the immediate child folders of ``parent_id`` for the picker.
+
+    Dispatches by provider. Only Google Drive and Microsoft OneDrive
+    are implemented; other providers raise so the caller can surface
+    a clear 400. ``parent_id`` of ``None`` (or the sentinel
+    ``ROOT_FOLDER_ID``) means the user's drive root.
+
+    The picker only needs folder metadata, so we don't fetch files
+    here. ``has_children`` is best-effort — Drive doesn't tell us
+    cheaply, so we always return True for Drive folders and let the
+    UI find out the next click is empty.
+    """
+    settings = _settings_or_default(settings)
+    secret = _require_secret(settings)
+    parent = parent_id or ROOT_FOLDER_ID
+
+    if provider == "google-drive":
+        return await _list_drive_folders(
+            connection_id=connection_id,
+            parent=parent,
+            secret=secret,
+            base_url=settings.NANGO_BASE_URL,
+        )
+    if provider in {"microsoft-onedrive", "microsoft-sharepoint"}:
+        return await _list_onedrive_folders(
+            connection_id=connection_id,
+            provider=provider,
+            parent=parent,
+            secret=secret,
+            base_url=settings.NANGO_BASE_URL,
+        )
+    raise NangoError(
+        f"Folder picker is not implemented for provider {provider!r}.",
+        status_code=400,
+    )
+
+
+async def _list_drive_folders(
+    *,
+    connection_id: str,
+    parent: str,
+    secret: str,
+    base_url: str,
+) -> list[FolderNode]:
+    # Drive's files.list endpoint with a folders-only `q`. The
+    # quote-escaping below uses the v3 documented escape (`\\\'`).
+    safe_parent = parent.replace("'", "\\'")
+    query = (
+        f"'{safe_parent}' in parents "
+        f"and mimeType = '{_DRIVE_FOLDER_MIME}' "
+        "and trashed = false"
+    )
+    params = {
+        "q": query,
+        "fields": "files(id,name,parents),nextPageToken",
+        "pageSize": str(_PROXY_PAGE_SIZE),
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+    }
+    body = await _proxy_get(
+        connection_id=connection_id,
+        provider="google-drive",
+        path="drive/v3/files",
+        params=params,
+        secret=secret,
+        base_url=base_url,
+    )
+    files = body.get("files")
+    out: list[FolderNode] = []
+    if isinstance(files, list):
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get("id")
+            name = entry.get("name")
+            if not isinstance(entry_id, str) or not isinstance(name, str):
+                continue
+            parents = entry.get("parents")
+            parent_id_value: str | None = None
+            if isinstance(parents, list) and parents:
+                first = parents[0]
+                if isinstance(first, str):
+                    parent_id_value = first
+            out.append(
+                FolderNode(
+                    id=entry_id,
+                    name=name,
+                    has_children=True,
+                    parent_id=parent_id_value,
+                )
+            )
+    return out
+
+
+async def _list_onedrive_folders(
+    *,
+    connection_id: str,
+    provider: str,
+    parent: str,
+    secret: str,
+    base_url: str,
+) -> list[FolderNode]:
+    # Microsoft Graph: list children of a driveItem. The "root" item
+    # uses the path ``/me/drive/root/children``; any other item uses
+    # ``/me/drive/items/{id}/children``.
+    if parent == ROOT_FOLDER_ID:
+        path = "me/drive/root/children"
+    else:
+        # Don't trust the caller's parent id into a URL path verbatim.
+        # Graph item ids are alphanumeric + ``!`` + ``-``; reject
+        # anything outside that to dodge path-traversal.
+        if not _SAFE_GRAPH_ITEM_ID.match(parent):
+            raise NangoError("Invalid OneDrive folder id.", status_code=400)
+        path = f"me/drive/items/{parent}/children"
+    params = {
+        "$top": str(_PROXY_PAGE_SIZE),
+        "$select": "id,name,folder,parentReference",
+    }
+    body = await _proxy_get(
+        connection_id=connection_id,
+        provider=provider,
+        path=path,
+        params=params,
+        secret=secret,
+        base_url=base_url,
+    )
+    value = body.get("value")
+    out: list[FolderNode] = []
+    if isinstance(value, list):
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            folder = entry.get("folder")
+            if not isinstance(folder, dict):
+                # Skip non-folder children — files don't go in the picker.
+                continue
+            entry_id = entry.get("id")
+            name = entry.get("name")
+            if not isinstance(entry_id, str) or not isinstance(name, str):
+                continue
+            child_count = folder.get("childCount")
+            has_children = (
+                isinstance(child_count, int) and child_count > 0
+            )
+            parent_ref = entry.get("parentReference")
+            parent_id_value: str | None = None
+            if isinstance(parent_ref, dict):
+                pid = parent_ref.get("id")
+                if isinstance(pid, str):
+                    parent_id_value = pid
+            out.append(
+                FolderNode(
+                    id=entry_id,
+                    name=name,
+                    has_children=has_children,
+                    parent_id=parent_id_value,
+                )
+            )
+    return out
+
+
+_SAFE_GRAPH_ITEM_ID = re.compile(r"^[A-Za-z0-9!\-_]+$")
+
+
+async def _proxy_get(
+    *,
+    connection_id: str,
+    provider: str,
+    path: str,
+    params: dict[str, Any],
+    secret: str,
+    base_url: str,
+) -> dict[str, Any]:
+    """Call ``GET /proxy/<path>`` on the Nango server.
+
+    Nango's proxy endpoint forwards the call to the upstream provider
+    with the connection's OAuth token attached. Returning JSON only —
+    binary downloads use :func:`download_file`.
+    """
+    url = f"{base_url.rstrip('/')}/proxy/{path.lstrip('/')}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.get(
+                url,
+                headers={
+                    **_auth_headers(secret),
+                    "Connection-Id": connection_id,
+                    "Provider-Config-Key": provider,
+                },
+                params=params,
+            )
+        except httpx.HTTPError as exc:
+            raise RetryableNangoError(
+                f"Could not reach Nango: {type(exc).__name__}.",
+            ) from exc
+    _raise_for_status(response, what="proxy_get")
+    return _parse_json_or_502(response)
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers
+# ---------------------------------------------------------------------------
+
+
+def file_is_under_folder(file: NangoFile, root_folder_id: str | None) -> bool:
+    """True when ``file`` is rooted under ``root_folder_id``.
+
+    Used by the sync route to honor a connection's picked folder. The
+    check is metadata-only — we look at common parent-pointer shapes
+    that Nango sync templates emit (Google Drive ``parents``,
+    Microsoft Graph ``parentReference``). Files whose metadata does
+    not carry a parent pointer are passed through (no filter); the
+    operator gets a slightly noisier sync rather than silent data loss.
+    """
+    if not root_folder_id:
+        return True
+    parents = file.metadata.get("parents")
+    if isinstance(parents, list):
+        for entry in parents:
+            if isinstance(entry, str) and entry == root_folder_id:
+                return True
+            if isinstance(entry, dict) and entry.get("id") == root_folder_id:
+                return True
+    parent_ref = file.metadata.get("parentReference")
+    if isinstance(parent_ref, dict) and parent_ref.get("id") == root_folder_id:
+        return True
+    # Some templates flatten the path. If we can find no parent
+    # pointer at all, default-allow rather than silently drop.
+    return parents is None and parent_ref is None
 
 
 def _parse_json_or_502(response: httpx.Response) -> dict[str, Any]:

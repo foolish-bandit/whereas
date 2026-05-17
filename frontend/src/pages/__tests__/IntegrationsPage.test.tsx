@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     updateIntegrationConnection: vi.fn(),
     deleteIntegrationConnection: vi.fn(),
     triggerIntegrationSync: vi.fn(),
+    listIntegrationFolders: vi.fn(),
     openNangoConnect: vi.fn(),
   };
 });
@@ -39,6 +40,7 @@ vi.mock("../../lib/api", () => ({
   updateIntegrationConnection: mocks.updateIntegrationConnection,
   deleteIntegrationConnection: mocks.deleteIntegrationConnection,
   triggerIntegrationSync: mocks.triggerIntegrationSync,
+  listIntegrationFolders: mocks.listIntegrationFolders,
 }));
 
 vi.mock("../../lib/nangoConnect", () => ({
@@ -90,6 +92,8 @@ const CONNECTED_DRIVE: IntegrationConnection = {
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   created_by: "user-1",
+  root_folder_id: null,
+  root_folder_name: null,
 };
 
 function renderPage() {
@@ -109,6 +113,7 @@ describe("IntegrationsPage", () => {
     mocks.updateIntegrationConnection.mockReset();
     mocks.deleteIntegrationConnection.mockReset();
     mocks.triggerIntegrationSync.mockReset();
+    mocks.listIntegrationFolders.mockReset();
     mocks.openNangoConnect.mockReset();
     mocks.listIntegrationProviders.mockResolvedValue(PROVIDERS);
     mocks.listIntegrationConnections.mockResolvedValue([]);
@@ -285,5 +290,134 @@ describe("IntegrationsPage", () => {
     expect(text.toLowerCase()).not.toContain("session-token");
     expect(text.toLowerCase()).not.toContain("nango_secret_key");
     expect(text.toLowerCase()).not.toContain("nango_webhook_secret");
+  });
+
+  it("shows 'Whole drive' on a connected Drive card when no folder is set", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    renderPage();
+    const folder = await screen.findByTestId("integration-folder-google-drive");
+    expect(
+      within(folder).getByTestId("integration-folder-name-google-drive"),
+    ).toHaveTextContent(/Whole drive/);
+  });
+
+  it("shows the picked folder name on a scoped Drive card", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([
+      {
+        ...CONNECTED_DRIVE,
+        root_folder_id: "folder-x",
+        root_folder_name: "Sales › Renewals",
+      },
+    ]);
+    renderPage();
+    const folder = await screen.findByTestId("integration-folder-google-drive");
+    expect(
+      within(folder).getByTestId("integration-folder-name-google-drive"),
+    ).toHaveTextContent("Sales › Renewals");
+  });
+
+  it("does not render the folder picker block for Gmail (no folder concept)", async () => {
+    // Use a Gmail-only fixture so the page renders a Gmail connection
+    // and we can assert the folder block is absent.
+    const gmailConnection = {
+      ...CONNECTED_DRIVE,
+      id: "ic-gm",
+      provider: "gmail",
+      root_folder_id: null,
+      root_folder_name: null,
+    };
+    mocks.listIntegrationConnections.mockResolvedValue([gmailConnection]);
+    renderPage();
+    await screen.findByTestId("integration-card-gmail");
+    expect(screen.queryByTestId("integration-folder-gmail")).toBeNull();
+  });
+
+  it("opens the folder picker after a successful Drive Connect", async () => {
+    mocks.createIntegrationConnectSession.mockResolvedValue({
+      token: "session-token",
+      expires_at: null,
+    });
+    mocks.openNangoConnect.mockResolvedValue({
+      kind: "connected",
+      connectionId: "nango-conn-abc",
+    });
+    mocks.upsertIntegrationConnection.mockResolvedValue(CONNECTED_DRIVE);
+    mocks.listIntegrationFolders.mockResolvedValue({
+      parent_id: "root",
+      folders: [],
+    });
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-cta-google-drive"));
+    expect(await screen.findByTestId("folder-picker")).toBeInTheDocument();
+  });
+
+  it("opens the picker from the Change link and patches the connection on save", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    mocks.listIntegrationFolders.mockResolvedValue({
+      parent_id: "root",
+      folders: [
+        {
+          id: "folder-sales",
+          name: "Sales",
+          has_children: false,
+          parent_id: "root",
+        },
+      ],
+    });
+    mocks.updateIntegrationConnection.mockResolvedValue({
+      ...CONNECTED_DRIVE,
+      root_folder_id: "folder-sales",
+      root_folder_name: "Sales",
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByTestId("integration-folder-edit-google-drive"),
+    );
+    expect(await screen.findByTestId("folder-picker")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("folder-picker-row-folder-sales"));
+    fireEvent.click(screen.getByTestId("folder-picker-save"));
+    await waitFor(() =>
+      expect(mocks.updateIntegrationConnection).toHaveBeenCalledWith(
+        CONNECTED_DRIVE.id,
+        { root_folder_id: "folder-sales", root_folder_name: "Sales" },
+      ),
+    );
+    // Modal closes on successful save.
+    await waitFor(() =>
+      expect(screen.queryByTestId("folder-picker")).toBeNull(),
+    );
+  });
+
+  it("clears the folder scope when the user picks the synthetic root", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([
+      {
+        ...CONNECTED_DRIVE,
+        root_folder_id: "folder-x",
+        root_folder_name: "Sales",
+      },
+    ]);
+    mocks.listIntegrationFolders.mockResolvedValue({
+      parent_id: "root",
+      folders: [],
+    });
+    mocks.updateIntegrationConnection.mockResolvedValue({
+      ...CONNECTED_DRIVE,
+      root_folder_id: null,
+      root_folder_name: null,
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByTestId("integration-folder-edit-google-drive"),
+    );
+    await screen.findByTestId("folder-picker");
+    fireEvent.click(screen.getByTestId("folder-picker-select-current"));
+    fireEvent.click(screen.getByTestId("folder-picker-save"));
+    await waitFor(() =>
+      expect(mocks.updateIntegrationConnection).toHaveBeenCalledWith(
+        CONNECTED_DRIVE.id,
+        { root_folder_id: "" },
+      ),
+    );
   });
 });

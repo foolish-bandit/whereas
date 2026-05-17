@@ -48,6 +48,8 @@ export interface IntegrationConnection {
   created_at: string;
   updated_at: string;
   created_by: string | null;
+  root_folder_id: string | null;
+  root_folder_name: string | null;
 }
 
 export interface ConnectSession {
@@ -65,6 +67,12 @@ export interface CompleteConnectionRequest {
 export interface UpdateConnectionRequest {
   display_name?: string | null;
   ingest_mode?: IntegrationIngestMode | string;
+  /**
+   * Empty string clears the scope (whole drive). ``undefined`` leaves
+   * the existing selection alone.
+   */
+  root_folder_id?: string | null;
+  root_folder_name?: string | null;
 }
 
 export interface ManualSyncResult {
@@ -74,3 +82,25 @@ export interface ManualSyncResult {
   skipped: number;
   cursor: string | null;
 }
+
+export interface FolderEntry {
+  id: string;
+  name: string;
+  has_children: boolean;
+  parent_id: string | null;
+}
+
+export interface ListFoldersResult {
+  parent_id: string;
+  folders: FolderEntry[];
+}
+
+/**
+ * Providers that have a folder picker. Other providers (Gmail,
+ * Outlook) don't have a folder concept; the picker hides for them.
+ */
+export const FOLDER_PICKER_PROVIDERS: ReadonlySet<string> = new Set([
+  "google-drive",
+  "microsoft-onedrive",
+  "microsoft-sharepoint",
+]);

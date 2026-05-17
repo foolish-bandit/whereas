@@ -749,3 +749,354 @@ def _stub_parser_and_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Suppress unused-import warnings for the enum kept available for callers.
 _ = IntegrationProvider
+
+
+# ---------------------------------------------------------------------------
+# Folder picker
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_connection_persists_folder_picker_fields(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+    assert create.json()["root_folder_id"] is None
+
+    patch = await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={
+            "root_folder_id": "drive_folder_abc",
+            "root_folder_name": "Sales › 2026 Renewals",
+        },
+    )
+    assert patch.status_code == 200, patch.text
+    body = patch.json()
+    assert body["root_folder_id"] == "drive_folder_abc"
+    assert body["root_folder_name"] == "Sales › 2026 Renewals"
+
+    # The picker fields survive a round-trip via GET /connections.
+    listed = await client.get(
+        "/api/integrations/connections", headers=_headers(users.admin)
+    )
+    assert listed.status_code == 200
+    by_id = {c["id"]: c for c in listed.json()}
+    assert by_id[cid]["root_folder_id"] == "drive_folder_abc"
+    assert by_id[cid]["root_folder_name"] == "Sales › 2026 Renewals"
+
+
+@pytest.mark.asyncio
+async def test_update_connection_clears_folder_with_empty_string(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+    await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={"root_folder_id": "f1", "root_folder_name": "Folder"},
+    )
+    # Sending an empty string clears both id and name.
+    cleared = await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={"root_folder_id": ""},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["root_folder_id"] is None
+    assert cleared.json()["root_folder_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_connection_partial_patch_preserves_folder(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A PATCH that doesn't mention the folder fields leaves them alone."""
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+    await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={"root_folder_id": "f1", "root_folder_name": "Folder One"},
+    )
+    bumped = await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={"ingest_mode": "direct"},
+    )
+    assert bumped.status_code == 200
+    assert bumped.json()["root_folder_id"] == "f1"
+    assert bumped.json()["root_folder_name"] == "Folder One"
+    assert bumped.json()["ingest_mode"] == "direct"
+
+
+@pytest.mark.asyncio
+async def test_list_folders_requires_admin(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+    forbidden = await client.post(
+        f"/api/integrations/connections/{cid}/list-folders",
+        headers=_headers(users.member),
+        json={},
+    )
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_folders_google_drive(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_proxy_get(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {
+            "files": [
+                {"id": "folder_a", "name": "Sales", "parents": ["root"]},
+                {"id": "folder_b", "name": "Legal", "parents": ["root"]},
+                {"id": "folder_c", "name": "junk", "parents": ["root"]},
+            ]
+        }
+
+    monkeypatch.setattr(nango_client, "_proxy_get", fake_proxy_get)
+
+    response = await client.post(
+        f"/api/integrations/connections/{cid}/list-folders",
+        headers=_headers(users.admin),
+        json={"parent_id": "root"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["parent_id"] == "root"
+    names = [f["name"] for f in body["folders"]]
+    assert names == ["Sales", "Legal", "junk"]
+    assert all(f["has_children"] is True for f in body["folders"])
+    # The Nango proxy was called with a folders-only `q`.
+    assert captured["provider"] == "google-drive"
+    assert captured["path"] == "drive/v3/files"
+    assert (
+        "mimeType = 'application/vnd.google-apps.folder'"
+        in captured["params"]["q"]
+    )
+    assert "'root' in parents" in captured["params"]["q"]
+
+
+@pytest.mark.asyncio
+async def test_list_folders_onedrive_rejects_unsafe_parent_id(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={
+            "provider": "microsoft-onedrive",
+            "nango_connection_id": "conn_od",
+        },
+    )
+    cid = create.json()["id"]
+
+    async def fake_proxy_get(**_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("proxy should not be called for an invalid id")
+
+    monkeypatch.setattr(nango_client, "_proxy_get", fake_proxy_get)
+
+    response = await client.post(
+        f"/api/integrations/connections/{cid}/list-folders",
+        headers=_headers(users.admin),
+        json={"parent_id": "../../etc/passwd"},
+    )
+    assert response.status_code == 400
+    assert "Invalid OneDrive folder id" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_list_folders_unsupported_provider_returns_400(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    users = await _create_user_org(db_session)
+    # Drop a connection for an unsupported provider directly so we can
+    # exercise the dispatch error without needing the provider in the
+    # enabled-list.
+    connection = IntegrationConnection(
+        organization_id=users.org.id,
+        provider="gmail",
+        nango_connection_id="conn_gmail",
+        status="active",
+        ingest_mode=IntegrationIngestMode.INBOX_REVIEW.value,
+        created_by=users.admin.id,
+    )
+    db_session.add(connection)
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/integrations/connections/{connection.id}/list-folders",
+        headers=_headers(users.admin),
+        json={},
+    )
+    assert response.status_code == 400
+    assert "not implemented" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_manual_sync_filters_to_root_folder(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scoped connection ingests only files inside the picked folder."""
+    users = await _create_user_org(db_session)
+    create = await client.post(
+        "/api/integrations/connections",
+        headers=_headers(users.admin),
+        json={"provider": "google-drive", "nango_connection_id": "conn_drive"},
+    )
+    cid = create.json()["id"]
+
+    # Scope to a specific folder via PATCH.
+    await client.patch(
+        f"/api/integrations/connections/{cid}",
+        headers=_headers(users.admin),
+        json={
+            "root_folder_id": "folder_inside",
+            "root_folder_name": "Inside",
+        },
+    )
+
+    inside = NangoFile(
+        provider_file_id="file_inside",
+        filename="inside.pdf",
+        mime_type="application/pdf",
+        size_bytes=len(_PDF_BYTES),
+        revision="r1",
+        download_url="https://nango/proxy/file_inside",
+        metadata={"parents": ["folder_inside"]},
+    )
+    outside = NangoFile(
+        provider_file_id="file_outside",
+        filename="outside.pdf",
+        mime_type="application/pdf",
+        size_bytes=len(_PDF_BYTES),
+        revision="r1",
+        download_url="https://nango/proxy/file_outside",
+        metadata={"parents": ["folder_elsewhere"]},
+    )
+
+    async def fake_list(**_kw: Any) -> tuple[list[NangoFile], str | None]:
+        return [inside, outside], None
+
+    async def fake_download(**_kw: Any) -> bytes:
+        return _PDF_BYTES
+
+    monkeypatch.setattr(integrations_api.nango_client, "list_files", fake_list)
+    monkeypatch.setattr(nango_client, "download_file", fake_download)
+    monkeypatch.setattr(ingest_service, "download_file", fake_download)
+    _stub_parser_and_extraction(monkeypatch)
+
+    response = await client.post(
+        f"/api/integrations/connections/{cid}/sync",
+        headers=_headers(users.admin),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["files_seen"] == 2
+    assert body["contracts_created"] == 1
+    assert body["skipped"] == 1
+
+    contracts = (
+        await db_session.execute(
+            select(Contract).where(Contract.organization_id == users.org.id)
+        )
+    ).scalars().all()
+    assert len(contracts) == 1
+    assert contracts[0].title == "inside.pdf"
+
+
+def test_file_is_under_folder_handles_common_shapes() -> None:
+    """The metadata filter accepts the shapes Nango sync templates emit."""
+    drive = NangoFile(
+        provider_file_id="x",
+        filename="x.pdf",
+        mime_type=None,
+        size_bytes=None,
+        revision=None,
+        download_url=None,
+        metadata={"parents": ["pick_me"]},
+    )
+    onedrive = NangoFile(
+        provider_file_id="y",
+        filename="y.pdf",
+        mime_type=None,
+        size_bytes=None,
+        revision=None,
+        download_url=None,
+        metadata={"parentReference": {"id": "pick_me"}},
+    )
+    elsewhere = NangoFile(
+        provider_file_id="z",
+        filename="z.pdf",
+        mime_type=None,
+        size_bytes=None,
+        revision=None,
+        download_url=None,
+        metadata={"parents": ["other"]},
+    )
+    no_parent_info = NangoFile(
+        provider_file_id="w",
+        filename="w.pdf",
+        mime_type=None,
+        size_bytes=None,
+        revision=None,
+        download_url=None,
+        metadata={},
+    )
+
+    assert nango_client.file_is_under_folder(drive, "pick_me") is True
+    assert nango_client.file_is_under_folder(onedrive, "pick_me") is True
+    assert nango_client.file_is_under_folder(elsewhere, "pick_me") is False
+    # Empty/None scope → always allow.
+    assert nango_client.file_is_under_folder(drive, None) is True
+    assert nango_client.file_is_under_folder(drive, "") is True
+    # No parent info → default-allow (don't silently drop).
+    assert nango_client.file_is_under_folder(no_parent_info, "pick_me") is True
