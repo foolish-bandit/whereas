@@ -150,7 +150,7 @@ export default function ApprovalPoliciesPage() {
     <div className="space-y-5" data-testid="approval-policies-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Approval Policies</h1>
+          <h2 className="text-base font-semibold text-ink">Approval Policies</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
             Rules that match incoming requests and automatically attach
             approval workflows. Policies also drive whether a

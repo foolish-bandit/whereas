@@ -250,7 +250,7 @@ export default function ApprovalWorkflowTemplatesPage() {
     <div className="space-y-5" data-testid="approval-templates-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Approval Templates</h1>
+          <h2 className="text-base font-semibold text-ink">Approval Templates</h2>
           <p className="mt-1 text-sm text-ink-muted">
             Reusable approval workflow blueprints. Instantiating a template
             creates a concrete approval workflow + steps; only the first step

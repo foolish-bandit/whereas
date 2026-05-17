@@ -74,12 +74,13 @@ describe("ApprovalsLandingPage", () => {
     );
   }
 
-  it("renders the Approvals heading and intro copy", async () => {
+  it("renders inside the approvals-landing data-testid wrapper", async () => {
+    // Heading + intro copy now live in ApprovalsHubLayout; the landing
+    // page is the Overview tab body and renders only the card grid.
+    // See ApprovalsHubLayout.test.tsx for the heading assertion.
     fetchMock.mockResolvedValue(jsonResponse(SUMMARY_FIXTURE));
     renderPage();
-    expect(
-      screen.getByRole("heading", { name: /approvals/i, level: 1 }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("approvals-landing")).toBeInTheDocument();
   });
 
   it("renders cards for tasks, workflows, templates, and policies with correct hrefs", async () => {

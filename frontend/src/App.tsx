@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import AppShell from "./components/AppShell";
+import ApprovalsHubLayout from "./components/ApprovalsHubLayout";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AgreementTemplateDetailPage from "./pages/AgreementTemplateDetailPage";
 import AgreementTemplatesPage from "./pages/AgreementTemplatesPage";
@@ -139,37 +140,68 @@ function DemoApp() {
         <Route path="requests" element={<RequestsPage />} />
         <Route path="requests/:id" element={<RequestDetailPage />} />
 
-        <Route path="approvals" element={<ApprovalsEntry />} />
-        <Route path="approvals/workflows" element={<ApprovalWorkflowsPage />} />
+        {/* /approvals/* is a single hub with tabs (Overview / Tasks /
+            Workflows / Templates / Policies). Detail pages live
+            outside the hub layout so they get their own focused frame. */}
+        <Route path="approvals" element={<ApprovalsHubLayout />}>
+          <Route index element={<ApprovalsEntry />} />
+          <Route path="tasks" element={<ApprovalTasksPage />} />
+          <Route path="workflows" element={<ApprovalWorkflowsPage />} />
+          <Route
+            path="templates"
+            element={<ApprovalWorkflowTemplatesPage />}
+          />
+          <Route path="policies" element={<ApprovalPoliciesPage />} />
+        </Route>
         <Route
           path="approvals/workflows/:id"
           element={<ApprovalWorkflowDetailPage />}
         />
-        <Route
-          path="approvals/templates"
-          element={<ApprovalWorkflowTemplatesPage />}
-        />
-        <Route
-          path="approvals/policies"
-          element={<ApprovalPoliciesPage />}
-        />
-        <Route path="approvals/tasks" element={<ApprovalTasksPage />} />
         <Route
           path="approvals/tasks/:id"
           element={<ApprovalTaskDetailPage />}
         />
 
         <Route path="inbox" element={<InboxPage />} />
-        <Route path="approval-workflows" element={<ApprovalWorkflowsPage />} />
+        {/* Pre-hub deep links — keep working by redirecting into the
+            new tabbed layout so old bookmarks land on the right tab
+            (and inherit the hub frame instead of rendering loose).
+            Search string (e.g. ``?policy_id=…``) is preserved so the
+            target tab's deep-link handler fires as before. */}
+        <Route
+          path="approval-workflows"
+          element={<LegacyApprovalsRedirect target="workflows" />}
+        />
         <Route
           path="approval-templates"
-          element={<ApprovalWorkflowTemplatesPage />}
+          element={<LegacyApprovalsRedirect target="templates" />}
         />
-        <Route path="approval-policies" element={<ApprovalPoliciesPage />} />
+        <Route
+          path="approval-policies"
+          element={<LegacyApprovalsRedirect target="policies" />}
+        />
 
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </AppShell>
+  );
+}
+
+/**
+ * Index route under ``/approvals``. Renders the Overview tab, but
+ * first honors the legacy ``?workflow_id=`` deep link by bouncing
+ * to the Workflows tab where the deep-linked row will surface.
+ * Pre-tab-hub callers (RequestApprovalStatusSection, audit log
+ * action items) still target ``/approvals?workflow_id=…`` and
+ * should not break when the page restructured.
+ */
+function LegacyApprovalsRedirect({ target }: { target: string }) {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../approvals/${target}${location.search}`}
+      replace
+    />
   );
 }
 
