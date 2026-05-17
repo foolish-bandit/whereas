@@ -105,6 +105,7 @@ import type {
   ConnectSession,
   IntegrationConnection,
   IntegrationProvider,
+  ListFoldersResult,
   ManualSyncResult,
   UpdateConnectionRequest,
 } from "../types/integrations";
@@ -2383,6 +2384,25 @@ export async function triggerIntegrationSync(
   const data = await call<ManualSyncResult>(
     `/api/integrations/connections/${encodeURIComponent(connectionId)}/sync`,
     { method: "POST" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function listIntegrationFolders(
+  connectionId: string,
+  payload: { parent_id: string | null },
+  options: ApiOptions = {},
+): Promise<ListFoldersResult> {
+  if (isDemoMode())
+    return mockApi.listIntegrationFolders(connectionId, payload, options);
+  const data = await call<ListFoldersResult>(
+    `/api/integrations/connections/${encodeURIComponent(connectionId)}/list-folders`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
     options,
   );
   return scrubSecrets(data);

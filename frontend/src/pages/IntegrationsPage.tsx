@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import ErrorState from "../components/ErrorState";
+import FolderPicker from "../components/FolderPicker";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import Pill from "../components/ui/Pill";
 import {
@@ -14,10 +15,11 @@ import {
   upsertIntegrationConnection,
 } from "../lib/api";
 import { openNangoConnect } from "../lib/nangoConnect";
-import type {
-  IntegrationConnection,
-  IntegrationIngestMode,
-  IntegrationProvider,
+import {
+  FOLDER_PICKER_PROVIDERS,
+  type IntegrationConnection,
+  type IntegrationIngestMode,
+  type IntegrationProvider,
 } from "../types/integrations";
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,10 @@ export default function IntegrationsPage() {
   const [pendingByConnection, setPendingByConnection] = useState<
     Record<string, "syncing" | "disconnecting" | undefined>
   >({});
+  // When set, render the folder picker modal for this connection.
+  const [pickerForConnectionId, setPickerForConnectionId] = useState<
+    string | null
+  >(null);
 
   const load = useCallback(() => {
     setState({ kind: "loading" });
@@ -161,12 +167,50 @@ export default function IntegrationsPage() {
         kind: "info",
         message: `${provider.label} connected.`,
       });
+      // Prompt the admin to scope ingest to a folder right after
+      // Connect. Skip for providers that don't have a folder concept
+      // (Gmail, Outlook).
+      if (FOLDER_PICKER_PROVIDERS.has(provider.key)) {
+        setPickerForConnectionId(connection.id);
+      }
     } catch (err) {
       setActionBanner({
         kind: "error",
         message: errorMessage(err, `Could not connect ${provider.label}.`),
       });
     }
+  }
+
+  async function handleSaveFolder(
+    connection: IntegrationConnection,
+    folder: { id: string; name: string },
+  ) {
+    const updated = await updateIntegrationConnection(connection.id, {
+      root_folder_id: folder.id,
+      root_folder_name: folder.name,
+    });
+    setConnections((prev) =>
+      prev.map((c) => (c.id === updated.id ? updated : c)),
+    );
+    setActionBanner({
+      kind: "info",
+      message: `Folder set to ${folder.name}.`,
+    });
+    setPickerForConnectionId(null);
+  }
+
+  async function handleClearFolder(connection: IntegrationConnection) {
+    const updated = await updateIntegrationConnection(connection.id, {
+      root_folder_id: "",
+    });
+    setConnections((prev) =>
+      prev.map((c) => (c.id === updated.id ? updated : c)),
+    );
+    setActionBanner({
+      kind: "info",
+      message: "Folder cleared — sync covers the whole drive.",
+    });
+    setPickerForConnectionId(null);
   }
 
   function markPending(
@@ -339,12 +383,14 @@ export default function IntegrationsPage() {
                       ? pendingByConnection[connection.id] ?? "idle"
                       : "idle"
                   }
+                  showsFolderPicker={FOLDER_PICKER_PROVIDERS.has(provider.key)}
                   onConnect={() => handleConnect(provider)}
                   onSync={(conn) => handleSync(conn, provider.label)}
                   onDisconnect={(conn) =>
                     handleDisconnect(conn, provider.label)
                   }
                   onIngestModeChange={handleIngestModeChange}
+                  onEditFolder={(conn) => setPickerForConnectionId(conn.id)}
                 />
               );
             })}
@@ -390,6 +436,26 @@ export default function IntegrationsPage() {
           );
         })}
       </section>
+
+      {pickerForConnectionId &&
+        (() => {
+          const connection = connections.find(
+            (c) => c.id === pickerForConnectionId,
+          );
+          if (!connection) return null;
+          const provider = providers.find((p) => p.key === connection.provider);
+          return (
+            <FolderPicker
+              connectionId={connection.id}
+              providerLabel={provider?.label ?? connection.provider}
+              initialFolderId={connection.root_folder_id}
+              initialFolderName={connection.root_folder_name}
+              onCancel={() => setPickerForConnectionId(null)}
+              onPick={(folder) => handleSaveFolder(connection, folder)}
+              onClear={() => handleClearFolder(connection)}
+            />
+          );
+        })()}
     </div>
   );
 }
@@ -402,6 +468,7 @@ interface ProviderCardProps {
   provider: IntegrationProvider;
   connection: IntegrationConnection | null;
   pending: "idle" | "syncing" | "disconnecting";
+  showsFolderPicker: boolean;
   onConnect: () => void;
   onSync: (connection: IntegrationConnection) => void;
   onDisconnect: (connection: IntegrationConnection) => void;
@@ -409,16 +476,19 @@ interface ProviderCardProps {
     connection: IntegrationConnection,
     mode: IntegrationIngestMode,
   ) => void;
+  onEditFolder: (connection: IntegrationConnection) => void;
 }
 
 function ProviderCard({
   provider,
   connection,
   pending,
+  showsFolderPicker,
   onConnect,
   onSync,
   onDisconnect,
   onIngestModeChange,
+  onEditFolder,
 }: ProviderCardProps) {
   const slug = slugify(provider.key);
   return (
@@ -449,9 +519,11 @@ function ProviderCard({
           connection={connection}
           slug={slug}
           pending={pending}
+          showsFolderPicker={showsFolderPicker}
           onSync={() => onSync(connection)}
           onDisconnect={() => onDisconnect(connection)}
           onIngestModeChange={(mode) => onIngestModeChange(connection, mode)}
+          onEditFolder={() => onEditFolder(connection)}
         />
       ) : (
         <DisconnectedActions
@@ -577,16 +649,20 @@ function ConnectionDetails({
   connection,
   slug,
   pending,
+  showsFolderPicker,
   onSync,
   onDisconnect,
   onIngestModeChange,
+  onEditFolder,
 }: {
   connection: IntegrationConnection;
   slug: string;
   pending: "idle" | "syncing" | "disconnecting";
+  showsFolderPicker: boolean;
   onSync: () => void;
   onDisconnect: () => void;
   onIngestModeChange: (mode: IntegrationIngestMode) => void;
+  onEditFolder: () => void;
 }) {
   return (
     <div className="mt-3 space-y-2">
@@ -605,6 +681,28 @@ function ConnectionDetails({
         >
           Last sync failed: {connection.last_sync_error}
         </p>
+      )}
+      {showsFolderPicker && (
+        <div
+          className="flex flex-wrap items-baseline gap-x-2 text-xs"
+          data-testid={`integration-folder-${slug}`}
+        >
+          <span className="text-ink-muted">Folder:</span>
+          <span
+            className="text-ink"
+            data-testid={`integration-folder-name-${slug}`}
+          >
+            {connection.root_folder_name ?? "Whole drive"}
+          </span>
+          <button
+            type="button"
+            onClick={onEditFolder}
+            className="text-accent underline-offset-2 hover:underline"
+            data-testid={`integration-folder-edit-${slug}`}
+          >
+            Change
+          </button>
+        </div>
       )}
       <label className="flex items-center gap-2 text-xs text-ink">
         <span className="text-ink-muted">Ingest mode</span>

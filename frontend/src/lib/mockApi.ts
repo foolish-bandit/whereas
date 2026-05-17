@@ -127,6 +127,7 @@ import type {
   ConnectSession,
   IntegrationConnection,
   IntegrationProvider,
+  ListFoldersResult,
   ManualSyncResult,
   UpdateConnectionRequest,
 } from "../types/integrations";
@@ -4974,8 +4975,25 @@ const sessionIntegrationConnections: IntegrationConnection[] = [
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
     updated_at: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
     created_by: null,
+    root_folder_id: "folder-sales-renewals",
+    root_folder_name: "Sales › 2026 Renewals",
   },
 ];
+
+// Demo-mode folder tree, keyed by parent_id. ``root`` lists the
+// top-level "My Drive" entries; nested folders return their children.
+const MOCK_FOLDER_TREE: Record<string, { name: string; children: string[] }> = {
+  root: { name: "My Drive", children: ["folder-sales", "folder-legal", "folder-misc"] },
+  "folder-sales": {
+    name: "Sales",
+    children: ["folder-sales-renewals", "folder-sales-new"],
+  },
+  "folder-sales-renewals": { name: "2026 Renewals", children: [] },
+  "folder-sales-new": { name: "New Logos", children: [] },
+  "folder-legal": { name: "Legal", children: ["folder-legal-ndas"] },
+  "folder-legal-ndas": { name: "NDAs", children: [] },
+  "folder-misc": { name: "Misc", children: [] },
+};
 
 export async function listIntegrationProviders(
   options: ApiOptions = {},
@@ -5043,6 +5061,8 @@ export async function upsertIntegrationConnection(
     created_at: now,
     updated_at: now,
     created_by: null,
+    root_folder_id: null,
+    root_folder_name: null,
   };
   sessionIntegrationConnections.push(row);
   return { ...row };
@@ -5058,8 +5078,43 @@ export async function updateIntegrationConnection(
   if (!row) throw new ApiError(404, "Connection not found.");
   if (payload.display_name !== undefined) row.display_name = payload.display_name;
   if (payload.ingest_mode !== undefined) row.ingest_mode = payload.ingest_mode;
+  if (payload.root_folder_id !== undefined) {
+    if (payload.root_folder_id === "") {
+      row.root_folder_id = null;
+      row.root_folder_name = null;
+    } else {
+      row.root_folder_id = payload.root_folder_id;
+      if (payload.root_folder_name !== undefined) {
+        row.root_folder_name = payload.root_folder_name || null;
+      }
+    }
+  } else if (payload.root_folder_name !== undefined) {
+    row.root_folder_name = payload.root_folder_name || null;
+  }
   row.updated_at = isoNow();
   return { ...row };
+}
+
+export async function listIntegrationFolders(
+  _connectionId: string,
+  payload: { parent_id: string | null },
+  options: ApiOptions = {},
+): Promise<ListFoldersResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const parentId = payload.parent_id ?? "root";
+  const node = MOCK_FOLDER_TREE[parentId];
+  if (!node) {
+    return { parent_id: parentId, folders: [] };
+  }
+  return {
+    parent_id: parentId,
+    folders: node.children.map((childId) => ({
+      id: childId,
+      name: MOCK_FOLDER_TREE[childId]?.name ?? childId,
+      has_children: (MOCK_FOLDER_TREE[childId]?.children.length ?? 0) > 0,
+      parent_id: parentId,
+    })),
+  };
 }
 
 export async function deleteIntegrationConnection(

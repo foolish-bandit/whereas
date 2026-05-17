@@ -37,11 +37,16 @@ from app.models import (
     User,
 )
 from app.schemas.integrations import (
+    METADATA_ROOT_FOLDER_ID,
+    METADATA_ROOT_FOLDER_NAME,
     CompleteConnectionRequest,
     CreateConnectSessionRequest,
     CreateConnectSessionResponse,
+    FolderEntry,
     IntegrationConnectionResponse,
     IntegrationProviderResponse,
+    ListFoldersRequest,
+    ListFoldersResponse,
     ManualSyncResponse,
     UpdateConnectionRequest,
 )
@@ -252,6 +257,28 @@ async def update_connection(
         connection.display_name = payload.display_name
     if ingest_mode is not None:
         connection.ingest_mode = ingest_mode
+
+    # Folder picker fields live in metadata_json on the model. None
+    # means "don't touch"; an empty string means "clear the scope".
+    folder_id_changed = payload.root_folder_id is not None
+    folder_name_changed = payload.root_folder_name is not None
+    if folder_id_changed or folder_name_changed:
+        metadata = dict(connection.metadata_json or {})
+        if folder_id_changed:
+            assert payload.root_folder_id is not None
+            if payload.root_folder_id == "":
+                metadata.pop(METADATA_ROOT_FOLDER_ID, None)
+                metadata.pop(METADATA_ROOT_FOLDER_NAME, None)
+            else:
+                metadata[METADATA_ROOT_FOLDER_ID] = payload.root_folder_id
+        if folder_name_changed and payload.root_folder_id != "":
+            if payload.root_folder_name == "":
+                metadata.pop(METADATA_ROOT_FOLDER_NAME, None)
+            else:
+                metadata[METADATA_ROOT_FOLDER_NAME] = payload.root_folder_name
+        # Drop the key entirely when the blob is empty so the row
+        # round-trips back to None instead of an empty dict.
+        connection.metadata_json = metadata or None
     await session.flush()
     await record_event(
         session,
@@ -263,6 +290,7 @@ async def update_connection(
         details={
             "provider": connection.provider,
             "ingest_mode": connection.ingest_mode,
+            "root_folder_changed": folder_id_changed,
         },
     )
     await session.refresh(connection)
@@ -343,9 +371,15 @@ async def trigger_sync(
         connection.status = IntegrationConnectionStatus.ERROR.value
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    root_folder_id = _root_folder_id(connection)
+    visible_files = [
+        f for f in files if nango_client.file_is_under_folder(f, root_folder_id)
+    ]
+    out_of_scope = len(files) - len(visible_files)
+
     created = 0
-    skipped = 0
-    for file in files:
+    skipped = out_of_scope
+    for file in visible_files:
         try:
             result = await integration_ingest.ingest_file(
                 session, connection=connection, file=file
@@ -378,6 +412,53 @@ async def trigger_sync(
         contracts_created=created,
         skipped=skipped,
         cursor=cursor,
+    )
+
+
+@router.post(
+    "/connections/{connection_id}/list-folders",
+    response_model=ListFoldersResponse,
+)
+async def list_connection_folders(
+    connection_id: uuid.UUID,
+    payload: ListFoldersRequest,
+    session: DbSession,
+    x_whereas_dev_user: Annotated[str | None, Header()] = None,
+) -> ListFoldersResponse:
+    """List the child folders of ``parent_id`` for the picker UI.
+
+    Drive / OneDrive / SharePoint only. The endpoint is admin-gated
+    and never returns file contents — only folder metadata the picker
+    needs (id, name, has_children). Pagination is intentionally not
+    surfaced: the picker is a navigation aid, not a filesystem
+    browser, and the first 100 children per level is enough in
+    practice. Listing more is a follow-up.
+    """
+    user = await _current_dev_user(session, x_whereas_dev_user)
+    _require_admin(user)
+    connection = await _load_connection(session, connection_id, user.organization_id)
+    parent_id = payload.parent_id or nango_client.ROOT_FOLDER_ID
+    try:
+        nodes = await nango_client.list_child_folders(
+            connection_id=connection.nango_connection_id,
+            provider=connection.provider,
+            parent_id=parent_id,
+        )
+    except NangoError as exc:
+        raise HTTPException(
+            status_code=exc.status_code or 502, detail=str(exc)
+        ) from exc
+    return ListFoldersResponse(
+        parent_id=parent_id,
+        folders=[
+            FolderEntry(
+                id=n.id,
+                name=n.name,
+                has_children=n.has_children,
+                parent_id=n.parent_id,
+            )
+            for n in nodes
+        ],
     )
 
 
@@ -451,8 +532,13 @@ async def nango_webhook(
         )
         return {"status": "error"}
 
+    root_folder_id = _root_folder_id(connection)
+    visible_files = [
+        f for f in files if nango_client.file_is_under_folder(f, root_folder_id)
+    ]
+
     created = 0
-    for file in files:
+    for file in visible_files:
         try:
             result = await integration_ingest.ingest_file(
                 session, connection=connection, file=file
@@ -492,6 +578,14 @@ async def _load_connection(
     if row is None:
         raise HTTPException(status_code=404, detail="Connection not found.")
     return row
+
+
+def _root_folder_id(connection: IntegrationConnection) -> str | None:
+    metadata = connection.metadata_json
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(METADATA_ROOT_FOLDER_ID)
+    return value if isinstance(value, str) and value else None
 
 
 def _validate_ingest_mode(value: str | None) -> str | None:
