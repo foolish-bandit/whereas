@@ -1,8 +1,96 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import IntegrationsPage from "../IntegrationsPage";
+import type {
+  IntegrationConnection,
+  IntegrationProvider,
+} from "../../types/integrations";
+
+const mocks = vi.hoisted(() => {
+  class FakeApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+      this.name = "ApiError";
+    }
+  }
+  return {
+    FakeApiError,
+    listIntegrationProviders: vi.fn(),
+    listIntegrationConnections: vi.fn(),
+    createIntegrationConnectSession: vi.fn(),
+    upsertIntegrationConnection: vi.fn(),
+    updateIntegrationConnection: vi.fn(),
+    deleteIntegrationConnection: vi.fn(),
+    triggerIntegrationSync: vi.fn(),
+    openNangoConnect: vi.fn(),
+  };
+});
+
+vi.mock("../../lib/api", () => ({
+  ApiError: mocks.FakeApiError,
+  listIntegrationProviders: mocks.listIntegrationProviders,
+  listIntegrationConnections: mocks.listIntegrationConnections,
+  createIntegrationConnectSession: mocks.createIntegrationConnectSession,
+  upsertIntegrationConnection: mocks.upsertIntegrationConnection,
+  updateIntegrationConnection: mocks.updateIntegrationConnection,
+  deleteIntegrationConnection: mocks.deleteIntegrationConnection,
+  triggerIntegrationSync: mocks.triggerIntegrationSync,
+}));
+
+vi.mock("../../lib/nangoConnect", () => ({
+  openNangoConnect: mocks.openNangoConnect,
+}));
+
+const PROVIDERS: IntegrationProvider[] = [
+  {
+    key: "google-drive",
+    label: "Google Drive",
+    description: "Import contracts from a connected Google Drive folder.",
+    available: true,
+  },
+  {
+    key: "microsoft-onedrive",
+    label: "Microsoft OneDrive",
+    description: "Import contracts from a connected OneDrive folder.",
+    available: true,
+  },
+  {
+    key: "gmail",
+    label: "Gmail",
+    description: "Ingest contracts attached to incoming Gmail messages.",
+    available: false,
+  },
+  {
+    key: "outlook",
+    label: "Microsoft Outlook",
+    description: "Ingest contracts attached to incoming Outlook messages.",
+    available: false,
+  },
+  {
+    key: "microsoft-sharepoint",
+    label: "Microsoft SharePoint",
+    description: "Import contracts from a connected SharePoint document library.",
+    available: false,
+  },
+];
+
+const CONNECTED_DRIVE: IntegrationConnection = {
+  id: "ic-1",
+  organization_id: "org-1",
+  provider: "google-drive",
+  status: "active",
+  ingest_mode: "inbox_review",
+  display_name: "Sales Drive",
+  last_synced_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+  last_sync_error: null,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  created_by: "user-1",
+};
 
 function renderPage() {
   render(
@@ -13,68 +101,189 @@ function renderPage() {
 }
 
 describe("IntegrationsPage", () => {
-  it("renders the page root", () => {
+  beforeEach(() => {
+    mocks.listIntegrationProviders.mockReset();
+    mocks.listIntegrationConnections.mockReset();
+    mocks.createIntegrationConnectSession.mockReset();
+    mocks.upsertIntegrationConnection.mockReset();
+    mocks.updateIntegrationConnection.mockReset();
+    mocks.deleteIntegrationConnection.mockReset();
+    mocks.triggerIntegrationSync.mockReset();
+    mocks.openNangoConnect.mockReset();
+    mocks.listIntegrationProviders.mockResolvedValue(PROVIDERS);
+    mocks.listIntegrationConnections.mockResolvedValue([]);
+  });
+
+  it("renders the page root and Active integrations section", async () => {
     renderPage();
     expect(screen.getByTestId("integrations-page")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("integrations-live-section")).toBeInTheDocument(),
+    );
   });
 
-  it("renders the integration availability explanation", () => {
+  it("renders DocuSeal as a configured, always-on live card", async () => {
     renderPage();
-    expect(screen.getByText(/\"Available\" means the current shipped integration flow is present in this MVP/i)).toBeInTheDocument();
-    expect(screen.getByText(/admin-controlled/i)).toBeInTheDocument();
-  });
-
-  it("renders all integration categories including local AI roadmap", () => {
-    renderPage();
-    const categories = screen.getByTestId("integrations-categories");
-    expect(within(categories).getByTestId("integration-category-e-signature")).toBeInTheDocument();
-    expect(within(categories).getByTestId("integration-category-document-editing")).toBeInTheDocument();
-    expect(within(categories).getByTestId("integration-category-communication")).toBeInTheDocument();
-    expect(within(categories).getByTestId("integration-category-crm-business-systems")).toBeInTheDocument();
-    expect(within(categories).getByTestId("integration-category-storage")).toBeInTheDocument();
-    expect(within(categories).getByTestId("integration-category-local-ai-providers")).toBeInTheDocument();
-  });
-
-  it("renders local model providers as planned and not connected", () => {
-    renderPage();
-    const card = screen.getByTestId("integration-card-local-model-providers");
-    expect(within(card).getByText(/Local AI providers/i)).toBeInTheDocument();
-    expect(within(card).getByText(/Future self-hosted\/local model configuration only/i)).toBeInTheDocument();
-    expect(within(card).getByTestId("integration-caveat-local-model-providers")).toHaveTextContent(/Planned \/ Not connected/i);
-  });
-
-  it("renders DocuSeal as available with an active settings CTA", () => {
-    renderPage();
-    const card = screen.getByTestId("integration-card-docuseal");
-    expect(within(card).getByTestId("integration-status-available")).toBeInTheDocument();
+    const card = await screen.findByTestId("integration-card-docuseal");
+    expect(within(card).getByTestId("integration-status-docuseal")).toHaveTextContent(
+      /Configured/i,
+    );
     const cta = within(card).getByTestId("integration-cta-docuseal");
-    expect(cta).not.toBeDisabled();
-    expect(cta).toHaveAttribute("href", "/demo/settings");
+    expect(cta).toHaveAttribute("target", "_blank");
   });
 
-  it("renders planned integrations with a disabled CTA", () => {
+  it("shows available providers with a Connect button and disabled providers with a configure-Nango hint", async () => {
     renderPage();
-    const plannedSlugs = ["microsoft-word", "google-docs", "outlook", "gmail", "slack", "microsoft-teams", "salesforce", "hubspot", "google-drive", "sharepoint-onedrive", "local-model-providers"];
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    expect(within(drive).getByTestId("integration-status-google-drive")).toHaveTextContent(
+      /Not connected/i,
+    );
+    expect(within(drive).getByTestId("integration-cta-google-drive")).toHaveTextContent(
+      /^Connect$/,
+    );
+    const gmail = await screen.findByTestId("integration-card-gmail");
+    expect(within(gmail).getByTestId("integration-status-gmail")).toHaveTextContent(
+      /Not configured/i,
+    );
+    expect(within(gmail).getByTestId("integration-cta-gmail")).toBeDisabled();
+    expect(within(gmail).getByTestId("integration-caveat-gmail")).toHaveTextContent(
+      /NANGO_ENABLED_PROVIDERS/,
+    );
+  });
+
+  it("connects a provider through the Nango Connect handshake and surfaces the connected state", async () => {
+    mocks.createIntegrationConnectSession.mockResolvedValue({
+      token: "session-token",
+      expires_at: null,
+    });
+    mocks.openNangoConnect.mockResolvedValue({
+      kind: "connected",
+      connectionId: "nango-conn-abc",
+    });
+    mocks.upsertIntegrationConnection.mockResolvedValue(CONNECTED_DRIVE);
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-cta-google-drive"));
+    await waitFor(() =>
+      expect(mocks.upsertIntegrationConnection).toHaveBeenCalledWith({
+        provider: "google-drive",
+        nango_connection_id: "nango-conn-abc",
+      }),
+    );
+    expect(
+      within(await screen.findByTestId("integration-card-google-drive")).getByTestId(
+        "integration-status-google-drive",
+      ),
+    ).toHaveTextContent(/Connected/i);
+    expect(screen.getByTestId("integrations-banner")).toHaveTextContent(/connected/i);
+  });
+
+  it("surfaces a cancelled Connect handshake as a non-error banner", async () => {
+    mocks.createIntegrationConnectSession.mockResolvedValue({
+      token: "session-token",
+      expires_at: null,
+    });
+    mocks.openNangoConnect.mockResolvedValue({ kind: "cancelled" });
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-cta-google-drive"));
+    await waitFor(() =>
+      expect(screen.getByTestId("integrations-banner")).toHaveTextContent(/Cancelled/i),
+    );
+    expect(mocks.upsertIntegrationConnection).not.toHaveBeenCalled();
+  });
+
+  it("triggers a sync and reports the result count", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    mocks.triggerIntegrationSync.mockResolvedValue({
+      connection_id: CONNECTED_DRIVE.id,
+      files_seen: 5,
+      contracts_created: 2,
+      skipped: 3,
+      cursor: null,
+    });
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-sync-google-drive"));
+    await waitFor(() =>
+      expect(mocks.triggerIntegrationSync).toHaveBeenCalledWith(CONNECTED_DRIVE.id),
+    );
+    expect(screen.getByTestId("integrations-banner")).toHaveTextContent(
+      /2 new, 3 skipped/,
+    );
+  });
+
+  it("does not disconnect when the user declines the confirm prompt", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-disconnect-google-drive"));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(mocks.deleteIntegrationConnection).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("disconnects when the user confirms", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    mocks.deleteIntegrationConnection.mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    const drive = await screen.findByTestId("integration-card-google-drive");
+    fireEvent.click(within(drive).getByTestId("integration-disconnect-google-drive"));
+    await waitFor(() =>
+      expect(mocks.deleteIntegrationConnection).toHaveBeenCalledWith(
+        CONNECTED_DRIVE.id,
+      ),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("updates ingest mode through the dropdown", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
+    mocks.updateIntegrationConnection.mockResolvedValue({
+      ...CONNECTED_DRIVE,
+      ingest_mode: "direct",
+    });
+    renderPage();
+    const select = await screen.findByTestId("integration-ingest-mode-google-drive");
+    fireEvent.change(select, { target: { value: "direct" } });
+    await waitFor(() =>
+      expect(mocks.updateIntegrationConnection).toHaveBeenCalledWith(
+        CONNECTED_DRIVE.id,
+        { ingest_mode: "direct" },
+      ),
+    );
+  });
+
+  it("renders the roadmap section with all planned non-Nango integrations", async () => {
+    renderPage();
+    await screen.findByTestId("integration-card-google-drive");
+    const roadmap = screen.getByTestId("integrations-roadmap-section");
+    const plannedSlugs = [
+      "microsoft-word",
+      "google-docs",
+      "slack",
+      "microsoft-teams",
+      "salesforce",
+      "hubspot",
+      "local-model-providers",
+    ];
     for (const slug of plannedSlugs) {
-      const card = screen.getByTestId(`integration-card-${slug}`);
-      expect(within(card).getByTestId("integration-status-planned")).toBeInTheDocument();
-      const cta = within(card).getByTestId(`integration-cta-${slug}`);
-      expect(cta).toBeDisabled();
+      expect(within(roadmap).getByTestId(`integration-card-${slug}`)).toBeInTheDocument();
+      expect(within(roadmap).getByTestId(`integration-status-${slug}`)).toHaveTextContent(
+        /Planned/i,
+      );
     }
   });
 
-  it("renders the roadmap caveat for every planned integration", () => {
+  it("does not leak Nango secrets into the rendered DOM", async () => {
+    mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
     renderPage();
-    const caveats = screen.getAllByText(/Roadmap item\. Planned \/ Not connected in this MVP\./i);
-    expect(caveats.length).toBe(11);
-  });
-
-  it("does not render fake OAuth or live connection toggles", () => {
-    renderPage();
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    await screen.findByTestId("integration-card-google-drive");
     const text = document.body.textContent ?? "";
-    expect(text).not.toMatch(/connect your account/i);
-    expect(text).not.toMatch(/authorize/i);
-    expect(text).not.toMatch(/oauth/i);
+    expect(text.toLowerCase()).not.toContain("session-token");
+    expect(text.toLowerCase()).not.toContain("nango_secret_key");
+    expect(text.toLowerCase()).not.toContain("nango_webhook_secret");
   });
 });

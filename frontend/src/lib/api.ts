@@ -100,6 +100,14 @@ import type {
   ApprovalPolicyPatchRequest,
   ListApprovalPolicyFilters,
 } from "../types/approvalPolicies";
+import type {
+  CompleteConnectionRequest,
+  ConnectSession,
+  IntegrationConnection,
+  IntegrationProvider,
+  ManualSyncResult,
+  UpdateConnectionRequest,
+} from "../types/integrations";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -2271,5 +2279,111 @@ export async function archiveApprovalPolicy(
 ): Promise<ApprovalPolicy> {
   if (isDemoMode()) return mockApi.archiveApprovalPolicy(policyId, options);
   const data = await call<ApprovalPolicy>(`/api/approval-policies/${encodeURIComponent(policyId)}`, { method: "DELETE" }, options);
+  return scrubSecrets(data);
+}
+
+// ---------------------------------------------------------------------------
+// Integrations (Nango bridge)
+// ---------------------------------------------------------------------------
+
+export async function listIntegrationProviders(
+  options: ApiOptions = {},
+): Promise<IntegrationProvider[]> {
+  if (isDemoMode()) return mockApi.listIntegrationProviders(options);
+  const data = await call<IntegrationProvider[]>(
+    "/api/integrations/providers",
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function listIntegrationConnections(
+  options: ApiOptions = {},
+): Promise<IntegrationConnection[]> {
+  if (isDemoMode()) return mockApi.listIntegrationConnections(options);
+  const data = await call<IntegrationConnection[]>(
+    "/api/integrations/connections",
+    { method: "GET" },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function createIntegrationConnectSession(
+  payload: { provider: string },
+  options: ApiOptions = {},
+): Promise<ConnectSession> {
+  if (isDemoMode()) return mockApi.createIntegrationConnectSession(payload, options);
+  const data = await call<ConnectSession>(
+    "/api/integrations/connect-sessions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function upsertIntegrationConnection(
+  payload: CompleteConnectionRequest,
+  options: ApiOptions = {},
+): Promise<IntegrationConnection> {
+  if (isDemoMode()) return mockApi.upsertIntegrationConnection(payload, options);
+  const data = await call<IntegrationConnection>(
+    "/api/integrations/connections",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function updateIntegrationConnection(
+  connectionId: string,
+  payload: UpdateConnectionRequest,
+  options: ApiOptions = {},
+): Promise<IntegrationConnection> {
+  if (isDemoMode())
+    return mockApi.updateIntegrationConnection(connectionId, payload, options);
+  const data = await call<IntegrationConnection>(
+    `/api/integrations/connections/${encodeURIComponent(connectionId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+export async function deleteIntegrationConnection(
+  connectionId: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  if (isDemoMode()) return mockApi.deleteIntegrationConnection(connectionId, options);
+  await call<void>(
+    `/api/integrations/connections/${encodeURIComponent(connectionId)}`,
+    { method: "DELETE" },
+    options,
+  );
+}
+
+export async function triggerIntegrationSync(
+  connectionId: string,
+  options: ApiOptions = {},
+): Promise<ManualSyncResult> {
+  if (isDemoMode()) return mockApi.triggerIntegrationSync(connectionId, options);
+  const data = await call<ManualSyncResult>(
+    `/api/integrations/connections/${encodeURIComponent(connectionId)}/sync`,
+    { method: "POST" },
+    options,
+  );
   return scrubSecrets(data);
 }

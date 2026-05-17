@@ -122,6 +122,14 @@ import type {
   ListApprovalWorkflowTemplateFilters,
 } from "../types/approvalWorkflowTemplates";
 import type { ApprovalPolicy, ApprovalPolicyCreateRequest, ApprovalPolicyPatchRequest, ListApprovalPolicyFilters } from "../types/approvalPolicies";
+import type {
+  CompleteConnectionRequest,
+  ConnectSession,
+  IntegrationConnection,
+  IntegrationProvider,
+  ManualSyncResult,
+  UpdateConnectionRequest,
+} from "../types/integrations";
 import {
   MOCK_DEMO_ORG_ID,
   MOCK_INBOX_ITEMS,
@@ -4915,3 +4923,170 @@ export async function archiveApprovalPolicy(id: string, options: ApiOptions = {}
 // MOCK_DEMO_ORG_ID, _buildDemoApprovalRuns) are already initialized.
 sessionApprovalRuns.push(..._buildDemoApprovalRuns());
 sessionApprovalTemplates.push(...buildSeedApprovalWorkflowTemplates());
+
+// ---------------------------------------------------------------------------
+// Integrations (Nango bridge) — demo-mode mocks
+// ---------------------------------------------------------------------------
+
+const MOCK_INTEGRATION_PROVIDERS: IntegrationProvider[] = [
+  {
+    key: "google-drive",
+    label: "Google Drive",
+    description: "Import contracts from a connected Google Drive folder.",
+    available: true,
+  },
+  {
+    key: "microsoft-onedrive",
+    label: "Microsoft OneDrive",
+    description: "Import contracts from a connected OneDrive folder.",
+    available: true,
+  },
+  {
+    key: "microsoft-sharepoint",
+    label: "Microsoft SharePoint",
+    description: "Import contracts from a connected SharePoint document library.",
+    available: false,
+  },
+  {
+    key: "gmail",
+    label: "Gmail",
+    description: "Ingest contracts attached to incoming Gmail messages.",
+    available: false,
+  },
+  {
+    key: "outlook",
+    label: "Microsoft Outlook",
+    description: "Ingest contracts attached to incoming Outlook messages.",
+    available: false,
+  },
+];
+
+const sessionIntegrationConnections: IntegrationConnection[] = [
+  {
+    id: "ic-demo-drive",
+    organization_id: MOCK_DEMO_ORG_ID,
+    provider: "google-drive",
+    status: "active",
+    ingest_mode: "inbox_review",
+    display_name: "Sales Drive",
+    last_synced_at: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+    last_sync_error: null,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
+    updated_at: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+    created_by: null,
+  },
+];
+
+export async function listIntegrationProviders(
+  options: ApiOptions = {},
+): Promise<IntegrationProvider[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return MOCK_INTEGRATION_PROVIDERS.map((p) => ({ ...p }));
+}
+
+export async function listIntegrationConnections(
+  options: ApiOptions = {},
+): Promise<IntegrationConnection[]> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  return sessionIntegrationConnections.map((c) => ({ ...c }));
+}
+
+export async function createIntegrationConnectSession(
+  payload: { provider: string },
+  options: ApiOptions = {},
+): Promise<ConnectSession> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const provider = MOCK_INTEGRATION_PROVIDERS.find((p) => p.key === payload.provider);
+  if (!provider) throw new ApiError(400, "Unknown provider.");
+  if (!provider.available) {
+    throw new ApiError(503, "This integration is not enabled on the Nango deployment.");
+  }
+  return {
+    token: `mock-session-${nextId("tok")}`,
+    expires_at: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
+  };
+}
+
+export async function upsertIntegrationConnection(
+  payload: CompleteConnectionRequest,
+  options: ApiOptions = {},
+): Promise<IntegrationConnection> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const provider = MOCK_INTEGRATION_PROVIDERS.find((p) => p.key === payload.provider);
+  if (!provider) throw new ApiError(400, "Unknown provider.");
+  const existingIndex = sessionIntegrationConnections.findIndex(
+    (c) => c.provider === payload.provider,
+  );
+  const now = isoNow();
+  if (existingIndex >= 0) {
+    const existing = sessionIntegrationConnections[existingIndex];
+    const updated: IntegrationConnection = {
+      ...existing,
+      status: "active",
+      display_name: payload.display_name ?? existing.display_name,
+      ingest_mode: payload.ingest_mode ?? existing.ingest_mode,
+      last_sync_error: null,
+      updated_at: now,
+    };
+    sessionIntegrationConnections[existingIndex] = updated;
+    return { ...updated };
+  }
+  const row: IntegrationConnection = {
+    id: nextId("ic"),
+    organization_id: MOCK_DEMO_ORG_ID,
+    provider: payload.provider,
+    status: "active",
+    ingest_mode: payload.ingest_mode ?? "inbox_review",
+    display_name: payload.display_name ?? null,
+    last_synced_at: null,
+    last_sync_error: null,
+    created_at: now,
+    updated_at: now,
+    created_by: null,
+  };
+  sessionIntegrationConnections.push(row);
+  return { ...row };
+}
+
+export async function updateIntegrationConnection(
+  connectionId: string,
+  payload: UpdateConnectionRequest,
+  options: ApiOptions = {},
+): Promise<IntegrationConnection> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = sessionIntegrationConnections.find((c) => c.id === connectionId);
+  if (!row) throw new ApiError(404, "Connection not found.");
+  if (payload.display_name !== undefined) row.display_name = payload.display_name;
+  if (payload.ingest_mode !== undefined) row.ingest_mode = payload.ingest_mode;
+  row.updated_at = isoNow();
+  return { ...row };
+}
+
+export async function deleteIntegrationConnection(
+  connectionId: string,
+  options: ApiOptions = {},
+): Promise<void> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const idx = sessionIntegrationConnections.findIndex((c) => c.id === connectionId);
+  if (idx < 0) throw new ApiError(404, "Connection not found.");
+  sessionIntegrationConnections.splice(idx, 1);
+}
+
+export async function triggerIntegrationSync(
+  connectionId: string,
+  options: ApiOptions = {},
+): Promise<ManualSyncResult> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  const row = sessionIntegrationConnections.find((c) => c.id === connectionId);
+  if (!row) throw new ApiError(404, "Connection not found.");
+  row.last_synced_at = isoNow();
+  row.last_sync_error = null;
+  row.status = "active";
+  return {
+    connection_id: row.id,
+    files_seen: 3,
+    contracts_created: 1,
+    skipped: 2,
+    cursor: null,
+  };
+}
