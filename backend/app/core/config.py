@@ -68,6 +68,25 @@ class Settings(BaseSettings):
     # Below this, extraction results are not surfaced at all.
     EXTRACTION_DROP_THRESHOLD: float = 0.40
 
+    # --- Nango (third-party integrations bridge) ---
+    # Self-hosted Nango runs as a peer service in docker-compose. The
+    # secret key is the value Nango was started with; the webhook
+    # secret is what Nango signs outbound webhooks with. Both unset
+    # means "no integrations configured"; the API routes surface a
+    # clean 503 in that case and the webhook receiver fails closed in
+    # any non-development environment.
+    NANGO_BASE_URL: str = "http://nango-server:3003"
+    NANGO_PUBLIC_URL: str | None = None
+    NANGO_SECRET_KEY: str | None = None
+    NANGO_WEBHOOK_SECRET: str | None = None
+    # Comma-separated list of provider keys the Nango deployment has
+    # been configured with (i.e. OAuth app credentials supplied). The
+    # ``/integrations/providers`` endpoint marks anything not in this
+    # list as ``available=false`` so the UI hides the Connect button.
+    NANGO_ENABLED_PROVIDERS: str = (
+        "google-drive,microsoft-onedrive,microsoft-sharepoint,gmail,outlook"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

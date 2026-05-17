@@ -210,6 +210,16 @@ class AuditEventType(StrEnum):
     KEY_ROTATION_INITIATED = "key.rotation.initiated"
     KEY_ROTATION_COMPLETED = "key.rotation.completed"
 
+    # Nango integration events. Connection events identify the
+    # provider + connection id; file-imported events identify the
+    # provider + connection + new contract + file hash, but never
+    # echo tokens, raw provider metadata, or document bytes.
+    INTEGRATION_CONNECTION_CREATED = "integration.connection.created"
+    INTEGRATION_CONNECTION_UPDATED = "integration.connection.updated"
+    INTEGRATION_CONNECTION_DELETED = "integration.connection.deleted"
+    INTEGRATION_FILE_IMPORTED = "integration.file.imported"
+    INTEGRATION_SYNC_TRIGGERED = "integration.sync.triggered"
+
 
 # --------------------------------------------------------------------------
 # ORM model

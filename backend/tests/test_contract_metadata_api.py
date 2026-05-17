@@ -26,6 +26,7 @@ import subprocess
 import uuid
 import zipfile
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -724,7 +725,10 @@ async def test_patch_only_writes_to_latest_original_upload_artifact(
 
     # Insert an older original_upload artifact so we can verify the
     # patch targets the newest one (which the upload route already
-    # created).
+    # created). Force ``created_at`` strictly before the upload artifact's
+    # — SQLite's ``CURRENT_TIMESTAMP`` only has second precision, so
+    # without this the two rows tie on ``created_at`` and the query's
+    # ``id DESC`` tiebreaker becomes a UUID coin flip.
     older = ContractArtifact(
         organization_id=org.id,
         contract_id=contract_uuid,
@@ -739,6 +743,7 @@ async def test_patch_only_writes_to_latest_original_upload_artifact(
         is_official=True,
         created_by=user.id,
         metadata_json={"counterparty_name": "old value"},
+        created_at=datetime.now(UTC) - timedelta(days=1),
     )
     db_session.add(older)
     await db_session.commit()

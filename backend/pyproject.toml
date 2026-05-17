@@ -82,3 +82,12 @@ testpaths = ["tests"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# The project is named ``whereas`` but the code lives in ``app/``
+# (matches the FastAPI convention used across the codebase). Without
+# this, hatchling >= 1.21 refuses to build because its default file
+# selection heuristic looks for a top-level directory matching the
+# project name and finds none. Telling it explicitly which package
+# to ship keeps ``pip install -e ".[dev]"`` working in CI.
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

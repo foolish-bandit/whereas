@@ -1472,3 +1472,165 @@ class ApprovalWorkflowTemplateStep(Base):
             "step_order",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Third-party integrations (Nango bridge)
+#
+# Whereas talks to Google Drive / Microsoft OneDrive / Gmail / Outlook
+# through a self-hosted Nango deployment that runs alongside as a peer
+# service. Each ``IntegrationConnection`` row binds an organization to
+# exactly one Nango connection_id for a given provider so the
+# webhook receiver and the manual-sync endpoint can find it. Tokens
+# live in Nango, never in our DB.
+#
+# ``ingest_mode`` lets the admin who set up the connection pick whether
+# imported files land in the inbox for human triage or skip straight to
+# the standard processing pipeline.
+# ---------------------------------------------------------------------------
+
+
+class IntegrationProvider(StrEnum):
+    GOOGLE_DRIVE = "google-drive"
+    MICROSOFT_ONEDRIVE = "microsoft-onedrive"
+    MICROSOFT_SHAREPOINT = "microsoft-sharepoint"
+    GMAIL = "gmail"
+    OUTLOOK = "outlook"
+
+
+class IntegrationConnectionStatus(StrEnum):
+    ACTIVE = "active"
+    ERROR = "error"
+    DISCONNECTED = "disconnected"
+
+
+class IntegrationIngestMode(StrEnum):
+    INBOX_REVIEW = "inbox_review"
+    DIRECT = "direct"
+
+
+class IntegrationConnection(Base):
+    """A bound Nango connection for an organization.
+
+    Uniqueness is per ``(organization_id, provider)``: re-connecting
+    Google Drive after a disconnect updates the existing row rather than
+    accumulating zombie connections. ``nango_connection_id`` is opaque
+    to us; we just hand it back to Nango on subsequent calls.
+    """
+
+    __tablename__ = "integration_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    nango_connection_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=IntegrationConnectionStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+    ingest_mode: Mapped[str] = mapped_column(
+        String(16),
+        default=IntegrationIngestMode.INBOX_REVIEW.value,
+        nullable=False,
+    )
+    # Operator-friendly label so a multi-account org can tell two
+    # Drive connections apart in the UI. Free-form; never trusted.
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_sync_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "provider",
+            name="uq_integration_connections_org_provider",
+        ),
+    )
+
+
+class IntegrationImportedFile(Base):
+    """An idempotency record for files ingested via an integration.
+
+    Keyed by ``(connection_id, provider_file_id)`` so the webhook
+    receiver and the manual-sync loop can both safely re-process the
+    same file without creating duplicate ``Contract`` rows. The
+    ``contract_id`` is set once on the first successful ingest; later
+    deliveries find the row, see it is already linked, and short-circuit.
+    """
+
+    __tablename__ = "integration_imported_files"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("integration_connections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The provider's stable id for the file (Google Drive file id,
+    # OneDrive driveItem id, mail message id, etc.). Treated as opaque.
+    provider_file_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    provider_file_revision: Mapped[str | None] = mapped_column(String(128))
+    contract_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contracts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    filename: Mapped[str | None] = mapped_column(String(512))
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    imported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "provider_file_id",
+            name="uq_integration_imported_files_connection_file",
+        ),
+        Index(
+            "ix_integration_imported_files_org_provider",
+            "organization_id",
+            "provider",
+        ),
+    )

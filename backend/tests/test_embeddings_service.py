@@ -38,9 +38,8 @@ def test_placeholder_provider_modes_are_disabled_behavior() -> None:
 def test_no_external_command_called_in_disabled_provider() -> None:
     provider = DisabledEmbeddingProvider()
 
-    with patch("subprocess.run") as run_mock:
-        with pytest.raises(EmbeddingsDisabledError):
-            provider.embed_texts([_sample_input()])
+    with patch("subprocess.run") as run_mock, pytest.raises(EmbeddingsDisabledError):
+        provider.embed_texts([_sample_input()])
 
     run_mock.assert_not_called()
 
