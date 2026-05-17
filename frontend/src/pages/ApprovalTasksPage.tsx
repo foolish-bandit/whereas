@@ -98,7 +98,7 @@ export default function ApprovalTasksPage() {
     <div className="space-y-5" data-testid="approval-tasks-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Approval tasks</h1>
+          <h2 className="text-base font-semibold text-ink">Approval tasks</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
             Open approval steps assigned to you and your team. Open the related
             Request or Repository record for context, then act on the matching

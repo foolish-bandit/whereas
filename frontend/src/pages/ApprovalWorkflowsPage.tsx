@@ -271,7 +271,7 @@ export default function ApprovalWorkflowsPage() {
     <div className="space-y-5" data-testid="approvals-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Approvals</h1>
+          <h2 className="text-base font-semibold text-ink">Workflows in flight</h2>
           <p className="mt-1 text-sm text-ink-muted">
             Sequential approval workflows for requests and contracts. Each
             pending step lands in the assigned reviewer's Inbox as an

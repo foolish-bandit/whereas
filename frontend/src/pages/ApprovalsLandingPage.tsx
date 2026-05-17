@@ -115,16 +115,7 @@ export default function ApprovalsLandingPage() {
   }, []);
 
   return (
-    <div className="space-y-6" data-testid="approvals-landing">
-      <div>
-        <h1 className="text-lg font-semibold text-ink">Approvals</h1>
-        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-          Manage approval work in one place: what is waiting on you, what is in
-          flight, and which templates and policies are active. Approval routing
-          supports process control, not legal advice.
-        </p>
-      </div>
-
+    <div data-testid="approvals-landing">
       <div className="grid gap-3 sm:grid-cols-2">
         {CARDS.map((card) => {
           const Icon = card.Icon;
