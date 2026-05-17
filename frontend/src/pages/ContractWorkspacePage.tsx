@@ -18,6 +18,7 @@ import MetadataPanel from "../components/MetadataPanel";
 import ReviewPanel from "../components/ReviewPanel";
 import ReviewTab from "../components/ReviewTab";
 import RightPanelTabs from "../components/RightPanelTabs";
+import WorkspaceModeTabs from "../components/WorkspaceModeTabs";
 import StatusBadge from "../components/StatusBadge";
 import UploadReviewPanel from "../components/UploadReviewPanel";
 import VersionDiffPane from "../components/VersionDiffPane";
@@ -140,6 +141,41 @@ type SidebarTab =
   | "lifecycle"
   | "signers"
   | "history";
+
+/**
+ * Two-tier workspace IA: the rail's six sub-tabs are grouped under
+ * three modes that match the user's intent at a given moment.
+ *  - ``read``     — what the contract IS today (metadata, clauses).
+ *  - ``negotiate`` — what's happening to it (review findings, lifecycle
+ *    progress, signers).
+ *  - ``history``   — what happened to it (versions, artifacts, redlines).
+ *
+ * The mode is derived from the active sub-tab, so any caller that
+ * already does ``setActiveTab("lifecycle")`` automatically switches the
+ * user into Negotiate mode without extra coordination.
+ */
+type WorkspaceMode = "read" | "negotiate" | "history";
+
+const MODE_SUB_TABS: Record<WorkspaceMode, readonly SidebarTab[]> = {
+  read: ["metadata", "clauses"],
+  negotiate: ["review", "lifecycle", "signers"],
+  history: ["history"],
+};
+
+const TAB_TO_MODE: Record<SidebarTab, WorkspaceMode> = {
+  metadata: "read",
+  clauses: "read",
+  review: "negotiate",
+  lifecycle: "negotiate",
+  signers: "negotiate",
+  history: "history",
+};
+
+const MODE_TAB_LABELS: Record<WorkspaceMode, string> = {
+  read: "Read",
+  negotiate: "Negotiate",
+  history: "History",
+};
 
 type ArtifactsState =
   | { kind: "loading" }
@@ -896,9 +932,34 @@ function Sidebar({
       count: demoVersions.length > 0 ? demoVersions.length : undefined,
     },
   ];
+  const activeMode = TAB_TO_MODE[activeTab];
+  const visibleSubTabIds = MODE_SUB_TABS[activeMode];
+  const visibleSubTabs = tabs.filter((t) =>
+    visibleSubTabIds.includes(t.id),
+  );
+  const modeTabs = (
+    Object.entries(MODE_TAB_LABELS) as [WorkspaceMode, string][]
+  ).map(([id, label]) => ({ id, label }));
+  // Switching modes lands on the mode's first sub-tab, e.g. clicking
+  // "Negotiate" opens Review (the most likely entry point for that
+  // mode). When the active tab already belongs to the target mode
+  // (e.g. user clicked the mode tab from inside it), nothing changes.
+  function handleModeChange(mode: WorkspaceMode) {
+    if (TAB_TO_MODE[activeTab] === mode) return;
+    onTabChange(MODE_SUB_TABS[mode][0]);
+  }
   return (
     <aside>
-      <RightPanelTabs tabs={tabs} active={activeTab} onChange={onTabChange} />
+      <WorkspaceModeTabs
+        tabs={modeTabs}
+        active={activeMode}
+        onChange={handleModeChange}
+      />
+      <RightPanelTabs
+        tabs={visibleSubTabs}
+        active={activeTab}
+        onChange={onTabChange}
+      />
       <div
         role="tabpanel"
         aria-labelledby="tab-metadata"
