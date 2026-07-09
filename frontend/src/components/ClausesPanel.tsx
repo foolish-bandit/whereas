@@ -7,6 +7,7 @@ import {
   clauseTypeLabel,
 } from "../lib/clauses";
 import type { Clause } from "../types/contracts";
+import ConfidenceBadge from "./ConfidenceBadge";
 import SimilarClausesPanel, {
   type SimilarClauseMatch,
 } from "./SimilarClausesPanel";
@@ -154,11 +155,19 @@ export default function ClausesPanel({
                     <span className="font-mono text-[11px] text-ink-subtle">
                       #{clause.ordinal + 1}
                     </span>
-                    {clause.clause_type && (
-                      <span className="rounded-full border border-rule bg-canvas-subtle px-2 py-0.5 text-[10px] uppercase tracking-wide text-ink-muted">
-                        {clauseTypeLabel(clause.clause_type)}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {typeof clause.confidence === "number" && (
+                        <ConfidenceBadge
+                          confidence={clause.confidence}
+                          data-testid={`clause-confidence-${clause.id}`}
+                        />
+                      )}
+                      {clause.clause_type && (
+                        <span className="rounded-full border border-rule bg-canvas-subtle px-2 py-0.5 text-[10px] uppercase tracking-wide text-ink-muted">
+                          {clauseTypeLabel(clause.clause_type)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {clause.heading && (
                     <div className="text-sm font-medium text-ink">

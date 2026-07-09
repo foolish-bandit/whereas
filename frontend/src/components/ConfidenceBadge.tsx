@@ -1,6 +1,8 @@
+import type { HTMLAttributes } from "react";
+
 import { confidenceTier } from "../lib/format";
 
-interface ConfidenceBadgeProps {
+interface ConfidenceBadgeProps extends HTMLAttributes<HTMLSpanElement> {
   confidence: number;
 }
 
@@ -19,7 +21,11 @@ const TIER_STYLES = {
   },
 } as const;
 
-export default function ConfidenceBadge({ confidence }: ConfidenceBadgeProps) {
+export default function ConfidenceBadge({
+  confidence,
+  className,
+  ...rest
+}: ConfidenceBadgeProps) {
   const tier = confidenceTier(confidence);
   const style = TIER_STYLES[tier];
   const numeric = Number.isFinite(confidence)
@@ -27,10 +33,14 @@ export default function ConfidenceBadge({ confidence }: ConfidenceBadgeProps) {
     : "—";
   return (
     <span
+      {...rest}
       className={[
         "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium",
         style.classes,
-      ].join(" ")}
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       title={`Model confidence ${numeric}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />

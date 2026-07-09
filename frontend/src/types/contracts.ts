@@ -42,6 +42,9 @@ export interface ContractListItem {
    * at-a-glance view. These are sourced from the extraction pipeline
    * and the user model; any of them can be null when extraction
    * hasn't run yet or the field wasn't found.
+   *
+   * Demo-only: not yet present on the real API
+   * (backend/app/schemas/contracts.py ContractListItemResponse).
    */
   counterparty?: string | null;
   effective_date?: string | null;

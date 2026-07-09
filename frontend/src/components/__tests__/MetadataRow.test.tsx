@@ -30,14 +30,17 @@ describe("MetadataRow", () => {
     );
     expect(screen.getByText("New York")).toBeInTheDocument();
     expect(screen.getByTestId(/metadata-row-confidence-/)).toHaveTextContent(
-      /96% confidence/,
+      /high/i,
+    );
+    expect(screen.getByTestId(/metadata-row-confidence-/)).toHaveTextContent(
+      /96%/,
     );
     expect(
       screen.getByTestId(/metadata-row-jump-/),
     ).toHaveTextContent(/jump to source/i);
   });
 
-  it("uses a warning-toned pill for 70–89% confidence", () => {
+  it("uses a warning-toned medium badge for 50–79% confidence", () => {
     render(
       <MetadataRow
         field={field({ confidence: 0.74 })}
@@ -45,12 +48,12 @@ describe("MetadataRow", () => {
         onJumpToSource={vi.fn()}
       />,
     );
-    expect(screen.getByTestId(/metadata-row-confidence-/).className).toContain(
-      "warning",
-    );
+    const badge = screen.getByTestId(/metadata-row-confidence-/);
+    expect(badge.className).toContain("warning");
+    expect(badge).toHaveTextContent(/medium/i);
   });
 
-  it("uses a danger-toned pill for <70% confidence", () => {
+  it("uses a danger-toned low badge for <50% confidence", () => {
     render(
       <MetadataRow
         field={field({ confidence: 0.42 })}
@@ -58,9 +61,9 @@ describe("MetadataRow", () => {
         onJumpToSource={vi.fn()}
       />,
     );
-    expect(screen.getByTestId(/metadata-row-confidence-/).className).toContain(
-      "danger",
-    );
+    const badge = screen.getByTestId(/metadata-row-confidence-/);
+    expect(badge.className).toContain("danger");
+    expect(badge).toHaveTextContent(/low/i);
   });
 
   it("hides the confidence pill and shows 'Manually set' when an override exists", () => {
