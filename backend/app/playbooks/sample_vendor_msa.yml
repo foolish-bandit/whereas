@@ -1,73 +1,102 @@
 # Sample playbook for inbound vendor MSAs.
 # Copy this into the UI or POST to /api/playbooks to create a new one.
-# Customize ruthlessly. Whereas does not ship with opinionated defaults beyond this example.
-
+# Customize ruthlessly. Whereas does not ship with opinionated defaults beyond
+# this example. This is NOT a legal opinion; it does not replace human legal
+# review. Replace these positions with your firm's actual review standards
+# before using.
+#
+# Schema reference: backend/app/services/playbook_loader.py (v1)
 name: "Vendor MSA - Standard Positions"
 description: |
   Default positions for inbound vendor master service agreements. Tuned for a
   mid-market software buyer. Rules surface deviations; they do not auto-redline.
+version: "1.0"
+contract_type: "vendor_msa"
 
 rules:
-  # ----- Metadata-level rules (evaluated against extracted fields) -----
-
   - id: indemnification-cap-bounded
-    kind: metadata
-    field: indemnification_cap
-    constraint: "Indemnification cap must be bounded (uncapped indemnification is a blocker). Acceptable forms: a multiple of fees, a hard dollar cap, or a per-claim cap."
-    severity: blocker
+    title: "Indemnification cap must be bounded"
+    clause_type: "Indemnification"
+    severity: "blocker"
+    rule_type: "text_contains"
+    required_terms:
+      - "cap"
+    description: "Indemnification cap must be bounded (uncapped indemnification is a blocker). Acceptable forms: a multiple of fees, a hard dollar cap, or a per-claim cap."
+    guidance: "Flag any indemnification clause that does not reference a cap, dollar limit, or multiple of fees."
 
   - id: governing-law-acceptable-jurisdictions
-    kind: metadata
-    field: governing_law
-    constraint: "Governing law must be one of: Delaware, California, New York. Other US states are negotiable. Non-US jurisdictions require a senior approver."
-    severity: medium
+    title: "Governing law should be Delaware"
+    clause_type: "governing_law"
+    severity: "medium"
+    rule_type: "preferred_value"
+    expected_value: "Delaware"
+    description: "Governing law should be one of: Delaware, California, New York. Other US states are negotiable. Non-US jurisdictions require a senior approver."
+    guidance: "Flag non-Delaware/California/New York governing law for attorney review."
+    preferred_language: "This Agreement shall be governed by the laws of the State of Delaware."
 
   - id: auto-renewal-notice-window
-    kind: metadata
-    field: auto_renewal
-    constraint: "If the contract auto-renews, notice period to opt out must be 60 days or less. Anything longer is a high-severity deviation."
-    severity: high
+    title: "Auto-renewal notice window should be 60 days or less"
+    clause_type: "auto_renewal"
+    severity: "high"
+    rule_type: "text_contains"
+    required_terms:
+      - "60 days"
+    description: "If the contract auto-renews, the notice period to opt out must be 60 days or less. Anything longer is a high-severity deviation."
+    guidance: "Flag auto-renewal clauses with a notice window longer than 60 days or no stated window."
 
   - id: termination-for-convenience-required
-    kind: metadata
-    field: termination_for_convenience
-    constraint: "Buyer must have termination for convenience with no more than 90 days notice."
-    severity: high
-
-  # ----- Clause-level rules (evaluated against full clause text via LLM) -----
+    title: "Termination for convenience should be present"
+    clause_type: "termination_for_convenience"
+    severity: "high"
+    rule_type: "required_clause"
+    description: "Buyer should have termination for convenience with no more than 90 days notice."
+    guidance: "Look for a clause allowing buyer to terminate without cause on reasonable notice."
 
   - id: limitation-of-liability-mutual-and-excludes-consequential
-    kind: clause
-    clause_type: Limitation_Of_Liability
-    guideline: |
-      The limitation of liability clause must:
-        (a) be mutual (apply to both parties),
-        (b) exclude consequential, indirect, special, and punitive damages,
-        (c) preserve carveouts for indemnification, confidentiality breaches,
-            and gross negligence/willful misconduct.
-      Flag any clause that lacks any of these three elements.
-    severity: high
+    title: "Limitation of liability should be mutual and exclude consequential damages"
+    clause_type: "Limitation_Of_Liability"
+    severity: "high"
+    rule_type: "text_contains"
+    required_terms:
+      - "consequential"
+      - "indirect"
+    description: "The limitation of liability clause should be mutual (apply to both parties), exclude consequential/indirect/special/punitive damages, and preserve carveouts for indemnification, confidentiality breaches, and gross negligence/willful misconduct."
+    guidance: "Flag any clause that lacks a consequential/indirect damages exclusion or is one-sided."
 
   - id: ip-ownership-customer-data
-    kind: clause
-    clause_type: Ip_Ownership_Assignment
-    guideline: "Customer data and any deliverables paid for by the customer must remain customer property. Vendor may have a license to use anonymized/aggregated data only with explicit consent."
-    severity: high
+    title: "Customer data and paid deliverables should remain customer property"
+    clause_type: "Ip_Ownership_Assignment"
+    severity: "high"
+    rule_type: "required_clause"
+    description: "Customer data and any deliverables paid for by the customer should remain customer property. Vendor may have a license to use anonymized/aggregated data only with explicit consent."
+    guidance: "Look for an IP ownership clause assigning customer data and paid deliverables to the customer."
 
   - id: confidentiality-survives-termination
-    kind: clause
-    clause_type: Non-Disclosure
-    guideline: "Confidentiality obligations must survive termination for at least 3 years. Trade secrets must be protected indefinitely."
-    severity: medium
+    title: "Confidentiality should survive termination for at least 3 years"
+    clause_type: "Non-Disclosure"
+    severity: "medium"
+    rule_type: "text_contains"
+    required_terms:
+      - "survive"
+    description: "Confidentiality obligations should survive termination for at least 3 years. Trade secrets must be protected indefinitely."
+    guidance: "Flag confidentiality clauses that lack a survival provision or set too short a window."
 
   - id: assignment-requires-consent
-    kind: clause
-    clause_type: Anti-Assignment
-    guideline: "Assignment by vendor must require buyer consent, except in the case of merger or sale of all/substantially all assets."
-    severity: medium
+    title: "Assignment should require consent"
+    clause_type: "Anti-Assignment"
+    severity: "medium"
+    rule_type: "text_contains"
+    required_terms:
+      - "consent"
+    description: "Assignment by vendor should generally require buyer consent, except in the case of merger or sale of all/substantially all assets."
+    guidance: "Flag assignment clauses that allow transfer without consent."
 
   - id: warranty-services-professional-manner
-    kind: clause
-    clause_type: Warranty_Duration
-    guideline: "Vendor must warrant that services will be performed in a professional and workmanlike manner consistent with industry standards. Pure 'as-is' service warranties are unacceptable."
-    severity: high
+    title: "Services warranty should require a professional standard"
+    clause_type: "Warranty_Duration"
+    severity: "high"
+    rule_type: "text_contains"
+    required_terms:
+      - "professional"
+    description: "Vendor should warrant that services will be performed in a professional and workmanlike manner consistent with industry standards. Pure 'as-is' service warranties are unacceptable."
+    guidance: "Flag warranty clauses that disclaim a professional-services standard or are purely 'as-is'."

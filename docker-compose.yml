@@ -22,6 +22,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   minio:
     image: minio/minio:latest
@@ -40,6 +41,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
 
   ollama:
     image: ollama/ollama:latest
@@ -48,6 +50,13 @@ services:
       - ollama_data:/root/.ollama
     ports:
       - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     # GPU passthrough (uncomment if available):
     # deploy:
     #   resources:
@@ -71,10 +80,16 @@ services:
       LITELLM_PROVIDER: ${LITELLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
-      EXTRACTION_MODEL: ${EXTRACTION_MODEL:-llama3.1:70b}
+      # Default is a <=2B-parameter model so the default deployment runs on
+      # a single machine without a GPU (see docs/AI_SMALL_MODEL_STACK.md,
+      # "Hard model-size rule"). Larger models (e.g. llama3.1:70b) are
+      # opt-in for operators with capable hardware — set EXTRACTION_MODEL
+      # to override.
+      EXTRACTION_MODEL: ${EXTRACTION_MODEL:-qwen2.5:1.5b}
       DOCUSEAL_BASE_URL: http://docuseal:3000
       DOCUSEAL_AUTH_BRIDGE_SECRET: ${DOCUSEAL_AUTH_BRIDGE_SECRET:?DOCUSEAL_AUTH_BRIDGE_SECRET must be set}
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set - generate with: openssl rand -hex 32}
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY must be set - generate with: openssl rand -hex 32}"
+      WHEREAS_INSTANCE_KEY: "${WHEREAS_INSTANCE_KEY:?WHEREAS_INSTANCE_KEY must be set - generate with: openssl rand -hex 32}"
       NANGO_BASE_URL: http://nango-server:3003
       NANGO_PUBLIC_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
       # Both unset disables integrations gracefully. Set the secret +
@@ -92,6 +107,13 @@ services:
     volumes:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   frontend:
     build:
@@ -105,6 +127,7 @@ services:
       - "127.0.0.1:8080:80"
     depends_on:
       - backend
+    restart: unless-stopped
 
   docuseal:
     image: docuseal/docuseal:latest
@@ -122,6 +145,7 @@ services:
       - "127.0.0.1:8081:3000"
     volumes:
       - docuseal_data:/data
+    restart: unless-stopped
 
   # Nango — open-source unified API for third-party integrations.
   # Runs as a peer service like DocuSeal; tokens never reach the
@@ -145,11 +169,11 @@ services:
       NANGO_DB_PASSWORD: ${POSTGRES_PASSWORD}
       NANGO_DB_NAME: nango
       NANGO_DB_SSL: "false"
-      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY:?NANGO_ENCRYPTION_KEY must be set - generate with: openssl rand -base64 32}
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:?NANGO_SECRET_KEY must be set - generate with: openssl rand -hex 32}
+      NANGO_ENCRYPTION_KEY: "${NANGO_ENCRYPTION_KEY:?NANGO_ENCRYPTION_KEY must be set - generate with: openssl rand -base64 32}"
+      NANGO_SECRET_KEY: "${NANGO_SECRET_KEY:?NANGO_SECRET_KEY must be set - generate with: openssl rand -hex 32}"
       NANGO_SERVER_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
       NANGO_PUBLIC_SERVER_URL: ${NANGO_PUBLIC_URL:-http://localhost:3003}
-      NANGO_WEBHOOK_SECRET: ${NANGO_WEBHOOK_SECRET:?NANGO_WEBHOOK_SECRET must be set - generate with: openssl rand -hex 32}
+      NANGO_WEBHOOK_SECRET: "${NANGO_WEBHOOK_SECRET:?NANGO_WEBHOOK_SECRET must be set - generate with: openssl rand -hex 32}"
       FLAG_AUTH_ENABLED: "false"
       NANGO_DASHBOARD_USERNAME: ${NANGO_DASHBOARD_USERNAME:-admin}
       NANGO_DASHBOARD_PASSWORD: ${NANGO_DASHBOARD_PASSWORD:?NANGO_DASHBOARD_PASSWORD must be set}

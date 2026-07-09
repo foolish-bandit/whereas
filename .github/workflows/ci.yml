@@ -40,6 +40,9 @@ jobs:
           test -f dist/sw.js
           grep -F "denylist:[/^\\/api\\//]" dist/sw.js
 
+      - name: Audit frontend dependencies (high+ only)
+        run: npm audit --audit-level=high
+
   backend-test:
     runs-on: ubuntu-latest
     defaults:
@@ -66,4 +69,29 @@ jobs:
 
       - name: Run backend lint
         run: ruff check .
+
+      - name: Audit backend dependencies
+        run: |
+          pip install pip-audit
+          pip-audit
+
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: docker compose config -q
+        env:
+          POSTGRES_PASSWORD: dummy
+          MINIO_ROOT_PASSWORD: dummy
+          DOCUSEAL_AUTH_BRIDGE_SECRET: dummy
+          DOCUSEAL_SECRET_KEY_BASE: dummy
+          SECRET_KEY: dummy
+          WHEREAS_INSTANCE_KEY: dummy
+          NANGO_ENCRYPTION_KEY: dummy
+          NANGO_SECRET_KEY: dummy
+          NANGO_WEBHOOK_SECRET: dummy
+          NANGO_DASHBOARD_PASSWORD: dummy
 

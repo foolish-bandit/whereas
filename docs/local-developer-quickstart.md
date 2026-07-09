@@ -8,11 +8,12 @@ Postgres / MinIO / Ollama run in containers; the Python backend and the
 Vite frontend run on your machine so iteration is fast and stack traces
 are immediate.
 
-> Heads up: the docker-compose file ships a `backend` service too, but
-> it does not currently inject `WHEREAS_INSTANCE_KEY` into the container,
-> so `docker compose up` of the full stack will fail at startup. Until
-> that is fixed, run the backend on the host. See "Docker unavailable"
-> in [Troubleshooting](#troubleshooting) for a fully-host alternative.
+> Heads up: the docker-compose file also ships a `backend` service that
+> runs the whole stack in containers (it now injects `WHEREAS_INSTANCE_KEY`
+> and runs `alembic upgrade head` on startup). The host workflow below is
+> still recommended for day-to-day development since it gives faster
+> iteration and native stack traces. See "Docker unavailable" in
+> [Troubleshooting](#troubleshooting) for a fully-host alternative.
 
 ## 1. Prerequisites
 
