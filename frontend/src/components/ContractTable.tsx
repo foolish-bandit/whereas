@@ -270,19 +270,6 @@ export default function ContractTable({
           aria-label={`Select ${row.original.title}`}
           checked={row.getIsSelected()}
           onChange={row.getToggleSelectedHandler()}
-          onClick={(e) => {
-            // Range-select with Shift+click: toggle every row between
-            // the most-recently clicked row and this one. The user-
-            // facing keyboard contract is in the props doc.
-            if (e.shiftKey) {
-              const rows = row
-                .getParentRow()
-                ? row.getParentRow()!.subRows
-                : (e.currentTarget.closest("table")?.dataset.lastIdx ?? null,
-                   []);
-              void rows; // see lastSelectedRef below
-            }
-          }}
           data-testid={`repository-select-${row.original.id}`}
         />
       ),

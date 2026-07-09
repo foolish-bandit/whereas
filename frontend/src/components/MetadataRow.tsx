@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-import Pill, { type PillTone } from "./ui/Pill";
+import ConfidenceBadge from "./ConfidenceBadge";
+import Pill from "./ui/Pill";
 import { humanizeFieldName, renderExtractedValue } from "../lib/format";
 import { fieldHasValidSpan, fieldKey } from "../lib/fields";
 import type { ExtractedField } from "../types/contracts";
@@ -15,20 +16,10 @@ export interface MetadataRowProps {
   isSelected: boolean;
   onJumpToSource: (key: string) => void;
   /** Optional human override; when present, the displayed value is the
-   * override and a "Manually set" pill replaces the confidence pill. */
+   * override and a "Manually set" pill replaces the confidence badge. */
   override?: FieldOverride | null;
   onSaveOverride?: (key: string, value: string) => void;
   onClearOverride?: (key: string) => void;
-}
-
-function confidencePill(confidence: number): { tone: PillTone; label: string } {
-  if (!Number.isFinite(confidence)) {
-    return { tone: "danger", label: "— confidence" };
-  }
-  const pct = Math.round(confidence * 100);
-  if (pct >= 90) return { tone: "success", label: `${pct}% confidence` };
-  if (pct >= 70) return { tone: "warning", label: `${pct}% confidence` };
-  return { tone: "danger", label: `${pct}% confidence` };
 }
 
 export default function MetadataRow({
@@ -47,7 +38,6 @@ export default function MetadataRow({
 
   const displayValue = override?.value ?? renderExtractedValue(field.value_json);
   const hasSpan = fieldHasValidSpan(field);
-  const conf = confidencePill(field.confidence);
 
   function startEdit() {
     setDraft(displayValue);
@@ -148,14 +138,10 @@ export default function MetadataRow({
             )}
           </>
         ) : (
-          <Pill
-            tone={conf.tone}
-            variant="soft"
+          <ConfidenceBadge
+            confidence={field.confidence}
             data-testid={`metadata-row-confidence-${key}`}
-          >
-            <span aria-hidden>✓</span>
-            {conf.label}
-          </Pill>
+          />
         )}
         {hasSpan ? (
           <span className="group/jump relative inline-block">

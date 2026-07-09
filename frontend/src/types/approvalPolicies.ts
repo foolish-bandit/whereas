@@ -7,6 +7,7 @@ export interface ApprovalPolicy {
   description: string | null;
   status: ApprovalPolicyStatus;
   workflow_template_id: string;
+  workflow_template_name?: string | null;
   request_type: string | null;
   contract_type: string | null;
   priority: string | null;
@@ -14,7 +15,8 @@ export interface ApprovalPolicy {
   auto_attach: boolean;
   applies_to_generated_contracts: boolean;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
+  created_by?: string | null;
   metadata_json: Record<string, unknown> | null;
 }
 

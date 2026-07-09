@@ -134,6 +134,36 @@ describe("ClausesPanel", () => {
     expect(screen.queryByText(/Confidentiality\./)).not.toBeInTheDocument();
   });
 
+  it("renders a confidence badge when clause.confidence is a number", () => {
+    render(
+      <ClausesPanel
+        clauses={[{ ...CLAUSES[0], confidence: 0.91 }, CLAUSES[1], CLAUSES[2]]}
+        fullText={FULL_TEXT}
+        selectedKey={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId(`clause-confidence-${CLAUSES[0].id}`),
+    ).toHaveTextContent(/91%/);
+  });
+
+  it("renders no confidence badge when clause.confidence is null", () => {
+    render(
+      <ClausesPanel
+        clauses={CLAUSES}
+        fullText={FULL_TEXT}
+        selectedKey={null}
+        onSelect={() => {}}
+      />,
+    );
+    for (const c of CLAUSES) {
+      expect(
+        screen.queryByTestId(`clause-confidence-${c.id}`),
+      ).not.toBeInTheDocument();
+    }
+  });
+
   it("shows 'Citation unavailable' when offsets do not match the source", () => {
     const broken: Clause = clauseAt(
       0,
