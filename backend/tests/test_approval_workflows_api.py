@@ -918,3 +918,137 @@ async def test_decision_after_cancel_returns_409(
         json={},
     )
     assert approve.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Authorization: only the step's assigned user (when set) may decide it
+# ---------------------------------------------------------------------------
+
+
+async def _create_second_user(session: AsyncSession, org_id: uuid.UUID, *, email: str) -> User:
+    user = User(
+        id=uuid.uuid4(),
+        organization_id=org_id,
+        email=email,
+        password_hash="hash",
+        display_name="Second User",
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    return user
+
+
+async def test_non_assigned_user_cannot_approve_assigned_step(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    assignee = await _create_second_user(
+        db_session, user_org.org.id, email="assignee@example.com"
+    )
+    request = await _make_request(db_session, user_org.org.id)
+    create = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user),
+        json={
+            "name": "Assigned",
+            "request_id": str(request.id),
+            "steps": [{"title": "Legal review", "assigned_to": str(assignee.id)}],
+        },
+    )
+    assert create.status_code == 201
+    workflow_id = create.json()["id"]
+    step_id = create.json()["steps"][0]["id"]
+    # Capture headers before any request runs — a 403/409 response rolls
+    # the shared ``db_session`` back, which expires ORM objects, and
+    # ``assignee.id`` would then need a lazy load outside an async
+    # greenlet context.
+    creator_headers = _headers(user_org.user)
+    assignee_headers = _headers(assignee)
+
+    # The workflow creator is not the assignee, so this must 403.
+    response = await client.post(
+        f"/api/approval-workflows/{workflow_id}/steps/{step_id}/approve",
+        headers=creator_headers,
+        json={},
+    )
+    assert response.status_code == 403
+
+    # The assignee themself can decide it.
+    approved = await client.post(
+        f"/api/approval-workflows/{workflow_id}/steps/{step_id}/approve",
+        headers=assignee_headers,
+        json={},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["steps"][0]["status"] == "approved"
+
+
+async def test_non_assigned_user_cannot_reject_assigned_step(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user_org = await _create_user_org(db_session)
+    assignee = await _create_second_user(
+        db_session, user_org.org.id, email="assignee2@example.com"
+    )
+    request = await _make_request(db_session, user_org.org.id)
+    create = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user),
+        json={
+            "name": "Assigned",
+            "request_id": str(request.id),
+            "steps": [{"title": "Legal review", "assigned_to": str(assignee.id)}],
+        },
+    )
+    workflow_id = create.json()["id"]
+    step_id = create.json()["steps"][0]["id"]
+    creator_headers = _headers(user_org.user)
+    assignee_headers = _headers(assignee)
+
+    response = await client.post(
+        f"/api/approval-workflows/{workflow_id}/steps/{step_id}/reject",
+        headers=creator_headers,
+        json={},
+    )
+    assert response.status_code == 403
+
+    rejected = await client.post(
+        f"/api/approval-workflows/{workflow_id}/steps/{step_id}/reject",
+        headers=assignee_headers,
+        json={},
+    )
+    assert rejected.status_code == 200
+
+
+async def test_unassigned_step_can_be_decided_by_any_org_member(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Steps with no ``assigned_to`` (e.g. an external approver tracked
+    only by name/email) have no internal user to gate against, so any
+    org member may still decide them — matches prior behavior."""
+    user_org = await _create_user_org(db_session)
+    other_member = await _create_second_user(
+        db_session, user_org.org.id, email="other-member@example.com"
+    )
+    request = await _make_request(db_session, user_org.org.id)
+    create = await client.post(
+        "/api/approval-workflows",
+        headers=_headers(user_org.user),
+        json={
+            "name": "External approver",
+            "request_id": str(request.id),
+            "steps": [
+                {"title": "External sign-off", "approver_email": "ext@example.com"}
+            ],
+        },
+    )
+    workflow_id = create.json()["id"]
+    step_id = create.json()["steps"][0]["id"]
+
+    response = await client.post(
+        f"/api/approval-workflows/{workflow_id}/steps/{step_id}/approve",
+        headers=_headers(other_member),
+        json={},
+    )
+    assert response.status_code == 200

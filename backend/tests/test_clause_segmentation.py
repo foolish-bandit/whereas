@@ -15,6 +15,10 @@ import pytest
 from app.models import Clause, Contract, Organization, User
 from app.services import clause_segmentation
 from app.services.clause_segmentation import (
+    _CONFIDENCE_HEADING_AND_TYPE,
+    _CONFIDENCE_HEADING_ONLY,
+    _CONFIDENCE_NO_EVIDENCE,
+    _CONFIDENCE_TYPE_ONLY,
     MAX_CLAUSES_HARD_CAP,
     MIN_CLAUSE_LEN_CHARS,
     SEGMENTATION_METHOD_HEURISTIC_V1,
@@ -270,6 +274,73 @@ def test_classification_marks_known_types() -> None:
     for c in candidates:
         if c.clause_type is not None:
             assert c.clause_type_source == "heuristic"
+        # Every candidate here has both a numbered heading and a
+        # keyword-matched clause_type: the strongest evidence tier.
+        assert c.heading and c.clause_type
+        assert c.confidence == _CONFIDENCE_HEADING_AND_TYPE
+
+
+# --------------------------------------------------------------------------
+# Confidence tiers
+#
+# Confidence is a deterministic function of the evidence a candidate
+# actually has (heading detected via a structural boundary regex,
+# clause_type classified via keyword match) - never a fabricated score.
+# See `_confidence_for_match` in clause_segmentation.py.
+# --------------------------------------------------------------------------
+
+
+def test_confidence_heading_and_type_match_is_highest_tier() -> None:
+    text = (
+        "1. Confidentiality. Each Party shall hold Confidential "
+        "Information of the other Party in strict confidence.\n"
+    )
+    candidates = segment_text(text)
+    _assert_spans_exact(text, candidates)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.heading is not None
+    assert candidate.clause_type == "confidentiality"
+    assert candidate.confidence == _CONFIDENCE_HEADING_AND_TYPE
+
+
+def test_confidence_heading_only_no_type_match() -> None:
+    # "Miscellaneous" is a real, recognized heading (title-case, ends in a
+    # period) but doesn't match any clause_type keyword pattern, and
+    # neither does the body.
+    text = (
+        "1. Miscellaneous. This clause contains general boilerplate "
+        "language that does not reference any recognized clause topic.\n"
+    )
+    candidates = segment_text(text)
+    _assert_spans_exact(text, candidates)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.heading is not None
+    assert candidate.clause_type is None
+    assert candidate.confidence == _CONFIDENCE_HEADING_ONLY
+
+
+def test_confidence_keyword_only_no_heading() -> None:
+    # A single long, unheaded paragraph (not title-case, no line break, and
+    # over the 200-char heading-candidate limit) that happens to contain a
+    # recognized clause_type keyword ("indemnify") in its body.
+    text = (
+        "Each Party shall indemnify and hold harmless the other Party "
+        "from and against any and all third-party claims, losses, "
+        "damages, liabilities, and reasonable expenses arising out of "
+        "or relating to any breach of this Agreement by the "
+        "indemnifying Party or its personnel, agents, or subcontractors "
+        "in the course of performing services under this Agreement."
+    )
+    assert len(text) > 200  # sanity: too long for the heading branch
+    candidates = segment_text(text)
+    _assert_spans_exact(text, candidates)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.heading is None
+    assert candidate.clause_type == "indemnification"
+    assert candidate.confidence == _CONFIDENCE_TYPE_ONLY
 
 
 def test_empty_full_text_returns_no_candidates() -> None:
@@ -283,6 +354,8 @@ def test_whole_document_fallback_for_one_paragraph() -> None:
     assert len(candidates) == 1
     assert candidates[0].span_start == 0
     assert candidates[0].span_end == len(text)
+    # No heading, no clause_type match: weakest evidence tier.
+    assert candidates[0].confidence == _CONFIDENCE_NO_EVIDENCE
 
 
 def test_pathological_input_falls_back_to_paragraphs(

@@ -52,6 +52,7 @@ from app.security.encryption import (
 from app.services.clause_segmentation import segment_and_persist_clauses
 from app.services.document_markdown import create_markdown_snapshot_for_contract
 from app.services.document_parser import parse_document
+from app.services.embeddings import populate_clause_embeddings
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.nango_client import NangoError, NangoFile, download_file
 from app.services.storage import DocumentStorage
@@ -255,11 +256,23 @@ async def ingest_file(
     except ExtractionError:
         contract.status = ContractStatus.FAILED.value
 
+    clauses = []
     try:
-        await segment_and_persist_clauses(session, contract)
+        clauses = await segment_and_persist_clauses(session, contract)
     except Exception:
         log.exception(
             "Clause segmentation failed during integration ingest",
+            extra={"contract_id": str(contract.id)},
+        )
+
+    # Clause embeddings power the vector leg of hybrid retrieval. Best-effort,
+    # same rationale as segmentation: an embedding-provider outage must not
+    # fail ingest; full-text/trigram search still works without embeddings.
+    try:
+        await populate_clause_embeddings(session, clauses)
+    except Exception:
+        log.exception(
+            "Clause embedding population failed during integration ingest",
             extra={"contract_id": str(contract.id)},
         )
 
@@ -407,7 +420,12 @@ def _looks_like_docx(file_bytes: bytes) -> bool:
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
             names = set(archive.namelist())
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
     except zipfile.BadZipFile:
+        return False
+    # Decompression-bomb guard: a small malicious zip can declare wildly
+    # oversized member sizes. Reject before anything downstream extracts it.
+    if total_uncompressed > get_settings().DOCX_MAX_UNCOMPRESSED_BYTES:
         return False
     return "[Content_Types].xml" in names and "word/document.xml" in names
 

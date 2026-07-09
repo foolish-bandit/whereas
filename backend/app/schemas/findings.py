@@ -85,6 +85,14 @@ class DeviationFindingResponse(BaseModel):
     expected_value: str | None = None
     guidance: str | None = None
     preferred_language: str | None = None
+    # Deviation findings come from deterministic playbook rule evaluation
+    # (see app.services.playbook_matcher), not an LLM judgment call - the
+    # matcher either matches a rule's condition against clause text or it
+    # doesn't. There's no model uncertainty to express, so every finding
+    # is 1.0. This is a schema-level default (not a persisted column;
+    # `DeviationFinding` has none) so span-citation consumers that key off
+    # a `confidence` field per the design principles still get one.
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     created_at: datetime
     updated_at: datetime
 

@@ -4,6 +4,9 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from app.api import (
@@ -29,6 +32,8 @@ from app.core.config import get_settings
 from app.core.database import engine
 from app.core.logging import configure_logging
 from app.security.encryption import load_instance_key
+from app.security.headers import SecurityHeadersMiddleware
+from app.security.rate_limit import limiter
 from app.services.storage import DocumentStorage
 
 # How long the startup connectivity check waits before giving up.
@@ -49,6 +54,10 @@ app = FastAPI(
     redoc_url=None,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # In dev, the frontend runs on a different port. In prod, it's behind a reverse proxy.
 if settings.ENVIRONMENT == "development":
     app.add_middleware(
@@ -58,6 +67,15 @@ if settings.ENVIRONMENT == "development":
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Added last so it is the outermost middleware: every response (including
+# ones short-circuited by CORS or an inner middleware) gets the security
+# headers, and HSTS/no-store gating stays centralized in one place.
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    docuseal_url=settings.DOCUSEAL_BASE_URL,
+    environment=settings.ENVIRONMENT,
+)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])

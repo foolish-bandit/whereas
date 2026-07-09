@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     S3_BUCKET: str = "whereas-documents"
     S3_REGION: str = "us-east-1"
     CONTRACT_UPLOAD_MAX_BYTES: int = 50 * 1024 * 1024
+    # Decompression-bomb guard for DOCX (OOXML zip) files: the sum of every
+    # archive member's declared uncompressed size must not exceed this many
+    # bytes. Comfortably above any legitimate contract DOCX, far below what
+    # a hostile small zip could claim to expand into.
+    DOCX_MAX_UNCOMPRESSED_BYTES: int = 500 * 1024 * 1024
 
     # --- LLM ---
     LITELLM_PROVIDER: str = "ollama"
@@ -41,6 +46,12 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "bge-m3"
     EXTRACTION_MODEL: str = "llama3.1:70b"
     LLM_REQUEST_TIMEOUT_SECONDS: int = 120
+    # Master on/off switch for `app.services.embeddings`. Off disables both
+    # clause-embedding population at ingest time and the vector leg of
+    # hybrid retrieval; full-text and trigram search still work. Defaults
+    # on so self-host deployments get working semantic search against the
+    # default local Ollama embedding model without extra configuration.
+    EMBEDDINGS_ENABLED: bool = True
 
     # Provider keys (only one needs to be set, depending on LITELLM_PROVIDER)
     OPENAI_API_KEY: str | None = None
@@ -67,6 +78,12 @@ class Settings(BaseSettings):
     EXTRACTION_MIN_CONFIDENCE: float = 0.70
     # Below this, extraction results are not surfaced at all.
     EXTRACTION_DROP_THRESHOLD: float = 0.40
+    # When true, pass a JSON-schema `response_format` (derived from
+    # `MetadataExtractionResponse`) to the extraction LLM call so providers
+    # that support structured outputs can constrain generation. Off by
+    # default: most local Ollama models ignore or reject it, and we don't
+    # want to assume frontier-model capabilities in the default deployment.
+    EXTRACTION_STRUCTURED_OUTPUT: bool = False
 
     # --- Nango (third-party integrations bridge) ---
     # Self-hosted Nango runs as a peer service in docker-compose. The

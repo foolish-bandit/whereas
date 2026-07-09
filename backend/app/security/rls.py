@@ -32,6 +32,8 @@ Alembic migration that follows; we don't execute SQL from here.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 # --------------------------------------------------------------------------
 # Public configuration
 # --------------------------------------------------------------------------
@@ -39,6 +41,12 @@ from __future__ import annotations
 
 # Every tenant-scoped table in Whereas's schema. Order matters only for
 # readability; the SQL produced below applies policies in the same order.
+#
+# Tables from migrations 0006-0017 (clause_templates through
+# integration_imported_files) carry `organization_id` but were never added
+# here when they were created, so RLS was silently not enforcing on them
+# until migration 0018 backfilled coverage. Every one of them is
+# direct-org — none reaches its tenant only through `contracts`.
 TENANT_SCOPED_TABLES: list[str] = [
     "contracts",
     "extracted_fields",
@@ -48,6 +56,22 @@ TENANT_SCOPED_TABLES: list[str] = [
     "playbook_review_runs",
     "audit_events",
     "users",
+    "clause_templates",
+    "contract_markdown_snapshots",
+    "contract_artifacts",
+    "agreement_templates",
+    "agreement_template_artifacts",
+    "agreement_template_markdown_snapshots",
+    "agreement_template_variables",
+    "contract_requests",
+    "inbox_items",
+    "approval_workflow_runs",
+    "approval_steps",
+    "approval_workflow_templates",
+    "approval_workflow_template_steps",
+    "approval_policies",
+    "integration_connections",
+    "integration_imported_files",
 ]
 
 
@@ -57,6 +81,11 @@ TENANT_SCOPED_TABLES: list[str] = [
 # `deviation_findings` and `playbook_review_runs` are direct-org as of
 # the persisted-findings migration: both carry `organization_id` so the
 # policy reads cleanly without an EXISTS subquery on `contracts`.
+#
+# `clause_templates` through `integration_imported_files` (migrations
+# 0006-0017, backfilled by 0018) are all direct-org too: every one of
+# those models declares its own `organization_id` column rather than
+# reaching the tenant through `contracts.id`.
 _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "contracts",
     "playbooks",
@@ -64,6 +93,22 @@ _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "playbook_review_runs",
     "audit_events",
     "users",
+    "clause_templates",
+    "contract_markdown_snapshots",
+    "contract_artifacts",
+    "agreement_templates",
+    "agreement_template_artifacts",
+    "agreement_template_markdown_snapshots",
+    "agreement_template_variables",
+    "contract_requests",
+    "inbox_items",
+    "approval_workflow_runs",
+    "approval_steps",
+    "approval_workflow_templates",
+    "approval_workflow_template_steps",
+    "approval_policies",
+    "integration_connections",
+    "integration_imported_files",
 )
 
 
@@ -164,16 +209,30 @@ def _indirect_policy_sql(table: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def build_full_migration_sql() -> str:
+def build_full_migration_sql(tables: Sequence[str] | None = None) -> str:
     """Return the full RLS migration SQL as a single string.
 
     The output is safe to re-run: role creation is gated on existence,
     GRANTs are idempotent, ENABLE/FORCE RLS are idempotent, and policies
     are dropped before being recreated.
+
+    Alembic migrations MUST pass ``tables`` — a frozen, era-correct list
+    of the tenant-scoped tables that exist as of that migration. This
+    module's table lists keep growing with the schema, so a migration
+    that relies on the default would break fresh-database replays as
+    soon as a later migration adds a table (0005 hit exactly this when
+    0019 expanded the lists). The default (all currently known tables)
+    is for tests and ad-hoc inspection of the head-state policy set.
     """
+    if tables is None:
+        selected = set(_DIRECT_ORG_TABLES) | set(_INDIRECT_ORG_TABLES)
+    else:
+        selected = set(tables)
     parts: list[str] = [_create_role_sql(), _grant_sql()]
     for table in _DIRECT_ORG_TABLES:
-        parts.append(_direct_policy_sql(table))
+        if table in selected:
+            parts.append(_direct_policy_sql(table))
     for table in _INDIRECT_ORG_TABLES:
-        parts.append(_indirect_policy_sql(table))
+        if table in selected:
+            parts.append(_indirect_policy_sql(table))
     return "\n".join(parts)

@@ -13,7 +13,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 
 
 class ExtractionSource(StrEnum):
@@ -83,6 +83,35 @@ class ExtractionResult(BaseModel):
             return None
         trimmed = value.strip()
         return trimmed or None
+
+
+class ExtractionFieldPayload(BaseModel):
+    """Validated shape of one field in the raw LLM metadata-extraction
+    response (see ``app.prompts.extraction.EXTRACTION_SYSTEM_PROMPT``).
+
+    Used by ``app.services.extraction`` as a validation gate: a parsed
+    LLM response that fails to validate against
+    ``MetadataExtractionResponse`` triggers a single corrective reask
+    (Instructor-style) before extraction gives up. ``value`` is
+    intentionally untyped since its shape differs per field (string,
+    number, list, nested object); ``confidence`` is validated strictly
+    since it's the piece weak local models most often return
+    out-of-range or omit. Unknown extra keys within a field payload are
+    ignored rather than rejected, so chatty models don't trigger a
+    reask over harmless noise.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    value: Any = None
+    span: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class MetadataExtractionResponse(RootModel[dict[str, ExtractionFieldPayload]]):
+    """Top-level shape of the raw LLM metadata-extraction response: a
+    mapping of field name -> ``ExtractionFieldPayload``.
+    """
 
 
 def assert_no_raw_document_bytes(payload: Mapping[str, Any] | Sequence[Any] | Any) -> None:

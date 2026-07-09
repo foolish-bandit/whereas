@@ -1,38 +1,59 @@
-"""Embeddings service abstraction (architecture-only, disabled by default).
+"""Embeddings service: turns clause and question text into vectors for
+hybrid retrieval (see `app.services.retrieval`).
 
-This module intentionally wires only interfaces and no-op behavior so backend
-and frontend-facing code can depend on stable types before local embedding
-execution is implemented.
+Design mirrors `app.services.extraction`'s LiteLLM discipline:
+- LiteLLM (`litellm.aembedding`) is the only seam; no provider SDK is
+  imported directly, and the default model targets local Ollama.
+- Outbound text runs through the same pre-LLM hook
+  (`app.security.llm_hook`) that gates/redacts remote-provider calls, so
+  embedding a clause is held to the same privacy policy as extracting
+  metadata from it.
+- A disabled provider raises a controlled error rather than silently
+  no-op'ing, so callers can distinguish "embeddings are off" from "the
+  provider is down."
 
-Planned default model target (not bundled/downloaded here):
-- ``BAAI/bge-small-en-v1.5``
+`populate_clause_embeddings` is the ingest-time hook called from
+`app.api.contracts` right after clause segmentation. It is always
+best-effort from the caller's point of view (a provider outage must
+never fail contract ingest) and only runs against Postgres: the
+`Clause.embedding` column is a pgvector `Vector`, and the vector leg of
+hybrid retrieval that reads it is Postgres-only, so there is nothing
+useful to compute under the sqlite fallback used in tests.
 """
-
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-EmbeddingKind = Literal["clause", "playbook_rule", "clause_manager_entry", "text_chunk"]
-EmbeddingProviderMode = Literal[
-    "disabled",
-    "local_command_placeholder",
-    "future_python_service_placeholder",
-]
+import litellm
+from sqlalchemy.ext.asyncio import AsyncSession
 
-PLANNED_DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+from app.core.config import get_settings
+from app.models import Clause
+from app.security.llm_hook import LLMCallContext, is_remote_provider, load_hook_from_env
+
+log = logging.getLogger(__name__)
+settings = get_settings()
+
+EmbeddingKind = Literal["clause", "qa_question"]
 
 
 class EmbeddingsDisabledError(RuntimeError):
-    """Raised when embeddings are disabled by provider mode."""
+    """Raised when embeddings are disabled by settings (`EMBEDDINGS_ENABLED=false`)."""
+
+
+class EmbeddingProviderError(RuntimeError):
+    """Raised when the embedding provider returns an unusable response."""
 
 
 @dataclass(frozen=True)
 class EmbeddingInput:
     """Input payload for a single embedding request.
 
-    ``metadata`` must contain only safe/non-sensitive fields suitable for logs or
-    telemetry and defaults to ``None``.
+    ``metadata`` must contain only safe/non-sensitive fields suitable for
+    logs or the pre-LLM hook context (e.g. ``organization_id``) and
+    defaults to ``None``.
     """
 
     id: str
@@ -41,71 +62,161 @@ class EmbeddingInput:
     metadata: dict[str, str | int | float | bool | None] | None = None
 
 
-@dataclass(frozen=True)
-class EmbeddingResult:
-    """Embedding response shape for downstream semantic workflows."""
-
-    id: str
-    vector: list[float]
-    model: str
-    dimensions: int
-
-
 class EmbeddingProvider(Protocol):
-    mode: EmbeddingProviderMode
+    mode: str
 
-    def embed_texts(self, inputs: list[EmbeddingInput]) -> list[EmbeddingResult]:
+    async def embed_texts(self, inputs: list[EmbeddingInput]) -> list[list[float]]:
         """Embed validated ``inputs`` or raise ``EmbeddingsDisabledError``."""
 
 
 class DisabledEmbeddingProvider:
     """No-op provider that always blocks embedding execution.
 
-    Safety guarantees in this placeholder implementation:
-    - no subprocess invocation
-    - no network calls
-    - no model downloads
-    - no storage writes
+    Safety guarantees: no network calls, no model downloads, no storage
+    writes.
     """
 
-    mode: EmbeddingProviderMode = "disabled"
+    mode = "disabled"
 
-    def embed_texts(self, inputs: list[EmbeddingInput]) -> list[EmbeddingResult]:
+    async def embed_texts(self, inputs: list[EmbeddingInput]) -> list[list[float]]:
         _validate_inputs(inputs)
         raise EmbeddingsDisabledError(
-            "Embeddings are disabled (provider mode: disabled). "
-            "This build includes interface-only plumbing."
+            "Embeddings are disabled (settings.EMBEDDINGS_ENABLED=False)."
         )
 
 
-class LocalCommandPlaceholderEmbeddingProvider(DisabledEmbeddingProvider):
-    """Reserved mode for future local command execution.
+class LiteLLMEmbeddingProvider:
+    """Embeds text via `litellm.aembedding`, defaulting to local Ollama.
 
-    Currently behaves exactly like ``DisabledEmbeddingProvider``.
+    Mirrors `app.services.extraction._resolve_model_name`: the configured
+    `LITELLM_PROVIDER` picks the prefix LiteLLM needs, and outbound text
+    is passed through the pre-LLM hook before it ever reaches
+    `litellm.aembedding`, so a remote provider can be blocked or redacted
+    the same way metadata extraction is.
     """
 
-    mode: EmbeddingProviderMode = "local_command_placeholder"
+    mode = "litellm"
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or _resolve_embedding_model_name()
+
+    async def embed_texts(self, inputs: list[EmbeddingInput]) -> list[list[float]]:
+        _validate_inputs(inputs)
+        if not inputs:
+            return []
+
+        remote_provider = is_remote_provider(settings.LITELLM_PROVIDER)
+        hook = load_hook_from_env()
+        hooked_texts: list[str] = []
+        for item in inputs:
+            org_id = (item.metadata or {}).get("organization_id")
+            context = LLMCallContext(
+                purpose="embedding",
+                model=self.model,
+                is_remote_provider=remote_provider,
+                document_id=item.id,
+                organization_id=str(org_id) if org_id is not None else None,
+            )
+            hooked_texts.append(hook(item.text, context))
+
+        response = await litellm.aembedding(
+            model=self.model,
+            input=hooked_texts,
+            timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS,
+        )
+        vectors = [_vector_from_response_item(item) for item in response.data]
+        if len(vectors) != len(inputs):
+            raise EmbeddingProviderError(
+                f"Embedding provider returned {len(vectors)} vectors for "
+                f"{len(inputs)} inputs"
+            )
+        return vectors
 
 
-class FuturePythonServicePlaceholderEmbeddingProvider(DisabledEmbeddingProvider):
-    """Reserved mode for future in-process/out-of-process Python serving.
+def _vector_from_response_item(item: object) -> list[float]:
+    """Extract the embedding vector from one LiteLLM response item.
 
-    Currently behaves exactly like ``DisabledEmbeddingProvider``.
+    LiteLLM's embedding response mirrors the OpenAI embeddings API shape
+    (``{"embedding": [...], "index": ..., "object": "embedding"}``).
+    Response items may be plain dicts or LiteLLM's ``Embedding`` model,
+    both of which support ``item["embedding"]``.
     """
+    try:
+        vector = item["embedding"]  # type: ignore[index]
+    except (KeyError, TypeError) as e:
+        raise EmbeddingProviderError(f"Malformed embedding response item: {item!r}") from e
+    return list(vector)
 
-    mode: EmbeddingProviderMode = "future_python_service_placeholder"
+
+def _resolve_embedding_model_name() -> str:
+    """Map our config-style model name to a LiteLLM-compatible string.
+
+    Mirrors `app.services.extraction._resolve_model_name`.
+    """
+    if settings.LITELLM_PROVIDER == "ollama":
+        return f"ollama/{settings.EMBEDDING_MODEL}"
+    if settings.LITELLM_PROVIDER == "openai":
+        return settings.EMBEDDING_MODEL
+    if settings.LITELLM_PROVIDER == "anthropic":
+        return f"anthropic/{settings.EMBEDDING_MODEL}"
+    if settings.LITELLM_PROVIDER == "azure":
+        return f"azure/{settings.EMBEDDING_MODEL}"
+    return settings.EMBEDDING_MODEL
 
 
-def get_embedding_provider(mode: EmbeddingProviderMode = "disabled") -> EmbeddingProvider:
-    """Return the configured provider abstraction without executing embeddings."""
-    if mode == "disabled":
+def get_embedding_provider() -> EmbeddingProvider:
+    """Return the configured embedding provider.
+
+    Selection is a single settings flag (`EMBEDDINGS_ENABLED`), not a
+    provider registry: there is exactly one real implementation
+    (LiteLLM), so the only meaningful choice an operator makes is on/off.
+    """
+    if not settings.EMBEDDINGS_ENABLED:
         return DisabledEmbeddingProvider()
-    if mode == "local_command_placeholder":
-        return LocalCommandPlaceholderEmbeddingProvider()
-    return FuturePythonServicePlaceholderEmbeddingProvider()
+    return LiteLLMEmbeddingProvider()
 
 
 def _validate_inputs(inputs: list[EmbeddingInput]) -> None:
     for item in inputs:
         if not item.text.strip():
             raise ValueError(f"Embedding input '{item.id}' has empty text")
+
+
+async def populate_clause_embeddings(session: AsyncSession, clauses: list[Clause]) -> None:
+    """Compute and set embeddings for freshly segmented clauses.
+
+    Postgres-only: `Clause.embedding` is a pgvector `Vector`, and the
+    vector leg of hybrid retrieval that reads it
+    (`app.services.retrieval.search_clauses`) only runs on Postgres, so
+    under the sqlite fallback used in tests there is nothing to
+    compute — this returns immediately without calling the embedding
+    provider.
+
+    This function does not swallow errors itself; callers (see
+    `app.api.contracts`) wrap it in a best-effort try/except so an
+    embedding-provider outage never fails contract ingest.
+    """
+    if not clauses:
+        return
+
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+
+    provider = get_embedding_provider()
+    if provider.mode == "disabled":
+        return
+
+    inputs = [
+        EmbeddingInput(
+            id=str(clause.id),
+            text=clause.text,
+            kind="clause",
+            metadata={"organization_id": str(clause.organization_id)},
+        )
+        for clause in clauses
+    ]
+    vectors = await provider.embed_texts(inputs)
+    for clause, vector in zip(clauses, vectors, strict=True):
+        clause.embedding = vector
+    await session.flush()

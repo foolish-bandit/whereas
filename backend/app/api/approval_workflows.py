@@ -281,7 +281,7 @@ async def approve_step(
         session, workflow_id, step_id, user.organization_id
     )
 
-    _ensure_step_decidable(run, step)
+    _ensure_step_decidable(run, step, user)
 
     now = _utcnow()
     step.status = ApprovalStepStatus.APPROVED.value
@@ -338,7 +338,7 @@ async def reject_step(
         session, workflow_id, step_id, user.organization_id
     )
 
-    _ensure_step_decidable(run, step)
+    _ensure_step_decidable(run, step, user)
 
     now = _utcnow()
     step.status = ApprovalStepStatus.REJECTED.value
@@ -570,14 +570,24 @@ async def _load_run_and_step(
 
 
 def _ensure_step_decidable(
-    run: ApprovalWorkflowRun, step: ApprovalStep
+    run: ApprovalWorkflowRun, step: ApprovalStep, actor: User
 ) -> None:
-    """Guard the approve/reject path against duplicate / out-of-order calls.
+    """Guard the approve/reject path against duplicate / out-of-order calls
+    and against a user deciding a step that isn't assigned to them.
 
     A step can only be decided when the workflow is still active, the
-    step is still pending, and the step is the workflow's current step.
-    Anything else collapses to 409.
+    step is still pending, the step is the workflow's current step, and
+    — when the step has an ``assigned_to`` — the caller is that user.
+    Steps with no ``assigned_to`` (e.g. an external approver tracked only
+    by name/email) have no internal user to gate against, so any org
+    member may decide them, matching prior behavior. Anything else
+    collapses to 409, except the assignment mismatch, which is a 403.
     """
+    if step.assigned_to is not None and step.assigned_to != actor.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the step's assigned user may decide it.",
+        )
     if run.status != ApprovalWorkflowRunStatus.ACTIVE.value:
         raise HTTPException(
             status_code=409,
