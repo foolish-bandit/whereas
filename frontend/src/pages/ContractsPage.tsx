@@ -531,6 +531,8 @@ export default function ContractsPage() {
     setSort(DEFAULT_SORT);
     setDir(DEFAULT_DIR);
     setIncludeMerged(false);
+    setShowArchived(false);
+    persistShowArchived(false);
   }
 
   return (
@@ -910,10 +912,30 @@ export default function ContractsPage() {
               .
             </p>
             {filtered.length === 0 && (
-              <p className="mt-2 text-sm text-ink-muted">
-                Nothing in the loaded Repository slice matches the current
-                status / type filters.
-              </p>
+              <EmptyState
+                title="No matches"
+                description="No Repository records match the current search, status, type, archived, or merged-record filters."
+                action={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={onClearSearch}
+                      className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
+                      data-testid="repository-empty-clear-search"
+                    >
+                      Clear search
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onResetAllFilters}
+                      className="inline-flex items-center rounded border border-rule bg-canvas px-2.5 py-1 text-xs font-medium text-ink hover:border-rule-strong"
+                      data-testid="repository-empty-reset-filters"
+                    >
+                      Reset filters
+                    </button>
+                  </div>
+                }
+              />
             )}
           </>
         );

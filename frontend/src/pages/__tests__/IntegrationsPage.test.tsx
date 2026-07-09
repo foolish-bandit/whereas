@@ -282,6 +282,24 @@ describe("IntegrationsPage", () => {
     }
   });
 
+  it("renders the open-source inspiration radar with non-connector product bets", async () => {
+    renderPage();
+    await screen.findByTestId("integration-card-google-drive");
+    const radar = screen.getByTestId("integrations-inspiration-section");
+    for (const slug of [
+      "accord-project",
+      "contract-playbook-ai",
+      "opencontracts",
+      "docuseal-documenso",
+      "twenty-crm",
+      "n8n-activepieces",
+    ]) {
+      expect(within(radar).getByTestId(`inspiration-card-${slug}`)).toBeInTheDocument();
+    }
+    expect(radar).toHaveTextContent(/Signature readiness checklist/i);
+    expect(radar).toHaveTextContent(/Auditable recipes/i);
+  });
+
   it("does not leak Nango secrets into the rendered DOM", async () => {
     mocks.listIntegrationConnections.mockResolvedValue([CONNECTED_DRIVE]);
     renderPage();
