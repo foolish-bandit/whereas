@@ -157,6 +157,7 @@ from app.services.duplicate_merge import (
     DuplicateMergeError,
     merge_duplicate_contract,
 )
+from app.services.embeddings import populate_clause_embeddings
 from app.services.extraction import ExtractionError, extract_and_persist_metadata
 from app.services.playbook_loader import (
     PlaybookValidationError,
@@ -318,6 +319,19 @@ async def upload_contract(
     except Exception:
         log.exception(
             "Clause segmentation failed; contract remains usable",
+            extra={"contract_id": str(contract.id)},
+        )
+
+    # Clause embeddings power the vector leg of hybrid retrieval
+    # (app.services.retrieval). Best-effort, same rationale as
+    # segmentation above: an embedding-provider outage (e.g. Ollama not
+    # running) must not fail contract ingest. Full-text/trigram search
+    # still works without embeddings.
+    try:
+        await populate_clause_embeddings(session, clauses)
+    except Exception:
+        log.exception(
+            "Clause embedding population failed; contract remains usable",
             extra={"contract_id": str(contract.id)},
         )
 

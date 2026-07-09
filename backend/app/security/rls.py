@@ -39,6 +39,12 @@ from __future__ import annotations
 
 # Every tenant-scoped table in Whereas's schema. Order matters only for
 # readability; the SQL produced below applies policies in the same order.
+#
+# Tables from migrations 0006-0017 (clause_templates through
+# integration_imported_files) carry `organization_id` but were never added
+# here when they were created, so RLS was silently not enforcing on them
+# until migration 0018 backfilled coverage. Every one of them is
+# direct-org — none reaches its tenant only through `contracts`.
 TENANT_SCOPED_TABLES: list[str] = [
     "contracts",
     "extracted_fields",
@@ -48,6 +54,22 @@ TENANT_SCOPED_TABLES: list[str] = [
     "playbook_review_runs",
     "audit_events",
     "users",
+    "clause_templates",
+    "contract_markdown_snapshots",
+    "contract_artifacts",
+    "agreement_templates",
+    "agreement_template_artifacts",
+    "agreement_template_markdown_snapshots",
+    "agreement_template_variables",
+    "contract_requests",
+    "inbox_items",
+    "approval_workflow_runs",
+    "approval_steps",
+    "approval_workflow_templates",
+    "approval_workflow_template_steps",
+    "approval_policies",
+    "integration_connections",
+    "integration_imported_files",
 ]
 
 
@@ -57,6 +79,11 @@ TENANT_SCOPED_TABLES: list[str] = [
 # `deviation_findings` and `playbook_review_runs` are direct-org as of
 # the persisted-findings migration: both carry `organization_id` so the
 # policy reads cleanly without an EXISTS subquery on `contracts`.
+#
+# `clause_templates` through `integration_imported_files` (migrations
+# 0006-0017, backfilled by 0018) are all direct-org too: every one of
+# those models declares its own `organization_id` column rather than
+# reaching the tenant through `contracts.id`.
 _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "contracts",
     "playbooks",
@@ -64,6 +91,22 @@ _DIRECT_ORG_TABLES: tuple[str, ...] = (
     "playbook_review_runs",
     "audit_events",
     "users",
+    "clause_templates",
+    "contract_markdown_snapshots",
+    "contract_artifacts",
+    "agreement_templates",
+    "agreement_template_artifacts",
+    "agreement_template_markdown_snapshots",
+    "agreement_template_variables",
+    "contract_requests",
+    "inbox_items",
+    "approval_workflow_runs",
+    "approval_steps",
+    "approval_workflow_templates",
+    "approval_workflow_template_steps",
+    "approval_policies",
+    "integration_connections",
+    "integration_imported_files",
 )
 
 
