@@ -373,6 +373,9 @@ class TestCreateRun:
         assert body["findings"][0]["rule_id"] == "governing-law-california"
         assert body["findings"][0]["status"] == "fail"
         assert body["findings"][0]["finding_status"] == "open"
+        # Deterministic playbook rule matches are always fully confident -
+        # there's no model uncertainty in a rule evaluation.
+        assert body["findings"][0]["confidence"] == 1.0
         # Per-rule results includes passes too.
         assert len(body["results"]) == 3
         # Verify rows landed.

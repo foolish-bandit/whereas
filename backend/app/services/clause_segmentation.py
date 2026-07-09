@@ -364,6 +364,37 @@ def _classify(heading: str | None, body: str) -> str | None:
     return None
 
 
+# Deterministic confidence tiers, keyed on which evidence a candidate
+# actually has. Never fabricated: this is not a model score, it's an
+# honest reflection of how much structural/keyword evidence backs the
+# candidate's boundary and (if any) its clause_type classification.
+#   - heading + a matched clause_type: the strongest signal - a
+#     recognized section boundary (numbered/"Section N"/ARTICLE/
+#     all-caps/title-case heading) whose text also named a known
+#     clause type.
+#   - heading only: a real section boundary, but its label didn't match
+#     any known clause type.
+#   - clause_type only, no heading: a keyword hit inside body text with
+#     no structural boundary behind it - weaker than either heading case.
+#   - neither: an anonymous slice or paragraph (e.g. the whole-document
+#     or paragraph-fallback path) with no heading and no keyword match.
+_CONFIDENCE_HEADING_AND_TYPE = 0.9
+_CONFIDENCE_HEADING_ONLY = 0.75
+_CONFIDENCE_TYPE_ONLY = 0.6
+_CONFIDENCE_NO_EVIDENCE = 0.5
+
+
+def _confidence_for_match(heading: str | None, clause_type: str | None) -> float:
+    """Deterministic confidence tier for a clause candidate's evidence."""
+    if heading and clause_type:
+        return _CONFIDENCE_HEADING_AND_TYPE
+    if heading:
+        return _CONFIDENCE_HEADING_ONLY
+    if clause_type:
+        return _CONFIDENCE_TYPE_ONLY
+    return _CONFIDENCE_NO_EVIDENCE
+
+
 # --------------------------------------------------------------------------
 # Pure segmentation
 # --------------------------------------------------------------------------
@@ -445,7 +476,7 @@ def _slice_to_candidates(
             clause_type_source=(
                 CLAUSE_TYPE_SOURCE_HEURISTIC if clause_type else None
             ),
-            confidence=None,
+            confidence=_confidence_for_match(heading, clause_type),
         )
 
 
@@ -487,7 +518,7 @@ def _merge_short_fragments(
                 heading=heading,
                 clause_type=clause_type,
                 clause_type_source=clause_type_source,
-                confidence=None,
+                confidence=_confidence_for_match(heading, clause_type),
             )
             continue
         yield pending
@@ -507,7 +538,7 @@ def _whole_document_candidate(full_text: str) -> ClauseCandidate:
         heading=None,
         clause_type=None,
         clause_type_source=None,
-        confidence=None,
+        confidence=_CONFIDENCE_NO_EVIDENCE,
     )
 
 
@@ -546,7 +577,7 @@ def _paragraph_candidates(full_text: str) -> Iterable[ClauseCandidate]:
                     clause_type_source=(
                         CLAUSE_TYPE_SOURCE_HEURISTIC if clause_type else None
                     ),
-                    confidence=None,
+                    confidence=_confidence_for_match(heading, clause_type),
                 )
         cursor = match.end()
     if cursor < n:
@@ -563,7 +594,7 @@ def _paragraph_candidates(full_text: str) -> Iterable[ClauseCandidate]:
                 clause_type_source=(
                     CLAUSE_TYPE_SOURCE_HEURISTIC if clause_type else None
                 ),
-                confidence=None,
+                confidence=_confidence_for_match(heading, clause_type),
             )
 
 

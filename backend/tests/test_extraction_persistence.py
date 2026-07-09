@@ -396,3 +396,137 @@ async def test_local_provider_does_not_record_remote_provider_audit(
     await extract_and_persist_metadata(session, contract=contract)
 
     assert session.audit_events == []
+
+
+# --------------------------------------------------------------------------
+# Validation-error reask loop (Instructor pattern)
+# --------------------------------------------------------------------------
+
+
+async def test_reask_recovers_from_invalid_first_response(
+    session: InMemorySession,
+    contract: Contract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First response fails schema validation; the reask response is valid."""
+    monkeypatch.setattr(extraction.settings, "LITELLM_PROVIDER", "ollama")
+    calls: list[list[dict[str, Any]]] = []
+
+    async def fake_acompletion(**kwargs: Any) -> SimpleNamespace:
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            # confidence out of range -> fails MetadataExtractionResponse validation
+            return _litellm_response(
+                {
+                    "governing_law": _field_payload(
+                        value="Delaware",
+                        span="the State of Delaware",
+                        confidence=1.7,
+                    )
+                }
+            )
+        return _litellm_response(
+            {
+                "governing_law": _field_payload(
+                    value="Delaware",
+                    span="the State of Delaware",
+                    confidence=0.9,
+                )
+            }
+        )
+
+    monkeypatch.setattr(extraction.litellm, "acompletion", fake_acompletion)
+
+    rows = await extract_and_persist_metadata(session, contract=contract)
+
+    assert len(calls) == 2
+    # The reask conversation carries the original messages, the model's
+    # prior (invalid) reply, and a corrective follow-up.
+    reask_messages = calls[1]
+    assert len(reask_messages) == len(calls[0]) + 2
+    assert reask_messages[-2]["role"] == "assistant"
+    assert reask_messages[-1]["role"] == "user"
+    assert "failed validation" in reask_messages[-1]["content"]
+
+    assert len(rows) == 1
+    assert rows[0].field_name == "governing_law"
+    assert rows[0].confidence == 0.9
+
+
+async def test_reask_failure_raises_after_one_attempt(
+    session: InMemorySession,
+    contract: Contract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both the original response and the reask response are invalid."""
+    monkeypatch.setattr(extraction.settings, "LITELLM_PROVIDER", "ollama")
+    call_count = 0
+
+    async def fake_acompletion(**kwargs: Any) -> SimpleNamespace:
+        nonlocal call_count
+        call_count += 1
+        return _litellm_response(
+            {
+                "governing_law": _field_payload(
+                    value="Delaware",
+                    span="the State of Delaware",
+                    confidence=1.7,  # always out of range
+                )
+            }
+        )
+
+    monkeypatch.setattr(extraction.litellm, "acompletion", fake_acompletion)
+
+    with pytest.raises(ExtractionError, match="failed schema validation after reask"):
+        await extract_and_persist_metadata(session, contract=contract)
+
+    # Exactly one reask attempt: the original call plus one retry, no more.
+    assert call_count == 2
+
+
+# --------------------------------------------------------------------------
+# Structured output passthrough (EXTRACTION_STRUCTURED_OUTPUT)
+# --------------------------------------------------------------------------
+
+
+async def test_structured_output_flag_off_uses_plain_json_object(
+    session: InMemorySession,
+    contract: Contract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extraction.settings, "LITELLM_PROVIDER", "ollama")
+    monkeypatch.setattr(extraction.settings, "EXTRACTION_STRUCTURED_OUTPUT", False)
+    seen_kwargs: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> SimpleNamespace:
+        seen_kwargs.update(kwargs)
+        return _litellm_response({})
+
+    monkeypatch.setattr(extraction.litellm, "acompletion", fake_acompletion)
+
+    await extract_and_persist_metadata(session, contract=contract)
+
+    assert seen_kwargs["response_format"] == {"type": "json_object"}
+
+
+async def test_structured_output_flag_on_passes_json_schema(
+    session: InMemorySession,
+    contract: Contract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extraction.settings, "LITELLM_PROVIDER", "ollama")
+    monkeypatch.setattr(extraction.settings, "EXTRACTION_STRUCTURED_OUTPUT", True)
+    seen_kwargs: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> SimpleNamespace:
+        seen_kwargs.update(kwargs)
+        return _litellm_response({})
+
+    monkeypatch.setattr(extraction.litellm, "acompletion", fake_acompletion)
+
+    await extract_and_persist_metadata(session, contract=contract)
+
+    response_format = seen_kwargs["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "metadata_extraction_response"
+    assert "schema" in response_format["json_schema"]
