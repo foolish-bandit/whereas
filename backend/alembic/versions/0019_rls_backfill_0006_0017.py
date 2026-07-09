@@ -42,6 +42,18 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+# Tables that already had RLS before this migration (0005's frozen set).
+_PREVIOUSLY_COVERED_TABLES: tuple[str, ...] = (
+    "contracts",
+    "extracted_fields",
+    "clauses",
+    "playbooks",
+    "deviation_findings",
+    "playbook_review_runs",
+    "audit_events",
+    "users",
+)
+
 # The sixteen direct-org tables this migration newly covers. Kept as a
 # local, pinned tuple (rather than importing `_DIRECT_ORG_TABLES`, which
 # will keep growing) so downgrade() only ever touches what THIS migration
@@ -67,7 +79,15 @@ _BACKFILLED_TABLES: tuple[str, ...] = (
 
 
 def upgrade() -> None:
-    op.execute(build_full_migration_sql())
+    # Pass the frozen as-of-0019 table set: relying on rls.py's default
+    # (which keeps growing with the schema) would make a fresh-database
+    # replay of this migration reference tables that don't exist yet the
+    # moment a later migration adds one.
+    op.execute(
+        build_full_migration_sql(
+            tables=_PREVIOUSLY_COVERED_TABLES + _BACKFILLED_TABLES
+        )
+    )
 
 
 def downgrade() -> None:

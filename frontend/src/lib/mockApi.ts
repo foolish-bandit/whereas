@@ -17,6 +17,7 @@ import {
   MOCK_FAILED_ID,
   MOCK_LIST,
   MOCK_MARKDOWN_BY_CONTRACT_ID,
+  MOCK_NDA_CLAUSES,
   MOCK_NDA_ID,
   MOCK_SIGNATURE_OUT_ID,
   MOCK_EXECUTED_ID,
@@ -131,6 +132,7 @@ import type {
   ManualSyncResult,
   UpdateConnectionRequest,
 } from "../types/integrations";
+import type { AskCitation, AskRequest, AskResponse } from "../types/qa";
 import {
   MOCK_DEMO_ORG_ID,
   MOCK_INBOX_ITEMS,
@@ -5143,5 +5145,131 @@ export async function triggerIntegrationSync(
     contracts_created: 1,
     skipped: 2,
     cursor: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Q&A (RAG) — demo mode for POST /api/qa/ask
+//
+// Only the sample NDA (`MOCK_NDA_ID`) has segmented clauses in demo
+// data, so it's the only contract the canned matcher can answer
+// against — mirroring the real backend, where a contract with no
+// indexed clauses always falls through to the grounded refusal.
+// Quotes are matched verbatim against each clause's own text (never
+// paraphrased) and `start_offset` / `end_offset` are computed against
+// that clause text, exactly like `app.api.qa._validate_citations`.
+// ---------------------------------------------------------------------------
+
+const NDA_CONTRACT_TITLE =
+  MOCK_LIST.find((c) => c.id === MOCK_NDA_ID)?.title ?? "Mutual NDA (sample)";
+
+function demoCitation(clauseHeading: string, quote: string): AskCitation {
+  const clause = MOCK_NDA_CLAUSES.find((c) => c.heading === clauseHeading);
+  if (!clause) {
+    throw new Error(`mockApi: demo clause not found: ${clauseHeading}`);
+  }
+  const start = clause.text.indexOf(quote);
+  if (start < 0) {
+    throw new Error(
+      `mockApi: demo quote not found in clause "${clauseHeading}": ${quote}`,
+    );
+  }
+  return {
+    contract_id: MOCK_NDA_ID,
+    contract_title: NDA_CONTRACT_TITLE,
+    clause_id: clause.id,
+    heading: clause.heading,
+    quote,
+    start_offset: start,
+    end_offset: start + quote.length,
+  };
+}
+
+interface DemoAskEntry {
+  keywords: string[];
+  answer: string;
+  confidence: number;
+  citations: AskCitation[];
+}
+
+const DEMO_ASK_ENTRIES: DemoAskEntry[] = [
+  {
+    keywords: ["term", "duration", "how long"],
+    answer:
+      "The agreement's term is twenty-four (24) months from the Effective " +
+      "Date. Confidentiality obligations survive for an additional three " +
+      "(3) years after expiration or termination.",
+    confidence: 0.87,
+    citations: [
+      demoCitation(
+        "2. Term",
+        "a period of twenty-four (24) months from the Effective Date",
+      ),
+    ],
+  },
+  {
+    keywords: ["governing law", "jurisdiction", "which law", "what law"],
+    answer: "This Agreement is governed by the laws of the State of Delaware.",
+    confidence: 0.92,
+    citations: [
+      demoCitation("4. Governing Law", "the laws of the State of Delaware"),
+    ],
+  },
+  {
+    keywords: ["terminat", "notice period", "cancel"],
+    answer:
+      "Either Party may terminate the Agreement at any time upon thirty " +
+      "(30) days' prior written notice to the other Party.",
+    confidence: 0.85,
+    citations: [
+      demoCitation("5. Termination", "thirty (30) days' prior written notice"),
+    ],
+  },
+];
+
+const DEMO_ASK_REFUSAL =
+  "I could not find an answer to this question in your contracts. " +
+  "Whereas only answers from indexed contract text and does not guess " +
+  "or provide legal advice.";
+
+function findDemoAnswer(question: string): AskResponse | null {
+  const q = question.toLowerCase();
+  for (const entry of DEMO_ASK_ENTRIES) {
+    if (entry.keywords.some((k) => q.includes(k))) {
+      return {
+        answerable: true,
+        answer: entry.answer,
+        citations: entry.citations,
+        confidence: entry.confidence,
+        model: "demo-model",
+      };
+    }
+  }
+  return null;
+}
+
+export async function askQuestion(
+  request: AskRequest,
+  options: ApiOptions = {},
+): Promise<AskResponse> {
+  await delay(MOCK_LATENCY_MS, options.signal);
+  if (request.contract_id) {
+    const detail =
+      sessionDetailById[request.contract_id] ??
+      MOCK_DETAIL_BY_ID[request.contract_id];
+    if (!detail) {
+      throw new ApiError(404, "Contract not found.");
+    }
+  }
+  const scopedToNda =
+    !request.contract_id || request.contract_id === MOCK_NDA_ID;
+  const match = scopedToNda ? findDemoAnswer(request.question) : null;
+  if (match) return match;
+  return {
+    answerable: false,
+    answer: DEMO_ASK_REFUSAL,
+    citations: [],
+    confidence: 0,
+    model: null,
   };
 }

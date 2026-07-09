@@ -32,6 +32,8 @@ Alembic migration that follows; we don't execute SQL from here.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 # --------------------------------------------------------------------------
 # Public configuration
 # --------------------------------------------------------------------------
@@ -207,16 +209,30 @@ def _indirect_policy_sql(table: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def build_full_migration_sql() -> str:
+def build_full_migration_sql(tables: Sequence[str] | None = None) -> str:
     """Return the full RLS migration SQL as a single string.
 
     The output is safe to re-run: role creation is gated on existence,
     GRANTs are idempotent, ENABLE/FORCE RLS are idempotent, and policies
     are dropped before being recreated.
+
+    Alembic migrations MUST pass ``tables`` — a frozen, era-correct list
+    of the tenant-scoped tables that exist as of that migration. This
+    module's table lists keep growing with the schema, so a migration
+    that relies on the default would break fresh-database replays as
+    soon as a later migration adds a table (0005 hit exactly this when
+    0019 expanded the lists). The default (all currently known tables)
+    is for tests and ad-hoc inspection of the head-state policy set.
     """
+    if tables is None:
+        selected = set(_DIRECT_ORG_TABLES) | set(_INDIRECT_ORG_TABLES)
+    else:
+        selected = set(tables)
     parts: list[str] = [_create_role_sql(), _grant_sql()]
     for table in _DIRECT_ORG_TABLES:
-        parts.append(_direct_policy_sql(table))
+        if table in selected:
+            parts.append(_direct_policy_sql(table))
     for table in _INDIRECT_ORG_TABLES:
-        parts.append(_indirect_policy_sql(table))
+        if table in selected:
+            parts.append(_indirect_policy_sql(table))
     return "\n".join(parts)

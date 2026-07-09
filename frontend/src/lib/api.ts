@@ -109,6 +109,7 @@ import type {
   ManualSyncResult,
   UpdateConnectionRequest,
 } from "../types/integrations";
+import type { AskRequest, AskResponse } from "../types/qa";
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
 
@@ -2402,6 +2403,32 @@ export async function listIntegrationFolders(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    },
+    options,
+  );
+  return scrubSecrets(data);
+}
+
+// ---------------------------------------------------------------------------
+// Q&A (RAG) — POST /api/qa/ask
+//
+// answerable: false is a grounded refusal, not an error: empty
+// citations, confidence 0, a fixed refusal message. 403 means a
+// pre-LLM policy hook blocked the call; 503 means the LLM is
+// unavailable. Both surface as ApiError via the shared error mapping.
+// ---------------------------------------------------------------------------
+
+export async function askQuestion(
+  request: AskRequest,
+  options: ApiOptions = {},
+): Promise<AskResponse> {
+  if (isDemoMode()) return mockApi.askQuestion(request, options);
+  const data = await call<AskResponse>(
+    "/api/qa/ask",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
     },
     options,
   );

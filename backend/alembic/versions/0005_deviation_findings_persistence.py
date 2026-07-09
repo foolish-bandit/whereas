@@ -63,6 +63,22 @@ down_revision: str | Sequence[str] | None = "0004_playbook_schema_metadata"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# The tenant-scoped tables that exist as of THIS migration. Frozen here
+# (rather than relying on `app.security.rls`'s ever-growing lists) so a
+# fresh-database replay of 0005 never references tables that later
+# migrations create — `rls.py` grew in 0019 and briefly broke exactly
+# that replay.
+_RLS_TABLES_AS_OF_0005: tuple[str, ...] = (
+    "contracts",
+    "extracted_fields",
+    "clauses",
+    "playbooks",
+    "deviation_findings",
+    "playbook_review_runs",
+    "audit_events",
+    "users",
+)
+
 
 def upgrade() -> None:
     """Drop legacy deviation_findings, create the persisted-findings schema."""
@@ -250,7 +266,7 @@ def upgrade() -> None:
     #    legacy indirect deviation_findings policy was already dropped
     #    above with the table.
     # ------------------------------------------------------------------
-    op.execute(build_full_migration_sql())
+    op.execute(build_full_migration_sql(tables=_RLS_TABLES_AS_OF_0005))
 
 
 def downgrade() -> None:

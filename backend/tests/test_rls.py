@@ -160,3 +160,36 @@ class TestFullMigrationSql:
         first = build_full_migration_sql()
         second = build_full_migration_sql()
         assert first == second
+
+    def test_explicit_tables_arg_limits_policy_output(self) -> None:
+        # Migrations pass a frozen, era-correct table list so that a
+        # fresh-database replay never references tables created by later
+        # migrations (0005 broke exactly this way when rls.py's lists
+        # grew in 0019).
+        sql = build_full_migration_sql(tables=("contracts", "clauses"))
+        assert "contracts_tenant_isolation" in sql
+        assert "clauses_tenant_isolation" in sql
+        assert "playbooks_tenant_isolation" not in sql
+        assert "clause_templates_tenant_isolation" not in sql
+        # Role/grant preamble is always emitted.
+        assert "CREATE ROLE whereas_app" in sql
+
+    def test_migration_0005_frozen_list_matches_builder_output(self) -> None:
+        # The frozen list in alembic/versions/0005_* must stay renderable:
+        # every table it names has a policy builder entry.
+        frozen_0005 = (
+            "contracts",
+            "extracted_fields",
+            "clauses",
+            "playbooks",
+            "deviation_findings",
+            "playbook_review_runs",
+            "audit_events",
+            "users",
+        )
+        sql = build_full_migration_sql(tables=frozen_0005)
+        for table in frozen_0005:
+            assert f"{table}_tenant_isolation" in sql
+        # And nothing beyond the frozen set leaks in.
+        for table in set(TENANT_SCOPED_TABLES) - set(frozen_0005):
+            assert f"{table}_tenant_isolation" not in sql

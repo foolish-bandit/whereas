@@ -5,6 +5,7 @@ import ActivityExport from "../components/ActivityExport";
 import ActivityTimeline from "../components/ActivityTimeline";
 import ApprovalGateRemediation from "../components/ApprovalGateRemediation";
 import SuggestedReviewChecklist from "../components/SuggestedReviewChecklist";
+import AskPanel from "../components/AskPanel";
 import ClausesPanel from "../components/ClausesPanel";
 import DocumentViewer from "../components/DocumentViewer";
 import DuplicateMergePanel from "../components/DuplicateMergePanel";
@@ -137,6 +138,7 @@ type CompareSaveState =
 type SidebarTab =
   | "metadata"
   | "clauses"
+  | "ask"
   | "review"
   | "lifecycle"
   | "signers"
@@ -157,7 +159,7 @@ type SidebarTab =
 type WorkspaceMode = "read" | "negotiate" | "history";
 
 const MODE_SUB_TABS: Record<WorkspaceMode, readonly SidebarTab[]> = {
-  read: ["metadata", "clauses"],
+  read: ["metadata", "clauses", "ask"],
   negotiate: ["review", "lifecycle", "signers"],
   history: ["history"],
 };
@@ -165,6 +167,7 @@ const MODE_SUB_TABS: Record<WorkspaceMode, readonly SidebarTab[]> = {
 const TAB_TO_MODE: Record<SidebarTab, WorkspaceMode> = {
   metadata: "read",
   clauses: "read",
+  ask: "read",
   review: "negotiate",
   lifecycle: "negotiate",
   signers: "negotiate",
@@ -361,6 +364,21 @@ export default function ContractWorkspacePage() {
       if (!clauseHasValidSpan(clause, contract.full_text)) return null;
       return { start: clause.span_start, end: clause.span_end };
     }
+    if (selectedKey.startsWith("ask:")) {
+      // Ask citation keys are `ask:<clauseId>:<startOffset>:<endOffset>`,
+      // where the offsets are relative to the cited clause's own text
+      // (matching `AskCitation`, mirrors `app.api.qa._validate_citations`).
+      // Resolve to a document-absolute span via the clause's span_start.
+      const [, clauseId, startStr, endStr] = selectedKey.split(":");
+      const clause = contract.clauses.find((c) => c.id === clauseId);
+      if (!clause) return null;
+      if (!clauseHasValidSpan(clause, contract.full_text)) return null;
+      const start = clause.span_start + Number(startStr);
+      const end = clause.span_start + Number(endStr);
+      if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
+      if (end > clause.span_end) return null;
+      return { start, end };
+    }
     if (selectedKey.startsWith("review:")) {
       // Review evidence keys resolve through the active review run.
       // Both the matcher's per-rule results and the persisted findings
@@ -429,7 +447,8 @@ export default function ContractWorkspacePage() {
     if (!selectedKey) return;
     if (
       selectedKey.startsWith("clause:") ||
-      selectedKey.startsWith("review:")
+      selectedKey.startsWith("review:") ||
+      selectedKey.startsWith("ask:")
     ) {
       return;
     }
@@ -919,6 +938,7 @@ function Sidebar({
       label: "Clauses",
       count: contract.clauses.length,
     },
+    { id: "ask" as const, label: "Ask" },
     {
       id: "review" as const,
       label: "Review",
@@ -981,6 +1001,19 @@ function Sidebar({
           fullText={contract.full_text}
           selectedKey={selectedKey}
           onSelect={onSelect}
+        />
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="tab-ask"
+        hidden={activeTab !== "ask"}
+        data-testid="rail-tab-ask"
+      >
+        <AskPanel
+          contractId={contract.id}
+          onCitationSelect={(clauseId, start, end) => {
+            onSelect(`ask:${clauseId}:${start}:${end}`);
+          }}
         />
       </div>
       <div
