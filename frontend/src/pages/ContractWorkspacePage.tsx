@@ -697,12 +697,8 @@ export default function ContractWorkspacePage() {
         artifactsState={artifactsState}
         downloadState={downloadState}
         onDownload={onDownload}
-        onOverflowAction={(action) => {
-          if (action === "send_docuseal") {
-            setActiveTab("signers");
-          }
-          // Other actions (edit / archive / move) wait for follow-up
-          // prompts. The menu items render today as discoverable affordances.
+        onOverflowAction={() => {
+          setActiveTab("signers");
         }}
       />
 
@@ -1065,7 +1061,7 @@ interface RepositoryHeaderProps {
   artifactsState: ArtifactsState;
   downloadState: DownloadState;
   onDownload: () => void;
-  onOverflowAction?: (action: "send_docuseal" | "edit" | "archive" | "move") => void;
+  onOverflowAction?: () => void;
 }
 
 function RepositoryHeader({
@@ -1158,28 +1154,22 @@ function RepositoryHeader({
                 className="absolute right-0 z-10 mt-1 w-48 rounded border border-rule bg-canvas py-1 text-sm shadow-md"
                 data-testid="contract-header-overflow-menu"
               >
-                {(
-                  [
-                    ["send_docuseal", "Send to DocuSeal"],
-                    ["edit", "Edit details"],
-                    ["archive", "Archive"],
-                    ["move", "Move to folder"],
-                  ] as const
-                ).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onOverflowAction?.(k);
-                    }}
-                    className="block w-full px-3 py-1.5 text-left text-ink hover:bg-canvas-subtle"
-                    data-testid={`contract-header-overflow-${k}`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onOverflowAction?.();
+                  }}
+                  className="block w-full px-3 py-1.5 text-left text-ink hover:bg-canvas-subtle"
+                  data-testid="contract-header-overflow-send_docuseal"
+                >
+                  Send to DocuSeal
+                </button>
+                <p className="border-t border-rule px-3 py-2 text-xs text-ink-subtle">
+                  Edit details, archive, and move actions are available from the
+                  Repository list until persisted record actions are wired here.
+                </p>
               </div>
             )}
           </div>

@@ -32,6 +32,12 @@ interface RoadmapIntegration {
   description: string;
 }
 
+interface InspirationProject {
+  name: string;
+  pattern: string;
+  whereasBet: string;
+}
+
 const ROADMAP_INTEGRATIONS: RoadmapIntegration[] = [
   {
     name: "Microsoft Word",
@@ -80,6 +86,39 @@ const ROADMAP_INTEGRATIONS: RoadmapIntegration[] = [
 const ROADMAP_CATEGORIES = Array.from(
   new Set(ROADMAP_INTEGRATIONS.map((i) => i.category)),
 );
+
+const INSPIRATION_PROJECTS: InspirationProject[] = [
+  {
+    name: "Accord Project",
+    pattern: "Executable templates with structured variables",
+    whereasBet: "Template readiness checks and fallback clause previews",
+  },
+  {
+    name: "Contract Playbook AI",
+    pattern: "Playbook-guided findings and redline actions",
+    whereasBet: "Turn review findings into reviewer tasks and clause swaps",
+  },
+  {
+    name: "OpenContracts",
+    pattern: "Legal documents as a relationship graph",
+    whereasBet: "Connect parties, clauses, approvals, requests, and records",
+  },
+  {
+    name: "DocuSeal / Documenso",
+    pattern: "Self-hosted signing packets, links, webhooks, and audit trails",
+    whereasBet: "Signature readiness checklist before handoff",
+  },
+  {
+    name: "Twenty CRM",
+    pattern: "Custom objects, saved views, workflows, and extensibility",
+    whereasBet: "Configurable repository views without abandoning CLM defaults",
+  },
+  {
+    name: "n8n / Activepieces",
+    pattern: "Self-hostable trigger/action automation",
+    whereasBet: "Auditable recipes for intake, approval, renewal, and signature events",
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Page
@@ -437,6 +476,33 @@ export default function IntegrationsPage() {
         })}
       </section>
 
+
+      <section
+        className="mt-10 space-y-4"
+        data-testid="integrations-inspiration-section"
+        aria-labelledby="integrations-inspiration-heading"
+      >
+        <div>
+          <h2
+            id="integrations-inspiration-heading"
+            className="text-xs font-semibold uppercase tracking-wider text-ink-muted"
+          >
+            Open-source inspiration radar
+          </h2>
+          <p className="mt-2 max-w-3xl text-xs text-ink-muted">
+            Research-backed product bets from open-source legal, signing, CRM,
+            and automation projects. These are not active connectors; they help
+            evaluators understand where Whereas should integrate, borrow
+            patterns, or deliberately stay focused.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {INSPIRATION_PROJECTS.map((project) => (
+            <InspirationCard key={project.name} project={project} />
+          ))}
+        </div>
+      </section>
+
       {pickerForConnectionId &&
         (() => {
           const connection = connections.find(
@@ -781,6 +847,27 @@ function DocuSealCard() {
           Open DocuSeal
         </a>
       </div>
+    </article>
+  );
+}
+
+function InspirationCard({ project }: { project: InspirationProject }) {
+  const slug = slugify(project.name);
+  return (
+    <article
+      className="rounded-lg border border-rule bg-canvas p-4"
+      data-testid={`inspiration-card-${slug}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">{project.name}</h3>
+          <p className="mt-0.5 text-xs text-ink-muted">{project.pattern}</p>
+        </div>
+        <Pill tone="info" variant="soft">
+          Idea
+        </Pill>
+      </div>
+      <p className="mt-2 text-xs text-ink">{project.whereasBet}</p>
     </article>
   );
 }
