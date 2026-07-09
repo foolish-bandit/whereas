@@ -169,7 +169,7 @@ def _wrapped_org_key(org_id: uuid.UUID) -> bytes:
 
 
 async def _create_user_org(
-    session: AsyncSession, *, email: str | None = None
+    session: AsyncSession, *, email: str | None = None, is_admin: bool = False
 ) -> UserOrg:
     org = Organization(
         id=uuid.uuid4(),
@@ -184,6 +184,7 @@ async def _create_user_org(
         password_hash="hash",
         display_name="Test User",
         is_active=True,
+        is_admin=is_admin,
     )
     session.add_all([org, user])
     await session.commit()
@@ -934,3 +935,138 @@ async def test_send_to_docuseal_legacy_contract_falls_back_to_s3_key(
     assert body["filename"] is not None
     assert stub_docuseal["calls"][0]["document_bytes"] == _PDF_BYTES
     assert stub_docuseal["calls"][0]["mime_type"] == "application/pdf"
+
+
+# ---------------------------------------------------------------------------
+# Authorization: approval_override is admin-only
+# ---------------------------------------------------------------------------
+
+
+async def _create_blocking_policy(
+    session: AsyncSession, *, org_id: uuid.UUID
+) -> ApprovalPolicy:
+    """A required, unmet ``ApprovalPolicy`` so ``can_send_contract_to_docuseal``
+    returns ``allowed=False`` (mirrors ``test_contract_approval_gate_api.py``'s
+    ``_create_policy`` helper)."""
+    template = ApprovalWorkflowTemplate(
+        organization_id=org_id,
+        name=f"Template {uuid.uuid4().hex[:8]}",
+        status="active",
+    )
+    session.add(template)
+    await session.flush()
+    session.add(
+        ApprovalWorkflowTemplateStep(
+            organization_id=org_id,
+            workflow_template_id=template.id,
+            step_order=1,
+            title="Legal review",
+        )
+    )
+    await session.flush()
+    policy = ApprovalPolicy(
+        organization_id=org_id,
+        name="Standard Legal Review",
+        status="active",
+        workflow_template_id=template.id,
+        request_type="new_contract",
+        contract_type="NDA",
+        priority="high",
+        applies_to_generated_contracts=True,
+        auto_attach=True,
+    )
+    session.add(policy)
+    await session.commit()
+    return policy
+
+
+async def _seed_blocked_contract(
+    session: AsyncSession, *, user_org: UserOrg
+) -> Contract:
+    """A contract whose approval gate is blocked: linked to a
+    ``ContractRequest`` that matches a required, unmet ``ApprovalPolicy``."""
+    await _create_blocking_policy(session, org_id=user_org.org.id)
+    contract = await _seed_contract(
+        session,
+        user_org=user_org,
+        s3_key=f"documents/{uuid.uuid4()}.enc",
+        mime_type="application/pdf",
+        title="NDA with Acme",
+    )
+    FakeStorage.blobs[contract.s3_key] = _PDF_BYTES
+    request = ContractRequest(
+        organization_id=user_org.org.id,
+        title="NDA with Acme",
+        request_type="new_contract",
+        contract_type="NDA",
+        priority="high",
+        linked_contract_id=contract.id,
+    )
+    session.add(request)
+    await session.commit()
+    return contract
+
+
+async def test_send_to_docuseal_override_by_non_admin_returns_403(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_docuseal: dict[str, Any],
+) -> None:
+    """A non-admin cannot use ``approval_override``, even on a contract
+    whose gate is blocked and even with a reason supplied."""
+    user_org = await _create_user_org(db_session, is_admin=False)
+    contract = await _seed_blocked_contract(db_session, user_org=user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract.id}/send-to-docuseal",
+        headers=_headers(user_org.user),
+        json={
+            "signers": _VALID_SIGNERS,
+            "approval_override": True,
+            "approval_override_reason": "Deal closes today.",
+        },
+    )
+    assert response.status_code == 403
+    assert stub_docuseal["calls"] == []
+
+
+async def test_send_to_docuseal_override_by_admin_succeeds_when_gate_blocked(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_docuseal: dict[str, Any],
+) -> None:
+    """An org admin CAN override a blocked gate, given a reason."""
+    user_org = await _create_user_org(db_session, is_admin=True)
+    contract = await _seed_blocked_contract(db_session, user_org=user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract.id}/send-to-docuseal",
+        headers=_headers(user_org.user),
+        json={
+            "signers": _VALID_SIGNERS,
+            "approval_override": True,
+            "approval_override_reason": "Deal closes today.",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert len(stub_docuseal["calls"]) == 1
+
+
+async def test_send_to_docuseal_blocked_gate_without_override_returns_409_for_admin_too(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    stub_docuseal: dict[str, Any],
+) -> None:
+    """Being an admin doesn't bypass the gate on its own — the override
+    flag must still be explicitly set."""
+    user_org = await _create_user_org(db_session, is_admin=True)
+    contract = await _seed_blocked_contract(db_session, user_org=user_org)
+
+    response = await client.post(
+        f"/api/contracts/{contract.id}/send-to-docuseal",
+        headers=_headers(user_org.user),
+        json={"signers": _VALID_SIGNERS},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "approval_required"
+    assert stub_docuseal["calls"] == []

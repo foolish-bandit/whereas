@@ -29,6 +29,7 @@ Architectural notes
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -40,6 +41,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models import (
     AgreementTemplate,
     AgreementTemplateArtifact,
@@ -156,7 +158,8 @@ async def generate_docx_from_template(
         org_master_key=org_master_key,
     )
 
-    rendered_bytes = _render_docx(template_bytes, cleaned_values)
+    # docxtpl/Jinja rendering is CPU-bound; keep it off the event loop.
+    rendered_bytes = await asyncio.to_thread(_render_docx, template_bytes, cleaned_values)
     file_hash = hashlib.sha256(rendered_bytes).hexdigest()
 
     contract = Contract(
@@ -428,6 +431,12 @@ def _extract_plain_text_for_fallback(docx_bytes: bytes) -> str | None:
 
         ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
         with zipfile.ZipFile(BytesIO(docx_bytes)) as archive:
+            # Decompression-bomb guard: mirrors the check applied to
+            # uploaded DOCX files, applied here too since this reads
+            # the rendered output back out of a zip archive.
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
+            if total_uncompressed > get_settings().DOCX_MAX_UNCOMPRESSED_BYTES:
+                return None
             try:
                 xml = archive.read("word/document.xml")
             except KeyError:

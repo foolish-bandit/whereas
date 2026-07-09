@@ -407,7 +407,12 @@ def _looks_like_docx(file_bytes: bytes) -> bool:
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
             names = set(archive.namelist())
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
     except zipfile.BadZipFile:
+        return False
+    # Decompression-bomb guard: a small malicious zip can declare wildly
+    # oversized member sizes. Reject before anything downstream extracts it.
+    if total_uncompressed > get_settings().DOCX_MAX_UNCOMPRESSED_BYTES:
         return False
     return "[Content_Types].xml" in names and "word/document.xml" in names
 

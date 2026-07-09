@@ -19,6 +19,7 @@ Design notes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -117,7 +118,11 @@ async def create_markdown_snapshot_for_contract(
     from app.models import ContractMarkdownSnapshot
 
     try:
-        result = convert_document_to_markdown(
+        # MarkItDown conversion writes a temp file and can shell out to
+        # other libraries under the hood; keep it off the event loop so
+        # one conversion doesn't stall every other in-flight request.
+        result = await asyncio.to_thread(
+            convert_document_to_markdown,
             file_bytes=file_bytes,
             mime_type=contract.mime_type,
             filename=None,

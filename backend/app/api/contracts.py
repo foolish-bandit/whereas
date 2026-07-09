@@ -1,6 +1,7 @@
 """Contract upload, listing, detail, and download routes."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -12,7 +13,17 @@ from datetime import date
 from io import BytesIO
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +94,7 @@ from app.security.encryption import (
     load_instance_key,
     load_org_master_key,
 )
+from app.security.rate_limit import UPLOAD_RATE_LIMIT, limiter
 from app.services import activity_export
 from app.services import activity_timeline as activity_timeline_module
 from app.services.approval_gating import can_send_contract_to_docuseal
@@ -168,7 +180,9 @@ _SAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @router.post("/upload", response_model=ContractUploadResponse, status_code=201)
+@limiter.limit(UPLOAD_RATE_LIMIT)
 async def upload_contract(
+    request: Request,
     file: Annotated[UploadFile, File()],
     session: DbSession,
     title: Annotated[str | None, Form()] = None,
@@ -186,7 +200,9 @@ async def upload_contract(
     )
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    parsed = _parse_or_http(file_bytes=file_bytes, filename=filename)
+    # Docling parsing is CPU-bound and can run long; keep it off the event
+    # loop so one large upload doesn't stall every other in-flight request.
+    parsed = await asyncio.to_thread(_parse_or_http, file_bytes=file_bytes, filename=filename)
 
     # PR #66 — deterministic, best-effort metadata extraction. We
     # compute it before persisting the Contract so the chosen title
@@ -1617,7 +1633,9 @@ async def preview_contract_artifact(
     )
 
     try:
-        preview_result = convert_to_pdf_preview(plaintext, mime_type)
+        # LibreOffice conversion shells out to a subprocess and can take
+        # a couple seconds; run it off the event loop.
+        preview_result = await asyncio.to_thread(convert_to_pdf_preview, plaintext, mime_type)
     except ConverterUnavailableError as exc:
         raise HTTPException(
             status_code=422,
@@ -2478,6 +2496,12 @@ async def send_contract_to_docuseal(
             detail="Contract encryption metadata is missing.",
         )
 
+    if payload.approval_override and not user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only administrators can override the approval gate.",
+        )
+
     gate = await can_send_contract_to_docuseal(session, contract, user.organization_id)
     if not gate.allowed and not payload.approval_override:
         raise HTTPException(
@@ -2687,7 +2711,12 @@ def _looks_like_docx(file_bytes: bytes) -> bool:
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as archive:
             names = set(archive.namelist())
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
     except zipfile.BadZipFile:
+        return False
+    # Decompression-bomb guard: a small malicious zip can declare wildly
+    # oversized member sizes. Reject before anything downstream extracts it.
+    if total_uncompressed > get_settings().DOCX_MAX_UNCOMPRESSED_BYTES:
         return False
     return "[Content_Types].xml" in names and "word/document.xml" in names
 
@@ -2703,22 +2732,6 @@ def _parse_or_http(*, file_bytes: bytes, filename: str) -> ParsedDocument:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except DocumentParseError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-async def _find_duplicate(
-    session: AsyncSession,
-    organization_id: uuid.UUID,
-    file_hash: str,
-) -> Contract | None:
-    result = await session.execute(
-        select(Contract)
-        .where(
-            Contract.organization_id == organization_id,
-            Contract.file_hash_sha256 == file_hash,
-        )
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
 
 
 async def _get_contract_for_org(

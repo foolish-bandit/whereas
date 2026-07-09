@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     S3_BUCKET: str = "whereas-documents"
     S3_REGION: str = "us-east-1"
     CONTRACT_UPLOAD_MAX_BYTES: int = 50 * 1024 * 1024
+    # Decompression-bomb guard for DOCX (OOXML zip) files: the sum of every
+    # archive member's declared uncompressed size must not exceed this many
+    # bytes. Comfortably above any legitimate contract DOCX, far below what
+    # a hostile small zip could claim to expand into.
+    DOCX_MAX_UNCOMPRESSED_BYTES: int = 500 * 1024 * 1024
 
     # --- LLM ---
     LITELLM_PROVIDER: str = "ollama"
