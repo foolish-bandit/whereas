@@ -1,158 +1,135 @@
 # Finding Remediation Workflow Design
 
-Date: 2026-08-04
-Status: Implemented design
+Date: 2026-08-04  
+Status: Implemented for `v0.1.0-alpha.1`
 
 ## Problem
 
-Whereas can persist deterministic playbook failures and show playbook guidance, but the real workflow stops before execution. Reviewers can acknowledge or ignore a finding, yet they cannot reliably answer three practical questions from the finding itself:
+Whereas could persist deterministic playbook failures and show firm-authored guidance, but the real workflow stopped before execution. Reviewers could acknowledge or ignore a finding without a reliable way to answer:
 
-1. What approved language should we use?
+1. What approved language should be considered?
 2. Why was that language selected?
-3. How do we turn this finding into one traceable unit of work without creating duplicates?
+3. How can the finding become one traceable unit of work without duplicates?
 
-The demo finding surface previously contained a canned suggested redline, but the persisted finding workflow did not have a provenance-aware remediation model. Copying that behavior into production would have been misleading because it would imply generated legal language without an approved source.
+The demo surface previously contained a canned redline. Copying that behavior into production would have implied generated legal language without a firm-approved source.
 
 ## Goal
 
-Add a deterministic, provenance-preserving remediation plan for each persisted failed finding, plus an explicit action that creates, reuses, or reopens one durable Inbox task linked to that finding.
+Give each persisted failed finding a deterministic, provenance-preserving remediation plan and an explicit action that creates, reuses, or reopens one Inbox task linked to that finding.
 
 ## Non-goals
 
 - No automatic Repository record editing.
 - No LLM-generated clause language.
 - No fuzzy or embedding-based template selection.
-- No new task-management subsystem.
-- No automatic task creation for every failed finding.
-- No copying clause text or evidence text into audit-log details, link rows, or Inbox metadata.
+- No second task-management subsystem.
+- No automatic task creation for every failure.
+- No evidence text, guidance text, clause text, or source display names in task metadata, link rows, or audit details.
 
 ## User flow
 
 1. A reviewer opens a persisted playbook review run.
-2. A failed finding shows a `Plan remediation` action.
-3. Whereas loads the plan only when the reviewer opens it.
-4. The plan shows:
-   - the approved language, when available;
-   - its source and source name;
-   - a plain-language selection rationale;
-   - a scope warning when a Clause Manager fallback is more specific than the Repository record;
-   - whether a remediation task already exists.
-5. The reviewer can copy approved language.
-6. The reviewer can create a remediation Inbox task.
-7. Repeating the action returns the same task.
-8. If the task was dismissed, the action reopens that same task instead of creating another historical duplicate.
-9. Whereas never edits the Repository record automatically.
+2. A failed finding exposes **Plan remediation**.
+3. Whereas loads the plan only when the reviewer expands it.
+4. The plan shows approved language when available, its source, a plain-language rationale, any scope warning, and existing task state.
+5. The reviewer may copy approved language explicitly.
+6. The reviewer may create one remediation Inbox task.
+7. Repeating the action returns the existing task.
+8. A dismissed task is reopened in place rather than duplicated.
+9. Superseded findings remain inspectable but cannot create or reopen work. Reviewers must use the latest review run.
 
-## Selection policy
+## Approved-language policy
 
-### Step 1: Playbook language
+### 1. Playbook preferred language
 
 Use `DeviationFinding.preferred_language` when its trimmed value is non-empty.
 
-Response provenance:
+Provenance:
 
 - `source_type`: `playbook_preferred_language`
-- `source_id`: the finding's `playbook_id`
-- `source_name`: the finding's rule title
-- `rationale`: `Firm-authored preferred language was stored with this playbook rule.`
+- `source_id`: finding `playbook_id`
+- `source_name`: finding rule title
+- rationale: firm-authored preferred language was stored with the rule
 
-### Step 2: Clause Manager fallback
+### 2. Clause Manager fallback
 
-When playbook preferred language is absent, find active `ClauseTemplate` rows in the same organization whose normalized `clause_type` equals the finding's normalized `clause_type`.
+When playbook language is absent, consider active `ClauseTemplate` rows in the same organization whose normalized `clause_type` equals the finding's normalized `clause_type`.
 
 Normalization:
 
-- trim leading and trailing whitespace;
+- trim surrounding whitespace;
 - lowercase;
-- replace runs of spaces, hyphens, and underscores with a single underscore.
+- collapse runs of spaces, hyphens, and underscores to one underscore.
 
 Ranking, highest priority first:
 
-1. `preferred` tag present, case-insensitive.
-2. `default` tag present, case-insensitive.
-3. no `jurisdiction` and no `contract_type`.
-4. `updated_at` descending.
-5. UUID string ascending for a stable tie-break.
+1. `preferred` tag, case-insensitive;
+2. `default` tag, case-insensitive;
+3. no `jurisdiction` and no `contract_type`;
+4. `updated_at` descending;
+5. UUID string ascending as a stable tie-break.
 
-A template's `jurisdiction` and `contract_type` do not exclude it in version one. Instead, the response includes `scope_warning` when either value is present so the reviewer can confirm fit. This prevents a silent false-negative while remaining honest about scope.
+A scoped template is not silently excluded in version one. The response carries a scope warning so the reviewer can confirm fit.
 
-Response provenance:
+### 3. No approved source
 
-- `source_type`: `clause_template`
-- `source_id`: Clause Manager template ID
-- `source_name`: Clause Manager template name
-- `rationale`: a deterministic summary of the ranking factors that selected the template
+When neither source exists, return a valid plan with:
 
-### Step 3: No approved language
+- `suggested_language = null`
+- `source_type = none`
+- a clear instruction to add preferred playbook language or an active Clause Manager source
 
-When neither source exists, return a valid plan with `suggested_language = null`, `source_type = none`, and a message instructing the reviewer to add preferred language to the playbook rule or an active Clause Manager template. Task creation remains available because identifying and assigning the work is still useful.
+Task creation remains available because assigning research or drafting work can still be useful. Whereas never fabricates a clause.
 
-## Task and provenance model
+## Persistence model
 
-The final implementation uses a dedicated tenant-scoped link model rather than adding remediation-specific columns to the generic Inbox model.
+Keep Inbox generic. Add a tenant-scoped one-to-one link entity: `FindingRemediationTask`.
 
-`FindingRemediationTask` contains:
+Fields:
 
 - `organization_id`
-- `finding_id` referencing `deviation_findings.id`
-- `inbox_item_id` referencing `inbox_items.id`
+- `finding_id`, foreign key to `deviation_findings`, `ON DELETE CASCADE`
+- `inbox_item_id`, foreign key to `inbox_items`, `ON DELETE CASCADE`
 - `source_type`
 - `source_id`
 - timestamps
 
-Database constraints enforce:
+Constraints:
 
-```text
-UNIQUE (organization_id, finding_id)
-UNIQUE (inbox_item_id)
-```
+- unique `(organization_id, finding_id)`
+- unique `inbox_item_id`
 
-This model has three advantages over an `InboxItem.finding_id` column:
+This creates one durable work record per finding. Completed work is reused. Dismissed work is reopened in place so history does not fragment.
 
-1. Inbox remains a generic work-queue surface instead of accumulating feature-specific linkage fields.
-2. One durable task per finding is enforced independently of editable Inbox status.
-3. Approved-source provenance has a typed home without copying legal text.
+The table has forced PostgreSQL Row-Level Security using the same organization session setting as other tenant-scoped tables.
 
-The link table is included in the Row-Level Security registry and has a direct organization policy. The unique finding link is also the concurrency backstop for racing create requests.
-
-Generic Inbox behavior is protected:
-
-- generic create cannot use `item_type = finding_remediation`;
-- a generic patch cannot convert another item into a remediation item;
-- a generic patch cannot alter the remediation item's contract linkage, item type, or provenance metadata;
-- normal work fields such as status, assignee, due date, priority, title, and description remain editable;
-- soft-dismiss remains available, and the specialized endpoint reopens the same durable task.
-
-Task defaults:
+## Inbox task defaults
 
 - `item_type`: `finding_remediation`
-- `title`: `Remediate: <rule title>`
-- `description`: safe workflow copy that identifies the clause type and directs the reviewer to the linked Repository record, without embedding evidence or approved clause text
-- `assigned_to`: current user
+- title: `Remediate: <rule title>`
+- description: safe workflow copy identifying the clause type and linked Repository record, without legal text
+- assignee: current user unless an active same-organization user is supplied
 - `contract_id`: finding contract
-- `priority` mapping:
-  - blocker or critical to urgent
-  - high to high
-  - medium to normal
-  - low or unknown to low
-- `metadata_json`: identifiers and provenance only
+- priority:
+  - blocker or critical → urgent
+  - high → high
+  - medium → normal
+  - low or unknown → low
+- metadata: identifiers and normalized provenance only
+
+Generic Inbox create/update routes cannot create a remediation item or alter its linkage/provenance. Status, assignment, priority, due date, title, and description remain ordinary work-queue fields.
 
 ## API
 
-### GET plan
+### Inspect plan
 
 `GET /api/contracts/{contract_id}/findings/{finding_id}/remediation`
 
-Returns `FindingRemediationPlanResponse`:
-
-- finding identifiers and status
-- suggested language and provenance
-- rationale and optional scope warning
-- existing task, when present
+Returns finding identity and lifecycle state, approved language and provenance, rationale, optional scope warning, and an existing Inbox task when linked.
 
 Cross-organization findings and mismatched contract/finding pairs return 404.
 
-### POST task
+### Create or reopen task
 
 `POST /api/contracts/{contract_id}/findings/{finding_id}/remediation/task`
 
@@ -165,20 +142,15 @@ Optional body:
 }
 ```
 
-When omitted, the current user is assigned and due date is null for a newly created task.
+The response includes `task`, `created`, `reopened`, and the current remediation plan.
 
-Returns `FindingRemediationTaskResponse`:
+A nested transaction creates the Inbox item and typed link atomically. The unique finding constraint is the concurrency backstop. A racing loser rolls back its savepoint and reloads the winner's task.
 
-- `task`
-- `created`: true only for a new task
-- `reopened`: true only when a dismissed task was reopened
-- current remediation plan
-
-The handler performs an initial lookup, then relies on the unique link constraint as the concurrency backstop. New Inbox and link rows are created inside a nested transaction so a racing loser cannot leave an orphan Inbox item. An `IntegrityError` caused by a concurrent winner is recovered by reloading the existing linked task.
+Superseded findings return 409 for task creation or reopening.
 
 ## Audit
 
-The hash-chained audit log records:
+Task creation and reopening emit distinct hash-chained events:
 
 - `finding.remediation_task.created`
 - `finding.remediation_task.reopened`
@@ -191,7 +163,7 @@ Safe details:
 - review run ID
 - playbook ID
 - rule ID
-- clause type
+- normalized clause type
 - severity
 - source type
 - source ID when present
@@ -201,46 +173,47 @@ Forbidden details:
 - evidence text
 - suggested clause text
 - guidance text
-- source display name
+- source display names
 - counterparty data
 - storage internals
 
-No event is written when an existing non-dismissed task is merely returned.
+No event is emitted when an existing non-dismissed task is merely returned.
 
 ## Frontend
 
-A focused `FindingRemediationCard` is rendered inside each persisted failed finding row.
+`FindingRemediationCard` is rendered inside each persisted failed finding row.
 
 Behavior:
 
-- lazy-load the plan on expansion;
-- abort stale requests when the row unmounts;
-- render provenance before language;
-- copy only on explicit click;
-- create or reopen work through the specialized endpoint;
-- update local state with the returned task;
-- show a deep link to Inbox;
-- render a no-language state without disabling task creation;
-- never render storage or encryption internals;
-- state explicitly that Whereas does not edit the Repository record automatically.
+- lazy plan fetch on expansion;
+- abort stale plan and task requests on unmount or finding change;
+- provenance rendered before approved language;
+- explicit copy action;
+- specialized task endpoint only;
+- local state updated from the returned task;
+- direct Inbox link;
+- honest no-language state;
+- superseded-run warning with no create/reopen action;
+- no storage or encryption internals.
 
-The separate client-side `DEFAULT_DETERMINISTIC_RULES` checklist was removed from the real `ReviewPanel`. Persisted backend playbook runs are the single source of review truth, avoiding duplicate or contradictory findings.
+The old client-only deterministic checklist was removed. Persisted backend playbook runs are the sole review source of truth, preventing duplicate or contradictory findings.
 
 ## Demo mode
 
-A dedicated remediation API client provides deterministic demo plans and keeps task state in module memory. It applies the same source priority as the backend and never implies that approved text was generated by AI. Demo task metadata contains identifiers and provenance only.
+Demo remediation uses the existing session-scoped mock Inbox store, not a private shadow queue. Therefore task creation, listing, completion, dismissal, and reopening remain coherent across the review card and Inbox page.
+
+Demo copy always identifies an approved source and never claims AI generated the language.
 
 ## Security and tenancy
 
-- Every finding, template, task, assignee, and contract query is scoped to `organization_id`.
-- `finding_remediation_tasks` is included in the direct-organization RLS registry.
-- The dedicated foreign-key links do not expose cross-tenant data.
-- The frontend client recursively removes known storage and key-management fields from responses as defense in depth.
-- Audit payloads, task metadata, and link rows contain identifiers, not document text.
-- Generic Inbox endpoints cannot forge or relink remediation work.
+- Every finding, template, task link, task, assignee, and Repository record query is organization-scoped.
+- The new link table is included in the central RLS registry and migration policy.
+- Legal text stays in its authoritative source tables and response body only.
+- The frontend secret scrubber remains active on live responses.
+- Audit and work-queue metadata contain identifiers, not document content.
 
-## Release policy
+## Release and verification policy
 
-This feature ships as `v0.1.0-alpha.1`, reflecting the repository's documented pre-v0.1 evaluation status. Backend, frontend, API metadata, changelog, and release notes use the same version.
+This feature ships as `v0.1.0-alpha.1` because Whereas remains an evaluation-stage pre-1.0 project.
 
-Verification is run locally first using the repository's complete test, type-check, build, lint, audit, migration, and Compose gates. The existing GitHub Actions workflow remains the repository merge gate rather than being removed as part of an unrelated product feature.
+GitHub-hosted workflows are removed. Verification is performed explicitly with `scripts/verify-local.sh` or `scripts/verify-local.ps1` before `main` is advanced, so the project does not consume GitHub Actions minutes.
