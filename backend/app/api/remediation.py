@@ -26,6 +26,7 @@ from app.services.finding_remediation import (
     normalize_clause_type,
     priority_for_severity,
     remediation_audit_details,
+    remediation_task_block_reason,
     remediation_task_description,
     remediation_task_metadata,
     remediation_task_title,
@@ -93,6 +94,9 @@ async def create_finding_remediation_task(
         contract_id=contract_id,
         finding_id=finding_id,
     )
+    block_reason = remediation_task_block_reason(finding.finding_status)
+    if block_reason is not None:
+        raise HTTPException(status_code=409, detail=block_reason)
     if payload.assigned_to is not None:
         await _validate_user_in_org(
             session,
