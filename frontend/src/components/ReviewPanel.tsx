@@ -611,17 +611,15 @@ interface PlaybookGuidanceProps {
 /**
  * Compact firm-authored guidance block.
  *
- * Surfaces the rule-level fields the playbook author wrote — guidance,
- * preferred_language, expected_value, matched_terms — so a failed
- * finding tells the reviewer not just *that* a clause failed but also
- * what the firm wants in its place. The fields are sourced verbatim
- * from the YAML rule (or from the persisted finding row, which copies
- * them at write time); nothing is generated.
+ * Surfaces the rule-level fields the playbook author wrote: guidance,
+ * preferred_language, expected_value, and matched_terms. A failed finding
+ * therefore tells the reviewer not just that a clause failed but also what
+ * the firm wants in its place. The fields are sourced verbatim from the YAML
+ * rule, or from the persisted finding row that copies them at write time.
+ * Nothing is generated.
  *
- * Rendered as visually secondary to the title/message/evidence: muted
- * surface, smaller type, left rule. Hidden entirely when none of the
- * four fields is set, so passes and rules without guidance don't grow
- * an empty section.
+ * Rendered as visually secondary to the title, message, and evidence. The
+ * section is hidden entirely when none of the four fields is set.
  */
 function PlaybookGuidance({ rule }: PlaybookGuidanceProps) {
   const hasGuidance = Boolean(rule.guidance);
@@ -686,6 +684,10 @@ function FindingStatusControls({
   finding,
   onUpdate,
 }: FindingStatusControlsProps) {
+  // Superseded is a system lifecycle state created by a newer review run. It
+  // cannot be converted back into a reviewer state from an obsolete result.
+  if (finding.finding_status === "superseded") return null;
+
   const buttons: Array<{
     key: ReviewerFindingStatus;
     label: string;
@@ -694,17 +696,17 @@ function FindingStatusControls({
     {
       key: "reviewed",
       label: "Mark reviewed",
-      visibleWhen: ["open", "ignored", "superseded"],
+      visibleWhen: ["open", "ignored"],
     },
     {
       key: "ignored",
       label: "Mark ignored",
-      visibleWhen: ["open", "reviewed", "superseded"],
+      visibleWhen: ["open", "reviewed"],
     },
     {
       key: "open",
       label: "Reopen",
-      visibleWhen: ["reviewed", "ignored", "superseded"],
+      visibleWhen: ["reviewed", "ignored"],
     },
   ];
   return (
@@ -783,9 +785,9 @@ function formatRunDate(iso: string): string {
  * Construct a `PlaybookRuleMatchResult` from a persisted finding.
  *
  * Only used as a fallback when a run's per-rule recomputation isn't
- * available (e.g. the playbook was deactivated between runs and
- * revalidation failed). The resulting row carries `status: "fail"`
- * since persisted findings are failures.
+ * available, such as when the playbook was deactivated between runs and
+ * revalidation failed. Persisted findings are failures, so the resulting row
+ * always carries `status: "fail"`.
  */
 function findingToRuleResult(
   f: DeviationFinding,
