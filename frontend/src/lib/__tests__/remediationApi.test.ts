@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DeviationFinding } from "../../types/findings";
 import type { FindingRemediationPlan } from "../../types/remediation";
+import { MissingDevUserError } from "../api";
+import {
+  __resetMockState,
+  dismissInboxItem,
+  listInboxItems,
+} from "../mockApi";
 import {
   __resetRemediationDemoState,
   createFindingRemediationTask,
   getFindingRemediationPlan,
 } from "../remediationApi";
-import { MissingDevUserError } from "../api";
 
 const CONTRACT_ID = "00000000-0000-4000-8000-000000000001";
 const FINDING_ID = "00000000-0000-4000-8000-000000000002";
@@ -63,6 +68,7 @@ describe("remediationApi", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     window.localStorage.clear();
+    __resetMockState();
     __resetRemediationDemoState();
   });
 
@@ -124,7 +130,7 @@ describe("remediationApi", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("reuses one demo task and keeps legal text out of task metadata", async () => {
+  it("reuses one demo task, exposes it in Inbox, and keeps legal text out of metadata", async () => {
     vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
 
     const first = await createFindingRemediationTask(
@@ -137,14 +143,52 @@ describe("remediationApi", () => {
       FINDING,
       {},
     );
+    const inboxRows = await listInboxItems({
+      item_type: "finding_remediation",
+      include_dismissed: true,
+    });
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.task.id).toBe(first.task.id);
     expect(second.plan.existing_task?.id).toBe(first.task.id);
+    expect(inboxRows.map((row) => row.id)).toContain(first.task.id);
     const metadata = JSON.stringify(first.task.metadata_json);
     expect(metadata).toContain(FINDING_ID);
     expect(metadata).not.toContain("PRIVATE EVIDENCE");
     expect(metadata).not.toContain("APPROVED LEGAL TEXT");
+  });
+
+  it("reopens the same dismissed demo task instead of creating a replacement", async () => {
+    vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+
+    const first = await createFindingRemediationTask(CONTRACT_ID, FINDING, {});
+    await dismissInboxItem(first.task.id);
+    const reopened = await createFindingRemediationTask(CONTRACT_ID, FINDING, {
+      due_date: "2026-08-20",
+    });
+
+    expect(reopened.created).toBe(false);
+    expect(reopened.reopened).toBe(true);
+    expect(reopened.task.id).toBe(first.task.id);
+    expect(reopened.task.status).toBe("open");
+    expect(reopened.task.due_date).toBe("2026-08-20");
+  });
+
+  it("does not create demo work from a superseded finding", async () => {
+    vi.stubEnv("VITE_WHEREAS_DEMO_MODE", "true");
+    const superseded = {
+      ...FINDING,
+      finding_status: "superseded" as const,
+    };
+
+    await expect(
+      createFindingRemediationTask(CONTRACT_ID, superseded, {}),
+    ).rejects.toMatchObject({ status: 409 });
+    const inboxRows = await listInboxItems({
+      item_type: "finding_remediation",
+      include_dismissed: true,
+    });
+    expect(inboxRows).toHaveLength(0);
   });
 });
