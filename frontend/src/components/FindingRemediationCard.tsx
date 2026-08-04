@@ -38,18 +38,24 @@ export default function FindingRemediationCard({
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const findingRef = useRef(finding);
   const taskControllerRef = useRef<AbortController | null>(null);
+  const panelId = `finding-remediation-${finding.id}`;
   findingRef.current = finding;
 
   useEffect(() => {
     if (!expanded) return;
     const controller = new AbortController();
     setPlanState({ kind: "loading" });
+    setTaskState({ kind: "idle" });
     setCopyState("idle");
 
     getFindingRemediationPlan(contractId, findingRef.current, {
       signal: controller.signal,
     })
-      .then((plan) => setPlanState({ kind: "loaded", plan }))
+      .then((plan) => {
+        if (!controller.signal.aborted) {
+          setPlanState({ kind: "loaded", plan });
+        }
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setPlanState({
@@ -65,8 +71,11 @@ export default function FindingRemediationCard({
   }, [contractId, expanded, finding.id, loadAttempt]);
 
   useEffect(() => {
+    taskControllerRef.current?.abort();
+    taskControllerRef.current = null;
+    setTaskState({ kind: "idle" });
     return () => taskControllerRef.current?.abort();
-  }, []);
+  }, [contractId, finding.id]);
 
   async function copyLanguage(language: string): Promise<void> {
     try {
@@ -91,7 +100,12 @@ export default function FindingRemediationCard({
   }
 
   async function createTask(): Promise<void> {
-    if (planState.kind !== "loaded") return;
+    if (
+      planState.kind !== "loaded" ||
+      planState.plan.finding_status === "superseded"
+    ) {
+      return;
+    }
     taskControllerRef.current?.abort();
     const controller = new AbortController();
     taskControllerRef.current = controller;
@@ -104,6 +118,7 @@ export default function FindingRemediationCard({
         {},
         { signal: controller.signal },
       );
+      if (controller.signal.aborted) return;
       setPlanState({ kind: "loaded", plan: response.plan });
       setTaskState({
         kind: "success",
@@ -122,6 +137,10 @@ export default function FindingRemediationCard({
           "Could not create the Inbox task.",
         ),
       });
+    } finally {
+      if (taskControllerRef.current === controller) {
+        taskControllerRef.current = null;
+      }
     }
   }
 
@@ -130,6 +149,7 @@ export default function FindingRemediationCard({
       <button
         type="button"
         aria-expanded={expanded}
+        aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
         className="flex w-full items-center justify-between gap-3 px-2.5 py-2 text-left text-[11px] font-medium text-ink transition-colors hover:bg-canvas-muted"
       >
@@ -140,7 +160,7 @@ export default function FindingRemediationCard({
       </button>
 
       {expanded && (
-        <div className="border-t border-rule px-2.5 py-2.5">
+        <div id={panelId} className="border-t border-rule px-2.5 py-2.5">
           {planState.kind === "loading" && (
             <p role="status" className="text-[11px] text-ink-subtle">
               Loading approved sources…
@@ -191,11 +211,13 @@ function RemediationPlanBody({
   onCreateTask,
 }: RemediationPlanBodyProps) {
   const task = plan.existing_task;
-  const canCreateOrReopen = task === null || task.status === "dismissed";
+  const superseded = plan.finding_status === "superseded";
+  const canCreateOrReopen =
+    !superseded && (task === null || task.status === "dismissed");
 
   return (
     <div className="space-y-3">
-      <div>
+      <div aria-label="Remediation source">
         <p className="text-[10px] font-medium uppercase tracking-wide text-ink-subtle">
           Approved source
         </p>
@@ -241,7 +263,10 @@ function RemediationPlanBody({
               Copy language
             </button>
           </div>
-          <pre className="mt-1 whitespace-pre-wrap rounded border border-rule bg-canvas px-2 py-2 font-sans text-[11px] leading-relaxed text-ink-muted">
+          <pre
+            aria-label="Approved remediation language"
+            className="mt-1 whitespace-pre-wrap rounded border border-rule bg-canvas px-2 py-2 font-sans text-[11px] leading-relaxed text-ink-muted"
+          >
             {plan.suggested_language}
           </pre>
           {copyState === "copied" && (
@@ -264,6 +289,16 @@ function RemediationPlanBody({
             Add preferred language to the playbook rule or an active Clause
             Manager source. The finding can still be assigned as work now.
           </p>
+        </div>
+      )}
+
+      {superseded && (
+        <div
+          role="note"
+          className="rounded border border-warning-ring bg-warning-soft px-2 py-2 text-[11px] leading-relaxed text-warning"
+        >
+          This finding belongs to an older review. Open the latest review run
+          before creating or reopening remediation work.
         </div>
       )}
 
@@ -316,7 +351,9 @@ function RemediationPlanBody({
   );
 }
 
-function sourceTypeLabel(sourceType: FindingRemediationPlan["source_type"]): string {
+function sourceTypeLabel(
+  sourceType: FindingRemediationPlan["source_type"],
+): string {
   if (sourceType === "playbook_preferred_language") {
     return "Playbook preferred language";
   }
