@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - ops/verify-release-v0.1.0-alpha.1
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
