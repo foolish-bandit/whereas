@@ -20,9 +20,14 @@ _SEPARATOR_RE = re.compile(r"[\s_-]+")
 
 class FindingLike(Protocol):
     id: uuid.UUID
+    organization_id: uuid.UUID
+    contract_id: uuid.UUID
     playbook_id: uuid.UUID
+    review_run_id: uuid.UUID
+    rule_id: str
     rule_title: str
     clause_type: str
+    severity: str
     preferred_language: str | None
 
 
@@ -78,7 +83,9 @@ def _updated_at_sort_value(value: datetime | None) -> float:
     return -value.astimezone(UTC).timestamp()
 
 
-def rank_clause_template(candidate: ClauseTemplateLike) -> tuple[int, int, int, float, str]:
+def rank_clause_template(
+    candidate: ClauseTemplateLike,
+) -> tuple[int, int, int, float, str]:
     """Return the documented, stable Clause Manager selection key.
 
     Lower tuples win. Explicit firm tags outrank scope and recency. Broadly
@@ -216,3 +223,54 @@ def priority_for_severity(severity: str) -> str:
     if normalized == "medium":
         return "normal"
     return "low"
+
+
+def remediation_task_title(rule_title: str) -> str:
+    """Build a compact Inbox title within the model's 255-character limit."""
+
+    compact = " ".join((rule_title or "").split()) or "Playbook finding"
+    return f"Remediate: {compact}"[:255]
+
+
+def remediation_task_description(clause_type: str) -> str:
+    """Describe the work without copying evidence or approved clause text."""
+
+    friendly_type = normalize_clause_type(clause_type).replace("_", " ")
+    if not friendly_type:
+        friendly_type = "contract"
+    return (
+        f"Review this {friendly_type} playbook finding and apply approved firm "
+        "language in the linked Repository record as appropriate."
+    )
+
+
+def remediation_task_metadata(
+    finding: FindingLike,
+    language: RemediationLanguage,
+) -> dict[str, str | None]:
+    """Return identifier-only task metadata safe for the general Inbox API."""
+
+    return {
+        "finding_id": str(finding.id),
+        "review_run_id": str(finding.review_run_id),
+        "playbook_id": str(finding.playbook_id),
+        "rule_id": finding.rule_id,
+        "clause_type": normalize_clause_type(finding.clause_type),
+        "severity": (finding.severity or "").strip().lower(),
+        "source_type": language.source_type,
+        "source_id": str(language.source_id) if language.source_id else None,
+    }
+
+
+def remediation_audit_details(
+    finding: FindingLike,
+    inbox_item_id: uuid.UUID,
+    language: RemediationLanguage,
+) -> dict[str, str | None]:
+    """Build the safe, identifier-only hash-chained audit payload."""
+
+    return {
+        **remediation_task_metadata(finding, language),
+        "contract_id": str(finding.contract_id),
+        "inbox_item_id": str(inbox_item_id),
+    }
