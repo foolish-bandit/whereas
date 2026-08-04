@@ -9,6 +9,7 @@ import type {
 import { ApiError, MissingDevUserError } from "./api";
 import { getDevUserId } from "./devUser";
 import { isDemoMode } from "./env";
+import * as mockApi from "./mockApi";
 
 interface ApiOptions {
   signal?: AbortSignal;
@@ -61,8 +62,10 @@ const DEMO_APPROVED_SOURCES: Record<string, DemoApprovedSource> = {
   },
 };
 
-const demoTasksByFindingId = new Map<string, InboxItem>();
-let demoTaskSequence = 0;
+// Store only the shared mock Inbox identifier. The task itself remains owned
+// by mockApi, so completion, dismissal, filtering, and reopening stay coherent
+// across the remediation card and Inbox page.
+const demoTaskIdByFindingId = new Map<string, string>();
 
 function baseUrl(): string {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
@@ -108,7 +111,9 @@ async function readError(response: Response): Promise<string> {
   }
   if (response.status === 401) return "The development user ID is invalid.";
   if (response.status === 404) return "Finding not found.";
-  if (response.status === 409) return "The remediation task could not be created safely.";
+  if (response.status === 409) {
+    return "The remediation task could not be created safely.";
+  }
   if (response.status === 422) return "The remediation request is invalid.";
   return `Request failed (HTTP ${response.status}).`;
 }
@@ -162,7 +167,7 @@ export async function getFindingRemediationPlan(
 ): Promise<FindingRemediationPlan> {
   if (isDemoMode()) {
     await delay(DEMO_LATENCY_MS, options.signal);
-    return buildDemoPlan(contractId, finding);
+    return buildDemoPlan(contractId, finding, options);
   }
   return request<FindingRemediationPlan>(
     `/api/contracts/${encodeURIComponent(contractId)}/findings/${encodeURIComponent(
@@ -180,8 +185,7 @@ export async function createFindingRemediationTask(
   options: ApiOptions = {},
 ): Promise<FindingRemediationTaskResponse> {
   if (isDemoMode()) {
-    await delay(DEMO_LATENCY_MS, options.signal);
-    return createDemoTask(contractId, finding, payload);
+    return createDemoTask(contractId, finding, payload, options);
   }
   return request<FindingRemediationTaskResponse>(
     `/api/contracts/${encodeURIComponent(contractId)}/findings/${encodeURIComponent(
@@ -196,10 +200,11 @@ export async function createFindingRemediationTask(
   );
 }
 
-function buildDemoPlan(
+async function buildDemoPlan(
   contractId: string,
   finding: DeviationFinding,
-): FindingRemediationPlan {
+  options: ApiOptions,
+): Promise<FindingRemediationPlan> {
   if (finding.contract_id !== contractId) {
     throw new ApiError(404, "Finding not found.");
   }
@@ -221,7 +226,8 @@ function buildDemoPlan(
     rationale =
       "Firm-authored preferred language was stored with this playbook rule.";
   } else {
-    const approved = DEMO_APPROVED_SOURCES[normalizeClauseType(finding.clause_type)];
+    const approved =
+      DEMO_APPROVED_SOURCES[normalizeClauseType(finding.clause_type)];
     if (approved) {
       suggestedLanguage = approved.text;
       sourceType = "clause_template";
@@ -249,58 +255,74 @@ function buildDemoPlan(
     source_name: sourceName,
     rationale,
     scope_warning: scopeWarning,
-    existing_task: demoTasksByFindingId.get(finding.id) ?? null,
+    existing_task: await getDemoTask(finding.id, options),
   };
 }
 
-function createDemoTask(
+async function createDemoTask(
   contractId: string,
   finding: DeviationFinding,
   payload: FindingRemediationTaskRequest,
-): FindingRemediationTaskResponse {
-  const existing = demoTasksByFindingId.get(finding.id);
-  const plan = buildDemoPlan(contractId, finding);
-  if (existing) {
+  options: ApiOptions,
+): Promise<FindingRemediationTaskResponse> {
+  if (finding.contract_id !== contractId) {
+    throw new ApiError(404, "Finding not found.");
+  }
+  if (finding.finding_status === "superseded") {
+    throw new ApiError(
+      409,
+      "This finding was superseded by a newer review. Open the latest review run before creating remediation work.",
+    );
+  }
+
+  const plan = await buildDemoPlan(contractId, finding, options);
+  const existing = plan.existing_task;
+  if (existing && existing.status !== "dismissed") {
     return {
-      plan: { ...plan, existing_task: existing },
+      plan,
       task: existing,
       created: false,
       reopened: false,
     };
   }
 
-  demoTaskSequence += 1;
-  const sequence = String(demoTaskSequence).padStart(12, "0");
-  const now = new Date().toISOString();
-  const task: InboxItem = {
-    id: `00000000-0000-4000-8001-${sequence}`,
-    organization_id: finding.organization_id,
-    title: remediationTitle(finding.rule_title),
-    description: remediationDescription(finding.clause_type),
-    item_type: "finding_remediation",
-    status: "open",
-    priority: priorityForSeverity(finding.severity),
-    assigned_to:
-      payload.assigned_to ?? "00000000-0000-4000-8000-000000000099",
-    due_date: payload.due_date ?? null,
-    request_id: null,
-    contract_id: contractId,
-    template_id: null,
-    created_at: now,
-    updated_at: now,
-    created_by: "00000000-0000-4000-8000-000000000099",
-    metadata_json: {
-      finding_id: finding.id,
-      review_run_id: finding.review_run_id,
-      playbook_id: finding.playbook_id,
-      rule_id: finding.rule_id,
-      clause_type: normalizeClauseType(finding.clause_type),
-      severity: finding.severity.toLowerCase(),
-      source_type: plan.source_type,
-      source_id: plan.source_id,
+  if (existing?.status === "dismissed") {
+    const reopened = await mockApi.updateInboxItem(
+      existing.id,
+      {
+        title: remediationTitle(finding.rule_title),
+        description: remediationDescription(finding.clause_type),
+        status: "open",
+        priority: priorityForSeverity(finding.severity),
+        assigned_to: payload.assigned_to ?? existing.assigned_to,
+        due_date: payload.due_date ?? null,
+        contract_id: contractId,
+        metadata_json: remediationMetadata(finding, plan),
+      },
+      options,
+    );
+    return {
+      plan: { ...plan, existing_task: reopened },
+      task: reopened,
+      created: false,
+      reopened: true,
+    };
+  }
+
+  const task = await mockApi.createInboxItem(
+    {
+      title: remediationTitle(finding.rule_title),
+      description: remediationDescription(finding.clause_type),
+      item_type: "finding_remediation",
+      priority: priorityForSeverity(finding.severity),
+      assigned_to: payload.assigned_to ?? null,
+      due_date: payload.due_date ?? null,
+      contract_id: contractId,
+      metadata_json: remediationMetadata(finding, plan),
     },
-  };
-  demoTasksByFindingId.set(finding.id, task);
+    options,
+  );
+  demoTaskIdByFindingId.set(finding.id, task.id);
   return {
     plan: { ...plan, existing_task: task },
     task,
@@ -309,13 +331,52 @@ function createDemoTask(
   };
 }
 
+async function getDemoTask(
+  findingId: string,
+  options: ApiOptions,
+): Promise<InboxItem | null> {
+  const taskId = demoTaskIdByFindingId.get(findingId);
+  if (!taskId) return null;
+  try {
+    return await mockApi.getInboxItem(taskId, options);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      demoTaskIdByFindingId.delete(findingId);
+      return null;
+    }
+    throw error;
+  }
+}
+
+function remediationMetadata(
+  finding: DeviationFinding,
+  plan: FindingRemediationPlan,
+): Record<string, string | null> {
+  return {
+    finding_id: finding.id,
+    review_run_id: finding.review_run_id,
+    playbook_id: finding.playbook_id,
+    rule_id: finding.rule_id,
+    clause_type: normalizeClauseType(finding.clause_type),
+    severity: finding.severity.toLowerCase(),
+    source_type: plan.source_type,
+    source_id: plan.source_id,
+  };
+}
+
 function normalizeClauseType(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function priorityForSeverity(severity: string): string {
   const normalized = severity.trim().toLowerCase();
-  if (normalized === "blocker" || normalized === "critical") return "urgent";
+  if (normalized === "blocker" || normalized === "critical") {
+    return "urgent";
+  }
   if (normalized === "high") return "high";
   if (normalized === "medium") return "normal";
   return "low";
@@ -327,7 +388,8 @@ function remediationTitle(ruleTitle: string): string {
 }
 
 function remediationDescription(clauseType: string): string {
-  const friendly = normalizeClauseType(clauseType).replace(/_/g, " ") || "record";
+  const friendly =
+    normalizeClauseType(clauseType).replace(/_/g, " ") || "record";
   return `Review this ${friendly} finding and apply approved firm language in the linked Repository record as appropriate.`;
 }
 
@@ -350,6 +412,5 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 export function __resetRemediationDemoState(): void {
-  demoTasksByFindingId.clear();
-  demoTaskSequence = 0;
+  demoTaskIdByFindingId.clear();
 }
