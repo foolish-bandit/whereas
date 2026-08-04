@@ -198,26 +198,18 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    // Wait for the run to load. The picker option and the run summary
-    // both label the playbook by name; wait for the rule title to
-    // ensure the run-detail render has actually flushed.
     await waitFor(() =>
       expect(
         screen.getByText("Governing law should be California"),
       ).toBeInTheDocument(),
     );
 
-    // Section header is present.
     const guidanceSection = await screen.findByLabelText("Playbook guidance");
     expect(guidanceSection).toBeInTheDocument();
-
-    // Guidance text renders.
     expect(guidanceSection).toHaveTextContent(GUIDANCE_TEXT);
-    // Preferred language is shown verbatim, including the body text.
     expect(guidanceSection).toHaveTextContent(
       "This Agreement shall be governed by the laws of the State of California",
     );
-    // Expected value still renders here, scoped under guidance.
     expect(guidanceSection).toHaveTextContent("California");
   });
 
@@ -230,13 +222,9 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    // Wait for the rules to render. Both rule titles should be visible.
     await screen.findByText("Governing law should be California");
     await screen.findByText("Bare rule with no firm guidance");
 
-    // Exactly one Playbook guidance section is rendered (for the
-    // governing-law rule). The bare rule has none of the four fields
-    // so its section is suppressed.
     const sections = screen.getAllByLabelText("Playbook guidance");
     expect(sections).toHaveLength(1);
   });
@@ -252,9 +240,6 @@ describe("ReviewPanel — playbook guidance", () => {
 
     await screen.findByLabelText("Playbook guidance");
 
-    // The default finding_status is "open"; both "reviewed" and
-    // "ignored" buttons should be available, plus they survive the
-    // guidance refactor.
     expect(
       screen.getAllByRole("button", { name: /mark reviewed/i }).length,
     ).toBeGreaterThan(0);
@@ -333,7 +318,7 @@ describe("ReviewPanel — playbook guidance", () => {
     expect(section).toHaveTextContent("consent");
   });
 
-  it("renders deterministic review findings section with no LLM copy", async () => {
+  it("uses persisted playbook findings as the only review source and exposes remediation", async () => {
     render(
       <ReviewPanel
         contractId={CONTRACT_ID}
@@ -344,8 +329,12 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    expect(await screen.findByTestId("deterministic-review-findings")).toBeInTheDocument();
-    expect(screen.getByText(/No LLM used/i)).toBeInTheDocument();
+    await screen.findByText("Governing law should be California");
+    expect(
+      screen.queryByTestId("deterministic-review-findings"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /plan remediation/i }),
+    ).toHaveLength(2);
   });
-
 });
