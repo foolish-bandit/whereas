@@ -22,7 +22,7 @@ Applied to Whereas:
 
 - A remediation plan remains attached to one persisted `DeviationFinding`.
 - The finding's exact evidence span stays visible and unchanged.
-- Whereas suggests approved language, but never edits the document automatically.
+- Whereas suggests approved language, but never edits the Repository record automatically.
 
 ### DefectDojo
 
@@ -39,9 +39,9 @@ Useful pattern:
 
 Applied to Whereas:
 
-- A finding can create one active `finding_remediation` Inbox item.
+- A finding owns one durable `finding_remediation` Inbox task.
 - A database constraint enforces idempotency under concurrent requests.
-- Repeated clicks return the existing active task instead of creating duplicates.
+- Repeated actions return the existing task, while a dismissed task is reopened instead of duplicated.
 
 ### GitHub code scanning
 
@@ -54,9 +54,9 @@ Useful pattern:
 
 Applied to Whereas:
 
-- The Inbox task stores a typed `finding_id` foreign key.
-- The task opens the linked Repository record and carries safe finding identifiers in metadata.
-- Finding text, evidence text, and approved clause text are not copied into audit metadata.
+- A typed, tenant-scoped `FindingRemediationTask` row links the persisted finding to its Inbox item.
+- The Inbox task opens the linked Repository record and carries safe finding identifiers in metadata.
+- Finding text, evidence text, approved clause text, and source display names are not copied into link rows, task metadata, or audit details.
 
 ### Paperless-ngx
 
@@ -90,8 +90,8 @@ Useful pattern:
 
 Applied to Whereas:
 
-- Creating a remediation task is explicit and user-triggered.
-- Task creation is recorded in the append-only audit chain.
+- Creating or reopening a remediation task is explicit and user-triggered.
+- Task creation and reopening are recorded in the append-only audit chain.
 - The plan can be inspected before any work item is created.
 
 ### Documenso and Cicero
@@ -110,11 +110,11 @@ Applied to Whereas:
 
 - Firm-authored playbook language has highest priority.
 - Clause Manager is the deterministic fallback source.
-- The remediation plan references approved text but does not modify Clause Manager or the source document.
+- The remediation plan references approved text but does not modify Clause Manager or the Repository record.
 
 ## Adopted decision
 
-Whereas will add a first-class remediation plan for persisted failed findings.
+Whereas adds a first-class remediation plan for persisted failed findings.
 
 Selection order:
 
@@ -124,6 +124,14 @@ Selection order:
 4. Return no language when no approved source exists.
 
 The result includes provenance and rationale. It never fabricates a clause.
+
+Workflow linkage:
+
+1. Keep Inbox generic.
+2. Store finding-to-Inbox referential integrity in `FindingRemediationTask`.
+3. Enforce one durable task per organization and finding.
+4. Reuse completed work and reopen dismissed work rather than creating parallel history.
+5. Keep legal text out of task metadata, link rows, and audit details.
 
 ## Rejected ideas
 
@@ -138,6 +146,10 @@ Rejected because a finding is review evidence, not permission to mutate a legal 
 ### Store the link only in `metadata_json`
 
 Rejected because an untyped JSON link cannot provide referential integrity or concurrency-safe uniqueness.
+
+### Add a feature-specific finding field to generic Inbox rows
+
+Rejected in the final implementation because a dedicated link table preserves Inbox as a reusable work-queue primitive while providing typed linkage, source provenance, Row-Level Security, and database uniqueness.
 
 ### Create a task on every review failure automatically
 
