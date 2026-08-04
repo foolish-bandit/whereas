@@ -6,14 +6,15 @@ This repository is currently **pre-v0.1** and intended for evaluation, contribut
 
 ## What Whereas is
 
-Whereas helps legal and ops teams run a coherent contract lifecycle workflow across intake, request review, repository management, approvals, document history, and signature handoff.
+Whereas helps legal and ops teams run a coherent agreement lifecycle workflow across intake, request review, repository management, approvals, playbook review, remediation work, document history, and signature handoff.
 
 The product is intentionally opinionated around an evaluator-friendly flow:
 
 - Start from a dashboard command center.
 - Route intake work through Inbox and Requests.
 - Convert approved requests into Repository records.
-- Review text preview, metadata, clauses, approvals, and document history.
+- Review text preview, metadata, clauses, playbook findings, approvals, and document history.
+- Turn a persisted finding into one traceable Inbox task using approved firm language.
 - Send signature-ready records through DocuSeal when configured.
 
 ## What works today
@@ -25,26 +26,46 @@ The following surfaces are implemented and routable in the app today:
 - **Requests workspace** (`/demo/requests`) with guided supporting-question capture and Request Detail stage/next-action guidance.
 - **Request-to-Repository conversion UX** from request detail flows where supported.
 - **Agreement Templates** catalog and template-detail flow (`/demo/requests/templates` and alias routes).
-- **Repository record list + workspace** (`/demo/repository`) including text preview/document context, metadata/clause panels, lifecycle presentation, and document history tooling.
+- **Repository record list + workspace** (`/demo/repository`) including text preview/document context, metadata/clause panels, lifecycle presentation, playbook review, remediation planning, and document history tooling.
 - **Approval surfaces** (`/demo/approvals` + tasks/workflows/templates/policies routes) with existing approval semantics preserved.
 - **Clause Manager** (`/demo/clause-manager`) and **Playbooks** (`/demo/playbooks`) as review-standards surfaces.
 - **Integrations roadmap page** (`/demo/integrations`) for planned connectors.
 - **Known limitations page** (`/demo/known-limitations`) for evaluator-facing boundaries.
 
-> In user-facing docs and UI copy, use **Repository record** terminology (not "Contract") unless discussing backend internals.
+> In user-facing docs and UI copy, use **Repository record** terminology, not "Contract," unless discussing backend internals.
+
+## Finding remediation workflow
+
+Persisted failed playbook findings now support a deterministic review-to-action loop:
+
+1. Open a Repository record and its Playbook review.
+2. Expand **Plan remediation** on a failed finding.
+3. Review the approved-language source, selection rationale, and any scope warning.
+4. Copy the approved language explicitly when appropriate.
+5. Create one linked Inbox task, or reopen the same task if it was dismissed.
+6. Apply any change to the Repository record deliberately. Whereas never edits it automatically.
+
+Approved-language precedence is intentionally narrow and explainable:
+
+1. Firm-authored preferred language persisted with the playbook rule.
+2. An active Clause Manager source with the same normalized clause type.
+3. No language, with a clear instruction to add an approved source.
+
+Whereas does not generate remediation clauses with an LLM, use fuzzy semantic matching, or copy evidence and legal text into Inbox metadata or audit details.
 
 ## Demo workflow (recommended evaluator path)
 
 1. Open `/demo/dashboard`.
-2. Start from `/demo/intake` (or dashboard quick actions) and review `/demo/inbox` routing.
-3. Create/open a request at `/demo/requests`.
+2. Start from `/demo/intake` or dashboard quick actions and review `/demo/inbox` routing.
+3. Create or open a request at `/demo/requests`.
 4. In request detail (`/demo/requests/:id`), review supporting questions, stage, and next action.
 5. Convert the request to a Repository record where the flow supports conversion.
 6. Open `/demo/repository` and enter a record workspace (`/demo/repository/:id`).
 7. Review text preview/document panels, metadata, clauses, lifecycle context, and document history.
-8. Review approval work at `/demo/approvals` and `/demo/approvals/tasks`.
-9. Explore `/demo/clause-manager` and `/demo/playbooks`.
-10. Finish at `/demo/integrations` and `/demo/known-limitations` for roadmap and MVP boundaries.
+8. Run a Playbook review, open a persisted finding, and create a remediation Inbox task.
+9. Review approval work at `/demo/approvals` and `/demo/approvals/tasks`.
+10. Explore `/demo/clause-manager` and `/demo/playbooks`.
+11. Finish at `/demo/integrations` and `/demo/known-limitations` for roadmap and MVP boundaries.
 
 ## Core surfaces
 
@@ -59,18 +80,18 @@ The following surfaces are implemented and routable in the app today:
 - Some UI state/editing behavior is demo- or session-scoped and may rely on local/browser state.
 - Supporting-question answers are currently summarized into existing free-text request fields; no fully structured backend answer model is shipped yet.
 - Integrations marked as planned on the Integrations page are visible roadmap items, not active connectors.
-- Deterministic checklist/review guidance is workflow assistance only and is not legal advice.
+- Deterministic review and remediation guidance is workflow assistance only and is not legal advice.
 
 ## What is not implemented yet
 
 The following are intentionally out of scope for the current MVP state:
 
 - Full Microsoft Word add-in / Outlook or Gmail plugin workflows.
-- Slack / Teams / CRM connector execution (roadmap visibility exists, wiring does not).
+- Slack / Teams / CRM connector execution; roadmap visibility exists, but wiring does not.
 - Calendar/reminder sync and notification automation.
-- LLM-powered legal judgment/reasoning features beyond existing extraction/workflow aids.
+- LLM-powered legal judgment/reasoning features beyond existing extraction and workflow aids.
 - Small-model AI roadmap details live in [`docs/AI_SMALL_MODEL_STACK.md`](docs/AI_SMALL_MODEL_STACK.md) and in-app Known limitations (`/demo/known-limitations#small-model-ai-roadmap`).
-- Full backend Clause ↔ Playbook relational linkage and authoring loop.
+- Full backend Clause-to-Playbook relational authoring loop.
 - Enterprise-grade RBAC/SSO deployment story.
 - Advanced reporting/export beyond current shipped workspace and activity surfaces.
 - Nango / Clerk / PowerSync integration layers.
@@ -79,6 +100,8 @@ The following are intentionally out of scope for the current MVP state:
 
 - The PWA/service worker is expected to keep `/api/*` outside cache handling.
 - Sensitive storage internals and secret-bearing fields should never be surfaced in UI/docs.
+- Finding remediation queries are organization-scoped, and the typed finding-to-Inbox link is protected by PostgreSQL Row-Level Security.
+- Approved language, evidence, guidance, source display names, and storage internals are excluded from remediation task metadata and audit details.
 - Demo data is fictional and should not be treated as confidential client data.
 - Machine-generated metadata/extractions require human review before operational use.
 - Whereas is software workflow support and **does not provide legal advice**.
@@ -90,7 +113,7 @@ See also: [`docs/security-notes.md`](docs/security-notes.md).
 Quickstart:
 
 ```sh
-git clone https://github.com/foolish-bandit/whereas.git
+git clone https://github.com/zgbrenner/whereas.git
 cd whereas
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-stack.ps1
 ```
@@ -132,7 +155,23 @@ First-run developer setup and optional dependencies:
 
 ## Testing
 
-Common commands:
+Run the complete local gate from the repository root.
+
+macOS or Linux:
+
+```sh
+bash scripts/verify-local.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
+```
+
+The gate runs frontend tests, TypeScript checks, a production build, service-worker validation, production dependency audits, backend tests, Ruff, backend dependency auditing, and Docker Compose validation.
+
+Individual commands remain available:
 
 ```sh
 cd backend && pytest
