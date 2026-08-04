@@ -168,7 +168,7 @@ function makeRun(overrides: Partial<ReviewRunDetail> = {}): ReviewRunDetail {
   };
 }
 
-describe("ReviewPanel — playbook guidance", () => {
+describe("ReviewPanel playbook guidance", () => {
   beforeEach(() => {
     vi.mocked(getPlaybooks).mockResolvedValue([PLAYBOOK_SUMMARY]);
     vi.mocked(listPlaybookReviewRuns).mockResolvedValue([RUN_SUMMARY]);
@@ -198,26 +198,18 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    // Wait for the run to load. The picker option and the run summary
-    // both label the playbook by name; wait for the rule title to
-    // ensure the run-detail render has actually flushed.
     await waitFor(() =>
       expect(
         screen.getByText("Governing law should be California"),
       ).toBeInTheDocument(),
     );
 
-    // Section header is present.
     const guidanceSection = await screen.findByLabelText("Playbook guidance");
     expect(guidanceSection).toBeInTheDocument();
-
-    // Guidance text renders.
     expect(guidanceSection).toHaveTextContent(GUIDANCE_TEXT);
-    // Preferred language is shown verbatim, including the body text.
     expect(guidanceSection).toHaveTextContent(
       "This Agreement shall be governed by the laws of the State of California",
     );
-    // Expected value still renders here, scoped under guidance.
     expect(guidanceSection).toHaveTextContent("California");
   });
 
@@ -230,18 +222,14 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    // Wait for the rules to render. Both rule titles should be visible.
     await screen.findByText("Governing law should be California");
     await screen.findByText("Bare rule with no firm guidance");
 
-    // Exactly one Playbook guidance section is rendered (for the
-    // governing-law rule). The bare rule has none of the four fields
-    // so its section is suppressed.
     const sections = screen.getAllByLabelText("Playbook guidance");
     expect(sections).toHaveLength(1);
   });
 
-  it("preserves the reviewer status buttons alongside the guidance section", async () => {
+  it("preserves reviewer status buttons alongside the guidance section", async () => {
     render(
       <ReviewPanel
         contractId={CONTRACT_ID}
@@ -252,9 +240,6 @@ describe("ReviewPanel — playbook guidance", () => {
 
     await screen.findByLabelText("Playbook guidance");
 
-    // The default finding_status is "open"; both "reviewed" and
-    // "ignored" buttons should be available, plus they survive the
-    // guidance refactor.
     expect(
       screen.getAllByRole("button", { name: /mark reviewed/i }).length,
     ).toBeGreaterThan(0);
@@ -333,7 +318,7 @@ describe("ReviewPanel — playbook guidance", () => {
     expect(section).toHaveTextContent("consent");
   });
 
-  it("renders deterministic review findings section with no LLM copy", async () => {
+  it("uses persisted playbook findings as the only review source and exposes remediation", async () => {
     render(
       <ReviewPanel
         contractId={CONTRACT_ID}
@@ -344,8 +329,47 @@ describe("ReviewPanel — playbook guidance", () => {
       />,
     );
 
-    expect(await screen.findByTestId("deterministic-review-findings")).toBeInTheDocument();
-    expect(screen.getByText(/No LLM used/i)).toBeInTheDocument();
+    await screen.findByText("Governing law should be California");
+    expect(
+      screen.queryByTestId("deterministic-review-findings"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /plan remediation/i }),
+    ).toHaveLength(2);
   });
 
+  it("treats superseded as a system lifecycle state, not a reviewer status", async () => {
+    const run = makeRun();
+    vi.mocked(getPlaybookReviewRun).mockResolvedValue({
+      ...run,
+      findings: [
+        {
+          ...run.findings[0],
+          finding_status: "superseded",
+        },
+      ],
+      results: [run.results[0]],
+      rules_checked: 1,
+      failed_count: 1,
+    });
+
+    render(
+      <ReviewPanel
+        contractId={CONTRACT_ID}
+        selectedKey={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    await screen.findByText("Governing law should be California");
+    expect(
+      screen.queryByRole("button", { name: /mark reviewed/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /mark ignored/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^reopen$/i }),
+    ).not.toBeInTheDocument();
+  });
 });

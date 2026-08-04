@@ -49,6 +49,17 @@ _VALID_STATUSES = {s.value for s in InboxItemStatus}
 # router. The generic inbox PATCH/DELETE endpoints refuse status /
 # linkage edits on these so the linked ``ApprovalStep`` cannot decouple.
 _APPROVAL_ITEM_TYPE = "approval"
+# Remediation items carry a typed one-to-one finding link and safe source
+# provenance created by the specialized contract-finding endpoint. Generic
+# create/linkage edits would bypass those invariants.
+_REMEDIATION_ITEM_TYPE = "finding_remediation"
+_REMEDIATION_PROTECTED_FIELDS = {
+    "request_id",
+    "contract_id",
+    "template_id",
+    "item_type",
+    "metadata_json",
+}
 
 
 @router.post("", response_model=InboxItemResponse, status_code=201)
@@ -59,6 +70,16 @@ async def create_inbox_item(
 ) -> InboxItemResponse:
     user = await _current_dev_user(session, x_whereas_dev_user)
     org_id = user.organization_id
+
+    if payload.item_type == _REMEDIATION_ITEM_TYPE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Finding remediation items must be created from the linked finding. "
+                "Use POST /api/contracts/{contract_id}/findings/{finding_id}/"
+                "remediation/task."
+            ),
+        )
 
     await _validate_links(
         session,
@@ -153,6 +174,26 @@ async def update_inbox_item(
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and data["status"] not in _VALID_STATUSES:
         raise HTTPException(status_code=422, detail="Invalid inbox item status.")
+
+    if data.get("item_type") == _REMEDIATION_ITEM_TYPE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Generic Inbox items cannot be converted into finding remediation "
+                "items. Create the task from the linked finding instead."
+            ),
+        )
+
+    if item.item_type == _REMEDIATION_ITEM_TYPE and any(
+        key in data for key in _REMEDIATION_PROTECTED_FIELDS
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Finding remediation linkage and provenance are managed by the "
+                "contract-finding remediation endpoint."
+            ),
+        )
 
     # Approval inbox items are owned by the approval workflow router —
     # status / linkage transitions must go through approve/reject/cancel

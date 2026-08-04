@@ -16,9 +16,9 @@ import type {
   ReviewerFindingStatus,
 } from "../types/findings";
 import type { PlaybookSummary } from "../types/playbooks";
-import { runDeterministicReview, type DeterministicReviewRule } from "../lib/deterministicReview";
 import type { Clause, ExtractedField } from "../types/contracts";
 import type { PlaybookRuleMatchResult } from "../types/review";
+import FindingRemediationCard from "./FindingRemediationCard";
 import Pill from "./ui/Pill";
 import SeverityTag, { type Severity } from "./ui/SeverityTag";
 
@@ -49,10 +49,15 @@ interface ReviewPanelProps {
   onSelect: (key: string | null) => void;
   /**
    * Called whenever the rendered run changes (loaded, cleared on
-   * contract change, etc.). The parent page uses this to resolve
+   * Repository record change, etc.). The parent page uses this to resolve
    * `review:<rule_id>` selection keys back to evidence spans.
    */
   onRunChange?: (run: ReviewRunDetail | null) => void;
+  /**
+   * Retained for caller compatibility. Persisted backend playbook runs are
+   * the one review source of truth; ReviewPanel no longer evaluates a second
+   * client-only checklist from these arrays.
+   */
   clauses?: Clause[];
   extractedFields?: ExtractedField[];
 }
@@ -67,13 +72,6 @@ type RunsState =
   | { kind: "loaded"; runs: ReviewRunSummary[] }
   | { kind: "error"; message: string };
 
-
-const DEFAULT_DETERMINISTIC_RULES: DeterministicReviewRule[] = [
-  { id: "required-governing-law", title: "Governing law clause required", rule_type: "required_clause", severity: "high", clause_type: "governing_law" },
-  { id: "preferred-governing-law", title: "Preferred governing law", rule_type: "preferred_value", severity: "medium", metadata_field: "governing_law", expected_value: "Delaware" },
-  { id: "high-risk-manual-review", title: "High-risk checklist item", rule_type: "manual_review", severity: "high" },
-];
-
 type ActiveRunState =
   | { kind: "idle" }
   | { kind: "running" }
@@ -86,8 +84,6 @@ export default function ReviewPanel({
   selectedKey,
   onSelect,
   onRunChange,
-  clauses = [],
-  extractedFields = [],
 }: ReviewPanelProps) {
   const [playbookListState, setPlaybookListState] = useState<PlaybookListState>(
     { kind: "loading" },
@@ -138,7 +134,7 @@ export default function ReviewPanel({
     return () => controller.abort();
   }, []);
 
-  // Load prior runs for this contract; auto-select the newest.
+  // Load prior runs for this Repository record; auto-select the newest.
   useEffect(() => {
     const controller = new AbortController();
     setRunsState({ kind: "loading" });
@@ -209,8 +205,6 @@ export default function ReviewPanel({
     }
   }
 
-  const deterministic = useMemo(() => runDeterministicReview({ clauses, extractedFields, rules: DEFAULT_DETERMINISTIC_RULES }), [clauses, extractedFields]);
-
   async function onUpdateFinding(
     findingId: string,
     status: ReviewerFindingStatus,
@@ -246,27 +240,13 @@ export default function ReviewPanel({
       <div className="border-b border-rule bg-canvas-subtle px-4 py-2.5">
         <h2 className="text-sm font-medium text-ink">Playbook review</h2>
         <p className="mt-0.5 text-xs text-ink-subtle">
-          Deterministic rule matching against this contract&rsquo;s segmented
-          clauses. Findings are saved per run. Whereas surfaces information
-          about contracts; it does not provide legal advice.
+          Deterministic rule matching against this Repository record&rsquo;s
+          segmented clauses. Findings are saved per run. Whereas surfaces
+          information about agreements; it does not provide legal advice.
         </p>
       </div>
 
       <div className="space-y-3 px-4 py-3">
-        <section data-testid="deterministic-review-findings" className="rounded border border-rule bg-canvas-subtle p-3">
-          <h3 className="text-xs font-medium text-ink">Deterministic review findings</h3>
-          <p className="mt-1 text-xs text-ink-subtle">Generated from Playbook rules and extracted clauses/metadata. No LLM used.</p>
-          {deterministic.warnings.length > 0 && (
-            <ul className="mt-2 list-disc pl-4 text-xs text-ink-muted">{deterministic.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
-          )}
-          <ul className="mt-2 space-y-1 text-xs text-ink">
-            {deterministic.findings.map((f) => (
-              <li key={f.id} data-testid={`deterministic-finding-${f.rule_id}`}>
-                <span className="font-medium">{f.title}:</span> {f.message} <span className="text-ink-subtle">Basis: {f.basis}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
         <PlaybookPicker
           state={playbookListState}
           selectedPlaybookId={selectedPlaybookId}
@@ -295,6 +275,7 @@ export default function ReviewPanel({
           onSelect={(runId) => loadRun(runId)}
         />
         <ActiveRunArea
+          contractId={contractId}
           state={activeRun}
           selectedKey={selectedKey}
           onSelect={onSelect}
@@ -408,6 +389,7 @@ function RunHistory({ runsState, activeRunId, onSelect }: RunHistoryProps) {
 }
 
 interface ActiveRunAreaProps {
+  contractId: string;
   state: ActiveRunState;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
@@ -418,6 +400,7 @@ interface ActiveRunAreaProps {
 }
 
 function ActiveRunArea({
+  contractId,
   state,
   selectedKey,
   onSelect,
@@ -427,7 +410,7 @@ function ActiveRunArea({
     return (
       <p className="text-xs text-ink-subtle">
         Run a review to see deterministic rule outcomes saved against this
-        contract.
+        Repository record.
       </p>
     );
   }
@@ -455,6 +438,7 @@ function ActiveRunArea({
     <div className="space-y-3">
       <RunSummary run={run} />
       <RuleResultList
+        contractId={contractId}
         run={run}
         selectedKey={selectedKey}
         onSelect={onSelect}
@@ -487,6 +471,7 @@ function RunSummary({ run }: { run: ReviewRunDetail }) {
 }
 
 interface RuleResultListProps {
+  contractId: string;
   run: ReviewRunDetail;
   selectedKey: string | null;
   onSelect: (key: string | null) => void;
@@ -502,6 +487,7 @@ interface RowModel {
 }
 
 function RuleResultList({
+  contractId,
   run,
   selectedKey,
   onSelect,
@@ -514,7 +500,7 @@ function RuleResultList({
     }
     // Prefer the recomputed per-rule list if present; otherwise fall
     // back to one row per persisted finding (run history when the
-    // contract has been re-segmented since the run, etc.).
+    // Repository record has been re-segmented since the run, etc.).
     if (run.results.length > 0) {
       return run.results.map((rule) => ({
         rule,
@@ -600,10 +586,16 @@ function RuleResultList({
             )}
             <PlaybookGuidance rule={rule} />
             {finding && (
-              <FindingStatusControls
-                finding={finding}
-                onUpdate={onUpdateFinding}
-              />
+              <>
+                <FindingRemediationCard
+                  contractId={contractId}
+                  finding={finding}
+                />
+                <FindingStatusControls
+                  finding={finding}
+                  onUpdate={onUpdateFinding}
+                />
+              </>
             )}
           </li>
         );
@@ -619,17 +611,15 @@ interface PlaybookGuidanceProps {
 /**
  * Compact firm-authored guidance block.
  *
- * Surfaces the rule-level fields the playbook author wrote — guidance,
- * preferred_language, expected_value, matched_terms — so a failed
- * finding tells the reviewer not just *that* a clause failed but also
- * what the firm wants in its place. The fields are sourced verbatim
- * from the YAML rule (or from the persisted finding row, which copies
- * them at write time); nothing is generated.
+ * Surfaces the rule-level fields the playbook author wrote: guidance,
+ * preferred_language, expected_value, and matched_terms. A failed finding
+ * therefore tells the reviewer not just that a clause failed but also what
+ * the firm wants in its place. The fields are sourced verbatim from the YAML
+ * rule, or from the persisted finding row that copies them at write time.
+ * Nothing is generated.
  *
- * Rendered as visually secondary to the title/message/evidence: muted
- * surface, smaller type, left rule. Hidden entirely when none of the
- * four fields is set, so passes and rules without guidance don't grow
- * an empty section.
+ * Rendered as visually secondary to the title, message, and evidence. The
+ * section is hidden entirely when none of the four fields is set.
  */
 function PlaybookGuidance({ rule }: PlaybookGuidanceProps) {
   const hasGuidance = Boolean(rule.guidance);
@@ -694,6 +684,10 @@ function FindingStatusControls({
   finding,
   onUpdate,
 }: FindingStatusControlsProps) {
+  // Superseded is a system lifecycle state created by a newer review run. It
+  // cannot be converted back into a reviewer state from an obsolete result.
+  if (finding.finding_status === "superseded") return null;
+
   const buttons: Array<{
     key: ReviewerFindingStatus;
     label: string;
@@ -702,17 +696,17 @@ function FindingStatusControls({
     {
       key: "reviewed",
       label: "Mark reviewed",
-      visibleWhen: ["open", "ignored", "superseded"],
+      visibleWhen: ["open", "ignored"],
     },
     {
       key: "ignored",
       label: "Mark ignored",
-      visibleWhen: ["open", "reviewed", "superseded"],
+      visibleWhen: ["open", "reviewed"],
     },
     {
       key: "open",
       label: "Reopen",
-      visibleWhen: ["reviewed", "ignored", "superseded"],
+      visibleWhen: ["reviewed", "ignored"],
     },
   ];
   return (
@@ -746,7 +740,12 @@ function StatusPill({ status }: { status: "pass" | "fail" }) {
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  if (severity === "blocker" || severity === "high" || severity === "medium" || severity === "low") {
+  if (
+    severity === "blocker" ||
+    severity === "high" ||
+    severity === "medium" ||
+    severity === "low"
+  ) {
     return <SeverityTag level={severity as Severity}>{severity}</SeverityTag>;
   }
   return (
@@ -786,9 +785,9 @@ function formatRunDate(iso: string): string {
  * Construct a `PlaybookRuleMatchResult` from a persisted finding.
  *
  * Only used as a fallback when a run's per-rule recomputation isn't
- * available (e.g. the playbook was deactivated between runs and
- * revalidation failed). The resulting row carries `status: "fail"`
- * since persisted findings are failures.
+ * available, such as when the playbook was deactivated between runs and
+ * revalidation failed. Persisted findings are failures, so the resulting row
+ * always carries `status: "fail"`.
  */
 function findingToRuleResult(
   f: DeviationFinding,

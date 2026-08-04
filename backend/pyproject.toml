@@ -1,6 +1,6 @@
 [project]
 name = "whereas"
-version = "0.0.1"
+version = "0.1.0a1"
 description = "The open-source contract repository."
 readme = "README.md"
 requires-python = ">=3.11"

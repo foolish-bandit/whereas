@@ -23,6 +23,7 @@ from app.api import (
     integrations,
     playbooks,
     qa,
+    remediation,
     setup,
 )
 from app.api import (
@@ -49,7 +50,7 @@ settings = get_settings()
 app = FastAPI(
     title="Whereas API",
     description="The open-source contract repository.",
-    version="0.0.1",
+    version="0.1.0-alpha.1",
     docs_url="/api/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
 )
@@ -79,6 +80,9 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
+app.include_router(
+    remediation.router, prefix="/api/contracts", tags=["finding-remediation"]
+)
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(clause_templates.router, prefix="/api/clause-templates", tags=["clause-templates"])
 app.include_router(
