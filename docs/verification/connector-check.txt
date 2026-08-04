@@ -1,0 +1,1 @@
+Connector write access verified on 2026-08-04. This temporary file may be removed before release.
