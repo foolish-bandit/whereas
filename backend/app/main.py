@@ -23,6 +23,7 @@ from app.api import (
     integrations,
     playbooks,
     qa,
+    remediation,
     setup,
 )
 from app.api import (
@@ -79,6 +80,9 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
+app.include_router(
+    remediation.router, prefix="/api/contracts", tags=["finding-remediation"]
+)
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(clause_templates.router, prefix="/api/clause-templates", tags=["clause-templates"])
 app.include_router(
