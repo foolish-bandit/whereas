@@ -168,7 +168,7 @@ function makeRun(overrides: Partial<ReviewRunDetail> = {}): ReviewRunDetail {
   };
 }
 
-describe("ReviewPanel — playbook guidance", () => {
+describe("ReviewPanel playbook guidance", () => {
   beforeEach(() => {
     vi.mocked(getPlaybooks).mockResolvedValue([PLAYBOOK_SUMMARY]);
     vi.mocked(listPlaybookReviewRuns).mockResolvedValue([RUN_SUMMARY]);
@@ -229,7 +229,7 @@ describe("ReviewPanel — playbook guidance", () => {
     expect(sections).toHaveLength(1);
   });
 
-  it("preserves the reviewer status buttons alongside the guidance section", async () => {
+  it("preserves reviewer status buttons alongside the guidance section", async () => {
     render(
       <ReviewPanel
         contractId={CONTRACT_ID}
@@ -336,5 +336,40 @@ describe("ReviewPanel — playbook guidance", () => {
     expect(
       screen.getAllByRole("button", { name: /plan remediation/i }),
     ).toHaveLength(2);
+  });
+
+  it("treats superseded as a system lifecycle state, not a reviewer status", async () => {
+    const run = makeRun();
+    vi.mocked(getPlaybookReviewRun).mockResolvedValue({
+      ...run,
+      findings: [
+        {
+          ...run.findings[0],
+          finding_status: "superseded",
+        },
+      ],
+      results: [run.results[0]],
+      rules_checked: 1,
+      failed_count: 1,
+    });
+
+    render(
+      <ReviewPanel
+        contractId={CONTRACT_ID}
+        selectedKey={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    await screen.findByText("Governing law should be California");
+    expect(
+      screen.queryByRole("button", { name: /mark reviewed/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /mark ignored/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^reopen$/i }),
+    ).not.toBeInTheDocument();
   });
 });
