@@ -50,7 +50,7 @@ settings = get_settings()
 app = FastAPI(
     title="Whereas API",
     description="The open-source contract repository.",
-    version="0.0.1",
+    version="0.1.0-alpha.1",
     docs_url="/api/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
 )
