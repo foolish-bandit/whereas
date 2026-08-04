@@ -135,7 +135,9 @@ describe("FindingRemediationCard", () => {
       screen.getByRole("button", { name: /plan remediation/i }),
     );
 
-    expect(await screen.findByText("California MSA Governing Law")).toBeInTheDocument();
+    expect(
+      await screen.findByText("California MSA Governing Law"),
+    ).toBeInTheDocument();
     expect(getFindingRemediationPlan).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/tagged preferred/i)).toBeInTheDocument();
     expect(screen.getByText(/confirm fit before use/i)).toBeInTheDocument();
@@ -213,6 +215,35 @@ describe("FindingRemediationCard", () => {
     expect(createFindingRemediationTask).not.toHaveBeenCalled();
   });
 
+  it("does not offer remediation work for a superseded finding", async () => {
+    const supersededFinding = {
+      ...FINDING,
+      finding_status: "superseded" as const,
+    };
+    vi.mocked(getFindingRemediationPlan).mockResolvedValue({
+      ...PLAN,
+      finding_status: "superseded",
+    });
+
+    render(
+      <FindingRemediationCard
+        contractId={CONTRACT_ID}
+        finding={supersededFinding}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /plan remediation/i }),
+    );
+
+    expect(
+      await screen.findByText(/open the latest review run/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /create inbox task/i }),
+    ).not.toBeInTheDocument();
+    expect(createFindingRemediationTask).not.toHaveBeenCalled();
+  });
+
   it("can retry a failed plan request", async () => {
     vi.mocked(getFindingRemediationPlan)
       .mockRejectedValueOnce(new Error("offline"))
@@ -229,7 +260,9 @@ describe("FindingRemediationCard", () => {
       await screen.findByText(/could not load the remediation plan/i),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-    expect(await screen.findByText("California MSA Governing Law")).toBeInTheDocument();
+    expect(
+      await screen.findByText("California MSA Governing Law"),
+    ).toBeInTheDocument();
     expect(getFindingRemediationPlan).toHaveBeenCalledTimes(2);
   });
 
