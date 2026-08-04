@@ -1,7 +1,7 @@
 {
   "name": "whereas-frontend",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0-alpha.1",
   "type": "module",
   "description": "Whereas — open-source contract repository (frontend).",
   "license": "AGPL-3.0-or-later",
