@@ -274,3 +274,14 @@ def remediation_audit_details(
         "contract_id": str(finding.contract_id),
         "inbox_item_id": str(inbox_item_id),
     }
+
+
+def remediation_task_block_reason(finding_status: str) -> str | None:
+    """Explain why a finding cannot currently create or reopen work."""
+
+    if (finding_status or "").strip().lower() == "superseded":
+        return (
+            "This finding was superseded by a newer review. Open the latest review "
+            "run before creating remediation work."
+        )
+    return None
