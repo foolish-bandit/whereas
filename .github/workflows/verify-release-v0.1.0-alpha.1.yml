@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: whereas-v0.1.0-alpha.1-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   TARGET_SHA: fd4b4b84760ea8c6a05eef7db1d68acd67740202
